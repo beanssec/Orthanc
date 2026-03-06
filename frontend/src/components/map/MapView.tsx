@@ -1774,6 +1774,7 @@ export function MapView() {
         isFullscreen={isFullscreen}
         baseLayer={baseLayer}
         onBaseLayerChange={setBaseLayer}
+        layerPanelOpen={!layerPanelCollapsed || mobileLayersOpen}
       />
 
       {/* ── Mobile FABs (hidden on desktop via CSS) ── */}

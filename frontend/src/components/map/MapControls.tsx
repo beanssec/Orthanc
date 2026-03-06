@@ -9,6 +9,7 @@ interface MapControlsProps {
   isFullscreen: boolean;
   baseLayer: 'dark' | 'satellite' | 'hybrid';
   onBaseLayerChange: (layer: 'dark' | 'satellite' | 'hybrid') => void;
+  layerPanelOpen?: boolean;
 }
 
 const BASE_LAYER_OPTIONS: { key: 'dark' | 'satellite' | 'hybrid'; label: string }[] = [
@@ -26,9 +27,10 @@ export function MapControls({
   isFullscreen,
   baseLayer,
   onBaseLayerChange,
+  layerPanelOpen = true,
 }: MapControlsProps) {
   return (
-    <div className="map-controls">
+    <div className={`map-controls${!layerPanelOpen ? ' map-controls--panel-closed' : ''}`}>
       {/* Event count badge */}
       <div className="map-event-count">{eventCount} events</div>
 

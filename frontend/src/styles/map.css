@@ -348,12 +348,18 @@
 .map-controls {
   position: absolute;
   top: 12px;
-  right: 12px;
+  right: 232px; /* 220px layers panel + 12px gap */
   z-index: 15;
   display: flex;
   flex-direction: column;
   gap: 6px;
   align-items: flex-end;
+  transition: right 0.2s ease;
+}
+
+/* When layers panel is collapsed, controls move to the edge */
+.map-controls--panel-closed {
+  right: 12px;
 }
 
 .map-controls__group {
