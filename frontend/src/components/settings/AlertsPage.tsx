@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, KeyboardEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAlertStore } from '../../stores/alertStore';
 import type { AlertRule, AlertRuleCreate } from '../../stores/alertStore';
 import { LoadingSpinner } from '../common/LoadingSpinner';
@@ -1240,7 +1240,7 @@ function RuleCard({
 // Alert History tab
 // ---------------------------------------------------------------------------
 
-function AlertHistoryTab() {
+function AlertHistoryTab({ highlightId }: { highlightId?: string | null }) {
   const { events, totalEvents, loadingEvents, fetchEvents, acknowledgeEvent } = useAlertStore();
   const [severityFilter, setSeverityFilter] = useState<string>('');
   const [ackedFilter, setAckedFilter] = useState<boolean | null>(null);
@@ -1248,6 +1248,16 @@ function AlertHistoryTab() {
   useEffect(() => {
     fetchEvents(1, severityFilter || null, ackedFilter);
   }, [severityFilter, ackedFilter, fetchEvents]);
+
+  // Scroll to highlighted event after events load
+  useEffect(() => {
+    if (highlightId && events.length > 0) {
+      const el = document.getElementById(`alert-event-${highlightId}`);
+      if (el) {
+        setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), 200);
+      }
+    }
+  }, [highlightId, events]);
 
   if (loadingEvents) {
     return (
@@ -1295,7 +1305,8 @@ function AlertHistoryTab() {
           {events.map((ev) => (
             <div
               key={ev.id}
-              className={`alert-event-row severity-${ev.severity}${ev.acknowledged ? ' acknowledged' : ''}`}
+              id={`alert-event-${ev.id}`}
+              className={`alert-event-row severity-${ev.severity}${ev.acknowledged ? ' acknowledged' : ''}${highlightId && String(ev.id) === String(highlightId) ? ' alert-event-row--highlighted' : ''}`}
             >
               <span className="alert-event-emoji">{SEVERITY_EMOJI[ev.severity] ?? '🔔'}</span>
               <div className="alert-event-content">
@@ -1332,7 +1343,12 @@ function AlertHistoryTab() {
 // ---------------------------------------------------------------------------
 
 export function AlertsPage() {
-  const [activeTab, setActiveTab] = useState<'rules' | 'history'>('rules');
+  const [searchParams] = useSearchParams();
+  // If ?highlight= param is set, switch to history tab automatically
+  const [activeTab, setActiveTab] = useState<'rules' | 'history'>(
+    searchParams.get('highlight') ? 'history' : 'rules'
+  );
+  const highlightId = searchParams.get('highlight');
   const [showWizard, setShowWizard] = useState(false);
   const [editRule, setEditRule] = useState<AlertRule | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AlertRule | null>(null);
@@ -1417,7 +1433,7 @@ export function AlertsPage() {
       )}
 
       {/* History tab */}
-      {activeTab === 'history' && <AlertHistoryTab />}
+      {activeTab === 'history' && <AlertHistoryTab highlightId={highlightId} />}
 
       {/* Wizard modal */}
       {(showWizard || editRule) && (

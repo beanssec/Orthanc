@@ -48,6 +48,7 @@ interface TrendingEntity {
   name: string;
   type: string;
   mentions: number;
+  id?: number;
 }
 
 interface GeoHotspot {
@@ -147,16 +148,17 @@ function formatHour(iso: string): string {
 
 // ── Velocity SVG Bar Chart ─────────────────────────────────
 function VelocityChart({ buckets }: { buckets: VelocityBucket[] }) {
+  const navigate = useNavigate();
   const [tooltip, setTooltip] = useState<{ x: number; y: number; bucket: VelocityBucket } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [dims, setDims] = useState({ w: 560, h: 180 });
+  const [dims, setDims] = useState({ w: 560, h: 200 });
 
   useEffect(() => {
     const measure = () => {
       if (wrapRef.current) {
         const rect = wrapRef.current.getBoundingClientRect();
-        setDims({ w: Math.max(200, rect.width), h: Math.max(100, rect.height) });
+        setDims({ w: Math.max(200, rect.width), h: Math.max(120, rect.height) });
       }
     };
     measure();
@@ -198,7 +200,7 @@ function VelocityChart({ buckets }: { buckets: VelocityBucket[] }) {
         ref={svgRef}
         width={W}
         height={H}
-        style={{ display: 'block' }}
+        style={{ display: 'block', cursor: 'crosshair' }}
         onMouseLeave={() => setTooltip(null)}
       >
         {/* Y-axis gridlines + labels */}
@@ -248,7 +250,7 @@ function VelocityChart({ buckets }: { buckets: VelocityBucket[] }) {
           const showLabel = i === 0 || i === buckets.length - 1 || i % Math.ceil(buckets.length / 6) === 0;
 
           return (
-            <g key={bucket.hour}>
+            <g key={bucket.hour} style={{ cursor: 'pointer' }}>
               {/* hover hit area */}
               <rect
                 x={x}
@@ -265,6 +267,7 @@ function VelocityChart({ buckets }: { buckets: VelocityBucket[] }) {
                     bucket,
                   });
                 }}
+                onClick={() => navigate('/feed')}
               />
               {segments}
               {showLabel && (
@@ -302,6 +305,7 @@ function VelocityChart({ buckets }: { buckets: VelocityBucket[] }) {
               <span>{src}: {cnt}</span>
             </div>
           ))}
+          <div className="velocity-tooltip__hint">Click to open feed</div>
         </div>
       )}
 
@@ -325,11 +329,12 @@ interface KpiCardProps {
   label: string;
   sub?: string;
   delta?: number;
+  onClick?: () => void;
 }
 
-function KpiCard({ icon, value, label, sub, delta }: KpiCardProps) {
+function KpiCard({ icon, value, label, sub, delta, onClick }: KpiCardProps) {
   return (
-    <div className="kpi-card">
+    <div className={`kpi-card${onClick ? ' kpi-card--clickable' : ''}`} onClick={onClick}>
       <div className="kpi-card__icon">{icon}</div>
       <div className="kpi-card__value">{typeof value === 'number' ? value.toLocaleString() : value}</div>
       <div className="kpi-card__label">{label}</div>
@@ -339,6 +344,39 @@ function KpiCard({ icon, value, label, sub, delta }: KpiCardProps) {
           {delta >= 0 ? '▲' : '▼'} {Math.abs(delta)}%
         </div>
       )}
+      {onClick && <div className="kpi-card__arrow">→</div>}
+    </div>
+  );
+}
+
+// ── Source Health Strip ────────────────────────────────────
+function SourceHealthStrip({
+  sourceHealth,
+  navigate,
+}: {
+  sourceHealth: SourceHealthRow[];
+  navigate: (path: string) => void;
+}) {
+  if (sourceHealth.length === 0) {
+    return <div className="source-health-strip"><span style={{ color: 'var(--text-muted)', fontSize: 12 }}>No source data yet</span></div>;
+  }
+
+  return (
+    <div className="source-health-strip">
+      <span className="source-health-strip__label">SOURCES</span>
+      {sourceHealth.map((row) => (
+        <div
+          key={row.source_type}
+          className={`source-pill source-pill--${row.status}`}
+          onClick={() => navigate(`/feed?source=${row.source_type}`)}
+          title={`Last post: ${formatTime(row.last_post)}\n1h: ${row.posts_1h} | 24h: ${row.posts_24h}\nClick to filter feed`}
+        >
+          <span className={`source-pill__dot source-pill__dot--${row.status}`} />
+          <span className="source-pill__icon">{sourceIcon(row.source_type)}</span>
+          <span className="source-pill__name">{row.source_type}</span>
+          <span className="source-pill__count">{row.posts_24h}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -435,95 +473,54 @@ export function DashboardView() {
           value={stats?.posts_last_24h ?? 0}
           label="Posts (24h)"
           sub={`${(stats?.total_posts ?? 0).toLocaleString()} total`}
+          onClick={() => navigate('/feed')}
         />
         <KpiCard
           icon="🗺️"
           value={stats?.total_events ?? 0}
-          label="Events"
+          label="Map Events"
           sub="Geo-located"
+          onClick={() => navigate('/map')}
         />
         <KpiCard
           icon="🔗"
           value={stats?.total_entities ?? 0}
           label="Entities"
           sub="Tracked"
+          onClick={() => navigate('/entities')}
         />
         <KpiCard
           icon="📡"
           value={activeSourceCount}
           label="Active Sources"
           sub={`of ${sourceHealth.length} total`}
+          onClick={() => navigate('/settings/sources')}
         />
         <KpiCard
           icon="🚨"
           value={alerts.length}
           label="Unread Alerts"
           sub={alerts.length === 0 ? 'All clear' : 'Require attention'}
+          onClick={() => navigate('/settings/alerts')}
         />
       </div>
 
-      {/* ── Row 2: Velocity + Source Health ───────────── */}
-      <div className="dashboard-row dashboard-row--6040">
+      {/* ── Row 2: Source Health Strip (full width) ───── */}
+      <SourceHealthStrip sourceHealth={sourceHealth} navigate={navigate} />
 
-        {/* Velocity chart */}
-        <div className="dash-card">
-          <div className="dash-card__header">
-            <span className="dash-card__title">Post Velocity — Last 24h</span>
-            <span className="dash-card__meta">hourly buckets</span>
-          </div>
-          <div className="dash-card__body">
-            <VelocityChart buckets={velocity} />
-          </div>
+      {/* ── Row 3: Post Velocity (full width) ─────────── */}
+      <div className="dash-card dash-card--full">
+        <div className="dash-card__header">
+          <span className="dash-card__title">Post Velocity — Last 24h</span>
+          <span className="dash-card__meta">hourly buckets · click bars to open feed</span>
         </div>
-
-        {/* Source Health Matrix */}
-        <div className="dash-card">
-          <div className="dash-card__header">
-            <span className="dash-card__title">Source Health</span>
-          </div>
-          <div className="dash-card__body dash-card__body--flush">
-            {sourceHealth.length === 0 ? (
-              <div className="dash-empty">No source data yet</div>
-            ) : (
-              <div className="health-table-wrap table-scroll-container">
-              <table className="health-table">
-                <thead>
-                  <tr>
-                    <th>Source</th>
-                    <th></th>
-                    <th>Last Post</th>
-                    <th>1h</th>
-                    <th>24h</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sourceHealth.map((row) => (
-                    <tr key={row.source_type}>
-                      <td className="health-table__source">
-                        <span className="health-table__icon">{sourceIcon(row.source_type)}</span>
-                        {row.source_type}
-                      </td>
-                      <td>
-                        <span
-                          className={`health-dot health-dot--${row.status}`}
-                          title={row.status}
-                        />
-                      </td>
-                      <td className="health-table__time">{formatTime(row.last_post)}</td>
-                      <td className="health-table__num">{row.posts_1h}</td>
-                      <td className="health-table__num">{row.posts_24h}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              </div>
-            )}
-          </div>
+        <div className="dash-card__body dash-card__body--velocity">
+          <VelocityChart buckets={velocity} />
         </div>
       </div>
 
-      {/* ── Row 3: Trending Entities + Recent Alerts ──── */}
-      <div className="dashboard-row dashboard-row--4060">
+      {/* ── Row 4: Trending Entities + Geographic Hotspots */}
+      <div className="dashboard-row dashboard-row--5050">
 
         {/* Trending Entities */}
         <div className="dash-card">
@@ -542,7 +539,13 @@ export function DashboardView() {
                   <div
                     key={i}
                     className="entity-bar-row"
-                    onClick={() => navigate('/entities')}
+                    onClick={() => {
+                      if (ent.id) {
+                        navigate(`/entities?selected=${ent.id}`);
+                      } else {
+                        navigate(`/entities?search=${encodeURIComponent(ent.name)}`);
+                      }
+                    }}
                   >
                     <span className={`badge badge--${entityTypeClass(ent.type)}`}>
                       {ent.type}
@@ -561,42 +564,6 @@ export function DashboardView() {
             )}
           </div>
         </div>
-
-        {/* Recent Alerts */}
-        <div className="dash-card">
-          <div className="dash-card__header">
-            <span className="dash-card__title">Recent Alerts</span>
-            <button className="btn btn-ghost btn-sm" onClick={() => navigate('/settings/alerts')}>
-              View all →
-            </button>
-          </div>
-          <div className="dash-card__body">
-            {alerts.length === 0 ? (
-              <div className="dash-empty dash-empty--calm">
-                <span style={{ fontSize: 24 }}>✅</span>
-                No unread alerts — all clear
-              </div>
-            ) : (
-              <div className="alert-list">
-                {alerts.slice(0, 5).map((alert, i) => (
-                  <div key={alert.id ?? i} className="alert-row">
-                    <span className="alert-row__sev">
-                      {severityEmoji(alert.severity)}
-                    </span>
-                    <div className="alert-row__body">
-                      <div className="alert-row__title">{alert.title ?? alert.message ?? 'Alert'}</div>
-                      <div className="alert-row__time">{formatTime(alert.fired_at ?? alert.created_at)}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Row 4: Geo Hotspots + Activity Feed ───────── */}
-      <div className="dashboard-row dashboard-row--5050">
 
         {/* Geographic Hotspots */}
         <div className="dash-card">
@@ -632,6 +599,47 @@ export function DashboardView() {
             )}
           </div>
         </div>
+      </div>
+
+      {/* ── Row 5: Recent Alerts + Activity Feed ───────── */}
+      <div className="dashboard-row dashboard-row--5050">
+
+        {/* Recent Alerts */}
+        <div className="dash-card">
+          <div className="dash-card__header">
+            <span className="dash-card__title">Recent Alerts</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => navigate('/settings/alerts')}>
+              View all →
+            </button>
+          </div>
+          <div className="dash-card__body">
+            {alerts.length === 0 ? (
+              <div className="dash-empty dash-empty--calm">
+                <span style={{ fontSize: 24 }}>✅</span>
+                No unread alerts — all clear
+              </div>
+            ) : (
+              <div className="alert-list">
+                {alerts.slice(0, 5).map((alert, i) => (
+                  <div
+                    key={alert.id ?? i}
+                    className="alert-row alert-row--clickable"
+                    onClick={() => navigate(`/settings/alerts?highlight=${alert.id}`)}
+                  >
+                    <span className="alert-row__sev">
+                      {severityEmoji(alert.severity)}
+                    </span>
+                    <div className="alert-row__body">
+                      <div className="alert-row__title">{alert.title ?? alert.message ?? 'Alert'}</div>
+                      <div className="alert-row__time">{formatTime(alert.fired_at ?? alert.created_at)}</div>
+                    </div>
+                    <span className="alert-row__chevron">›</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* Activity Feed */}
         <div className="dash-card">
@@ -648,7 +656,7 @@ export function DashboardView() {
                   <div
                     key={post.id}
                     className="activity-feed__item"
-                    onClick={() => navigate('/feed')}
+                    onClick={() => navigate(`/feed?post=${post.id}`)}
                   >
                     <span className="activity-feed__icon">
                       {sourceIcon(post.source_type ?? '')}

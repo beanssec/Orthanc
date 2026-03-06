@@ -90,14 +90,8 @@ class AuthenticityAnalyzer:
         }
         mime = mime_map.get(ext, "image/jpeg")
 
-        if provider == "xai":
-            url = "https://api.x.ai/v1/chat/completions"
-            model = "grok-2-vision-1212"
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            }
-        else:  # openrouter
+        # xAI only supports vision on specific tier keys — use openrouter/gpt-4o if available
+        if provider == "openrouter":
             url = "https://openrouter.ai/api/v1/chat/completions"
             model = "openai/gpt-4o"
             headers = {
@@ -105,6 +99,13 @@ class AuthenticityAnalyzer:
                 "Content-Type": "application/json",
                 "HTTP-Referer": "https://orthanc.local",
                 "X-Title": "Orthanc OSINT",
+            }
+        else:  # xai
+            url = "https://api.x.ai/v1/chat/completions"
+            model = "grok-2-vision-1212"  # legacy alias, most widely available
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
             }
 
         payload = {

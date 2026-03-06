@@ -645,3 +645,16 @@
 .test-match-item:last-child {
   border-bottom: none;
 }
+
+/* ── Alert event highlight (from dashboard drill-down) ─── */
+.alert-event-row--highlighted {
+  border-color: var(--accent) !important;
+  background: rgba(59, 130, 246, 0.08) !important;
+  box-shadow: 0 0 0 1px var(--accent);
+  animation: alert-highlight-pulse 2s ease-out;
+}
+
+@keyframes alert-highlight-pulse {
+  0%   { background: rgba(59, 130, 246, 0.25); }
+  100% { background: rgba(59, 130, 246, 0.08); }
+}

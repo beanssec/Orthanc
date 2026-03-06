@@ -254,16 +254,16 @@ class TelegramCollector:
     async def _check_authenticity(self, post_id: Any, relative_path: str, metadata: dict) -> None:
         """Async fire-and-forget task: run vision model authenticity check and update post."""
         try:
-            # Try xAI (Grok) first, fall back to OpenRouter
-            keys = await collector_manager.get_keys(self._user_id, "x")
-            provider = "xai"
+            # Try OpenRouter first (GPT-4o vision), fall back to xAI (needs vision tier)
+            keys = await collector_manager.get_keys(self._user_id, "openrouter")
+            provider = "openrouter"
             api_key: Optional[str] = keys.get("api_key") if keys else None
 
             if not api_key:
-                keys = await collector_manager.get_keys(self._user_id, "openrouter")
+                keys = await collector_manager.get_keys(self._user_id, "x")
                 if keys:
                     api_key = keys.get("api_key")
-                    provider = "openrouter"
+                    provider = "xai"
 
             if not api_key:
                 logger.debug(
@@ -289,8 +289,24 @@ class TelegramCollector:
                             post_id, result.get("score", 0), result.get("verdict", "?")
                         )
 
+            if not result:
+                # Mark as checked even on failure so UI doesn't show "Analyzing" forever
+                async with AsyncSessionLocal() as session:
+                    post = await session.get(Post, post_id)
+                    if post:
+                        post.authenticity_checked_at = datetime.now(timezone.utc)
+                        await session.commit()
+
         except Exception as exc:
             logger.warning("Authenticity check failed for post %s: %s", post_id, exc)
+            try:
+                async with AsyncSessionLocal() as session:
+                    post = await session.get(Post, post_id)
+                    if post:
+                        post.authenticity_checked_at = datetime.now(timezone.utc)
+                        await session.commit()
+            except Exception:
+                pass
 
     async def _backfill_channel(self, entity, limit: int = 50) -> None:
         """Pull the latest `limit` messages from a channel and ingest any we haven't seen."""

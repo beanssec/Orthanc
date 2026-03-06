@@ -12,8 +12,10 @@ function getAuthenticityBadge(
   if (!mediaType) return null
   if (mediaType === 'video') return null  // No badge for video in MVP
   if (score === null && !checkedAt) {
-    // Only show analyzing if media exists
-    return { label: '⏳ Analyzing…', className: 'authenticity-badge authenticity-badge--pending' }
+    return { label: '🔍 Requires xAI or OpenRouter key for analysis', className: 'authenticity-badge authenticity-badge--pending' }
+  }
+  if (score === null && checkedAt) {
+    return { label: '⚠️ Analysis unavailable', className: 'authenticity-badge authenticity-badge--pending' }
   }
   if (score === null) return null
   if (score >= 0.7) return { label: '🟢 Likely Authentic', className: 'authenticity-badge authenticity-badge--real' }

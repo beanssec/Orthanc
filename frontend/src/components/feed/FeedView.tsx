@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useFeedStore } from '../../stores/feedStore'
 import type { Post } from '../../stores/feedStore'
 import { useWebSocket } from '../../hooks/useWebSocket'
@@ -125,6 +126,7 @@ function VolumeSparkline() {
 
 // ── Main FeedView ──────────────────────────────────────────
 export function FeedView() {
+  const [searchParams] = useSearchParams()
   const [selectedPost, setSelectedPost] = useState<Post | null>(null)
   const [newPostIds, setNewPostIds] = useState<Set<string>>(new Set())
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false)
@@ -132,6 +134,26 @@ export function FeedView() {
   const { connected, reconnecting } = useWebSocket()
   const posts = useFeedStore((s) => s.posts)
   const filters = useFeedStore((s) => s.filters)
+
+  // Apply URL param: ?source=telegram → pre-filter by source type
+  useEffect(() => {
+    const sourceParam = searchParams.get('source')
+    if (sourceParam) {
+      const sources = sourceParam.split(',').filter(Boolean) as Post['source_type'][]
+      useFeedStore.getState().setFilters({ source_types: sources })
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Apply URL param: ?post=uuid → auto-select that post
+  useEffect(() => {
+    const postParam = searchParams.get('post')
+    if (!postParam || posts.length === 0) return
+    const match = posts.find((p) => String(p.id) === String(postParam))
+    if (match && selectedPost?.id !== match.id) {
+      setSelectedPost(match)
+      setMobileDetailOpen(true)
+    }
+  }, [posts, searchParams]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // When a post is selected on mobile, open the detail overlay
   const handleSelectPost = (post: Post | null) => {

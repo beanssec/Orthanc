@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
+import { useSearchParams, useParams } from 'react-router-dom';
 import api from '../../services/api';
 import { EntityDetail } from './EntityDetail';
 import { EntityGraph } from './EntityGraph';
@@ -47,13 +48,15 @@ type ViewTab = 'table' | 'graph';
 
 // ── Component ──────────────────────────────────────────────
 export function EntitiesView() {
+  const [searchParams] = useSearchParams();
+  const { id: routeId } = useParams<{ id: string }>();
   const [activeTab, setActiveTab] = useState<ViewTab>('table');
   const [entities, setEntities] = useState<Entity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Filters
-  const [search, setSearch] = useState('');
+  // Filters — initialise from URL params
+  const [search, setSearch] = useState(() => searchParams.get('search') || '');
   const [typeFilter, setTypeFilter] = useState('All');
   const [sortKey, setSortKey] = useState<SortKey>('mention_count');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -61,8 +64,12 @@ export function EntitiesView() {
   // Pagination
   const [page, setPage] = useState(0);
 
-  // Selection
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  // Selection — initialise from URL params or route id
+  const [selectedId, setSelectedId] = useState<number | null>(() => {
+    if (routeId) return parseInt(routeId, 10);
+    const sel = searchParams.get('selected');
+    return sel ? parseInt(sel, 10) : null;
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -76,6 +83,20 @@ export function EntitiesView() {
         });
         if (!cancelled) {
           setEntities(res.data);
+          // If ?selected= param or route :id is set, find and select the entity
+          const selParam = routeId || searchParams.get('selected');
+          const searchParam = searchParams.get('search');
+          if (selParam && !selectedId) {
+            const selId = parseInt(selParam, 10);
+            if (!isNaN(selId)) setSelectedId(selId);
+          }
+          // If ?search= param and the entity matches, auto-select first result
+          if (searchParam && !selParam) {
+            const match = (res.data as Entity[]).find(
+              (e) => e.name.toLowerCase() === searchParam.toLowerCase()
+            );
+            if (match) setSelectedId(match.id);
+          }
         }
       } catch (err: unknown) {
         if (!cancelled) {
@@ -89,7 +110,7 @@ export function EntitiesView() {
 
     fetch();
     return () => { cancelled = true; };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Filter + sort
   const filtered = useMemo(() => {
