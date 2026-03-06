@@ -37,12 +37,23 @@ Named after the tower that held the Palantír. The seeing stone shouldn't be loc
 
 ### 🗺️ Tactical Map
 - MapLibre GL with dark CartoDB tiles (free, no API key)
-- Clustered OSINT events with precision filtering (city/exact only by default)
-- Live flight/ship/satellite tracking layers
-- **Multi-source Ukraine frontline data** from 6 mapping sources (DeepStateMap, AMK, Suriyak, UA Control Map, Playfra, Radov)
-- FIRMS thermal hotspot overlay
-- Sentiment heatmap layer (keyword-based scoring per region)
+- Clustered OSINT events with precision filtering
+- Click any cluster → browse events → click to inspect full detail in side panel
 - Heatmap and cluster visualization modes
+
+**7 intelligence layers (all toggleable, no API keys required for most):**
+
+| Layer | What It Shows | Source | Auth Required |
+|-------|--------------|--------|---------------|
+| **OSINT Events** | Geolocated posts from your feeds, clustered on the map | Internal (auto-geocoded from NER) | No |
+| **Frontlines** | Ukraine conflict territorial control zones + battle events | DeepStateMap, AMK, Suriyak, UA Control Map, Playfra, Radov | No |
+| **Flights** | Live aircraft positions with military/civilian filtering | OpenSky Network | No |
+| **Ships** | Vessel positions with military/civilian filtering | AIS (aisstream.io) | API key |
+| **FIRMS** | Thermal anomalies / fire hotspots (conflict zone detection) | NASA FIRMS | No |
+| **Satellites** | ISS, military, weather satellite positions | CelesTrak + sgp4 | No |
+| **Sentiment** | Keyword-based sentiment heatmap by region | Internal (auto-scored) | No |
+
+**Frontlines are built-in and require zero configuration.** Open the map, toggle on the Frontlines layer, and you'll see live territorial control data from 6 independent mapping sources covering the Ukraine conflict. Data refreshes every 1–6 hours depending on the source. You can switch between sources using the dropdown in the layers panel.
 
 ### 🧠 AI Intelligence Briefs
 - Generate structured intelligence briefs from collected data
