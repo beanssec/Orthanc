@@ -10,6 +10,44 @@ import { MapControls } from './MapControls';
 // CartoDB dark-matter — no token needed
 const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 
+// Esri World Imagery — free, no API key required
+const SATELLITE_STYLE: maplibregl.StyleSpecification = {
+  version: 8,
+  sources: {
+    'esri-satellite': {
+      type: 'raster',
+      tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+      tileSize: 256,
+      maxzoom: 19,
+      attribution: '© Esri, Maxar, Earthstar Geographics',
+    },
+  },
+  layers: [{ id: 'satellite', type: 'raster', source: 'esri-satellite' }],
+};
+
+const HYBRID_STYLE: maplibregl.StyleSpecification = {
+  version: 8,
+  sources: {
+    'esri-satellite': {
+      type: 'raster',
+      tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+      tileSize: 256,
+      maxzoom: 19,
+      attribution: '© Esri, Maxar, Earthstar Geographics',
+    },
+    'esri-labels': {
+      type: 'raster',
+      tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'],
+      tileSize: 256,
+      maxzoom: 19,
+    },
+  },
+  layers: [
+    { id: 'satellite', type: 'raster', source: 'esri-satellite' },
+    { id: 'labels', type: 'raster', source: 'esri-labels' },
+  ],
+};
+
 // Color map for source types
 const SOURCE_COLORS: Record<string, string> = {
   telegram: '#3b82f6',
@@ -244,6 +282,13 @@ const SENTIMENT_SOURCE = 'sentiment-source';
 const SENTIMENT_LAYER_CIRCLES = 'sentiment-layer-circles';
 const SENTIMENT_LAYER_HEAT = 'sentiment-layer-heat';
 
+const ACLED_SOURCE = 'acled-source';
+const ACLED_LAYER = 'acled-layer';
+
+const GDELT_GEO_SOURCE = 'gdelt-geo-source';
+const GDELT_GEO_HEAT = 'gdelt-geo-heat';
+const GDELT_GEO_CIRCLES = 'gdelt-geo-circles';
+
 // ---------------------------------------------------------------------------
 // Layer state interface
 // ---------------------------------------------------------------------------
@@ -255,6 +300,8 @@ interface LayerState {
   frontlines: boolean;
   satellites: boolean;
   sentiment: boolean;
+  gdelt: boolean;
+  acled: boolean;
 }
 
 interface LayerCounts {
@@ -264,6 +311,8 @@ interface LayerCounts {
   frontlines: number;
   satellites: number;
   sentiment: number;
+  gdelt: number;
+  acled: number;
 }
 
 interface FrontlineSourceInfo {
@@ -301,7 +350,21 @@ export function MapView() {
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const tooltipRef = useRef<maplibregl.Popup | null>(null);
   const mapReadyRef = useRef(false);
+  // Becomes true after map.on('load') fires; guards style.load re-setup
+  const styleInitializedRef = useRef(false);
   const [mapReady, setMapReady] = useState(false);
+
+  // Refs that mirror state so the style.load callback can read current values
+  const filteredEventsRef = useRef<MapEvent[]>([]);
+  const filtersRef = useRef<SidebarFilters>({
+    timeRange: '7d', sourceTypes: [], keyword: '', showHeatmap: false, showClusters: true,
+  });
+  const layersStateRef = useRef<LayerState>({
+    flights: false, ships: false, firms: false, frontlines: false, satellites: false, sentiment: false,
+  });
+  const fetchFnsRef = useRef<Record<keyof LayerState, () => void>>({} as Record<keyof LayerState, () => void>);
+
+  const [baseLayer, setBaseLayer] = useState<'dark' | 'satellite' | 'hybrid'>('dark');
 
   const [zoom, setZoom] = useState(3);
   const [loading, setLoading] = useState(false);
@@ -328,6 +391,8 @@ export function MapView() {
     frontlines: false,
     satellites: false,
     sentiment: false,
+    gdelt: false,
+    acled: false,
   });
   const [layerCounts, setLayerCounts] = useState<LayerCounts>({
     flights: 0,
@@ -336,7 +401,14 @@ export function MapView() {
     frontlines: 0,
     satellites: 0,
     sentiment: 0,
+    gdelt: 0,
+    acled: 0,
   });
+
+  // GDELT GEO state
+  const [gdeltKeyword, setGdeltKeyword] = useState('conflict');
+  const [gdeltInputValue, setGdeltInputValue] = useState('conflict');
+  const gdeltDebounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sentimentHours, setSentimentHours] = useState(24);
 
   // Frontline source selector
@@ -508,6 +580,57 @@ export function MapView() {
     }
   }, [sentimentHours]);
 
+  const fetchGdelt = useCallback(async (keyword?: string) => {
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+    const q = keyword ?? gdeltKeyword;
+    if (!q.trim()) return;
+    try {
+      const res = await api.get(`/gdelt/geo?q=${encodeURIComponent(q)}`);
+      const data = res.data as GeoJSON.FeatureCollection;
+      const src = map.getSource(GDELT_GEO_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      if (src) src.setData(data);
+      setLayerCounts((c) => ({ ...c, gdelt: data.features?.length ?? 0 }));
+    } catch (err) {
+      console.error('Failed to fetch GDELT geo', err);
+    }
+  }, [gdeltKeyword]);
+
+  const fetchAcled = useCallback(async () => {
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+    try {
+      const res = await api.get('/layers/acled?hours=168');
+      const data = res.data as GeoJSON.FeatureCollection;
+      const src = map.getSource(ACLED_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      if (src) src.setData(data);
+      setLayerCounts((c) => ({ ...c, acled: data.features?.length ?? 0 }));
+    } catch (err) {
+      console.error('Failed to fetch ACLED data', err);
+    }
+  }, []);
+
+  // Keep refs in sync with React state for use in style.load callback (can't use state directly in closure)
+  useEffect(() => { filteredEventsRef.current = filteredEvents; }, [filteredEvents]);
+  useEffect(() => { filtersRef.current = filters; }, [filters]);
+  useEffect(() => { layersStateRef.current = layers; }, [layers]);
+  useEffect(() => {
+    fetchFnsRef.current = {
+      flights: fetchFlights, ships: fetchShips, firms: fetchFirms,
+      frontlines: fetchFrontlines, satellites: fetchSatellites, sentiment: fetchSentiment,
+    };
+  }, [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment]);
+
+  // Switch base map layer
+  useEffect(() => {
+    if (!styleInitializedRef.current || !mapRef.current) return;
+    const style: string | maplibregl.StyleSpecification =
+      baseLayer === 'dark' ? MAP_STYLE :
+      baseLayer === 'satellite' ? SATELLITE_STYLE :
+      HYBRID_STYLE;
+    mapRef.current.setStyle(style);
+  }, [baseLayer]);
+
   // Map of layer key → { fetchFn, interval (ms), visibility }
   const LAYER_REFRESH: Record<keyof LayerState, { fetch: () => void; interval: number }> = useMemo(() => ({
     flights: { fetch: fetchFlights, interval: 60_000 },
@@ -516,7 +639,9 @@ export function MapView() {
     frontlines: { fetch: fetchFrontlines, interval: 600_000 },
     satellites: { fetch: fetchSatellites, interval: 30_000 },
     sentiment: { fetch: fetchSentiment, interval: 300_000 },
-  }), [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment]);
+    gdelt: { fetch: fetchGdelt, interval: 900_000 },
+    acled: { fetch: fetchAcled, interval: 3_600_000 },
+  }), [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment, fetchGdelt, fetchAcled]);
 
   // Handle layer toggle
   const toggleLayer = useCallback((key: keyof LayerState, enabled: boolean) => {
@@ -535,6 +660,8 @@ export function MapView() {
       frontlines: [FRONTLINES_LAYER_LINE, FRONTLINES_LAYER_FILL, FRONTLINES_LAYER_EVENTS],
       satellites: [SATELLITES_LAYER],
       sentiment: [SENTIMENT_LAYER_CIRCLES, SENTIMENT_LAYER_HEAT],
+      gdelt: [GDELT_GEO_HEAT, GDELT_GEO_CIRCLES],
+      acled: [ACLED_LAYER],
     };
 
     for (const [key, enabled] of Object.entries(layers) as [keyof LayerState, boolean][]) {
@@ -587,6 +714,14 @@ export function MapView() {
     }
   }, [sentimentHours]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Refetch GDELT when keyword changes (if layer is active)
+  useEffect(() => {
+    if (layers.gdelt && mapReadyRef.current) {
+      loadedLayers.current.delete('gdelt');
+      fetchGdelt(gdeltKeyword);
+    }
+  }, [gdeltKeyword]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Initialize map
   useEffect(() => {
     if (!mapContainer.current || mapRef.current) return;
@@ -604,10 +739,10 @@ export function MapView() {
 
     map.on('zoom', () => setZoom(map.getZoom()));
 
-    map.on('load', () => {
-      mapReadyRef.current = true;
-      setMapReady(true);
-
+    // ── Data layer setup ─────────────────────────────────────────────────────
+    // Extracted so it can be called on initial load AND after map.setStyle()
+    // (setStyle wipes all custom sources, layers, and images).
+    const setupDataLayers = () => {
       // ── Custom icons ──────────────────────────────────────────────────────
       const planeBlue = createPlaneImage('#3b82f6');
       const planeRed = createPlaneImage('#ef4444');
@@ -914,6 +1049,213 @@ export function MapView() {
           'circle-stroke-color': 'rgba(255,255,255,0.2)',
         },
       });
+
+      // ── GDELT GEO media attention source + layers ─────────────────────────
+      map.addSource(GDELT_GEO_SOURCE, {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+
+      // GDELT heatmap layer (orange/red gradient)
+      map.addLayer({
+        id: GDELT_GEO_HEAT,
+        type: 'heatmap',
+        source: GDELT_GEO_SOURCE,
+        layout: { visibility: 'none' },
+        paint: {
+          'heatmap-weight': [
+            'interpolate', ['linear'],
+            ['coalesce', ['get', 'count'], ['get', 'shareimage'], 1],
+            0, 0.2,
+            100, 1,
+          ],
+          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 1, 10, 2],
+          'heatmap-color': [
+            'interpolate', ['linear'], ['heatmap-density'],
+            0, 'rgba(0,0,0,0)',
+            0.2, 'rgba(249,115,22,0.4)',
+            0.4, 'rgba(239,68,68,0.6)',
+            0.6, 'rgba(220,38,38,0.8)',
+            0.8, 'rgba(185,28,28,0.9)',
+            1.0, 'rgba(255,255,255,1)',
+          ],
+          'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 2, 15, 8, 30, 12, 50],
+          'heatmap-opacity': 0.75,
+        },
+      });
+
+      // GDELT circle layer for individual points
+      map.addLayer({
+        id: GDELT_GEO_CIRCLES,
+        type: 'circle',
+        source: GDELT_GEO_SOURCE,
+        minzoom: 5,
+        layout: { visibility: 'none' },
+        paint: {
+          'circle-radius': [
+            'interpolate', ['linear'],
+            ['coalesce', ['get', 'count'], 1],
+            1, 4,
+            50, 10,
+            500, 18,
+          ],
+          'circle-color': '#f97316',
+          'circle-opacity': 0.5,
+          'circle-stroke-width': 1,
+          'circle-stroke-color': 'rgba(249,115,22,0.8)',
+        },
+      });
+
+      // GDELT circle hover
+      map.on('mouseenter', GDELT_GEO_CIRCLES, (e) => {
+        map.getCanvas().style.cursor = 'pointer';
+        const f = e.features?.[0];
+        if (!f || f.geometry.type !== 'Point') return;
+        const p = f.properties ?? {};
+        const name = p.name || p.placename || p.location || '';
+        const count = p.count || p.numarts || '';
+        const html = `
+          <div class="map-tooltip">
+            <div class="map-tooltip__title">📰 Media Attention</div>
+            ${name ? `<div class="map-tooltip__row"><span>Location</span><span>${escapeHtml(String(name))}</span></div>` : ''}
+            ${count ? `<div class="map-tooltip__row"><span>Articles</span><span>${count}</span></div>` : ''}
+          </div>`;
+        showTooltip(map, tooltipRef, f.geometry.coordinates as [number, number], html);
+      });
+      map.on('mouseleave', GDELT_GEO_CIRCLES, () => {
+        map.getCanvas().style.cursor = '';
+        tooltipRef.current?.remove();
+        tooltipRef.current = null;
+      });
+
+      // ── ACLED conflict events source + layer ─────────────────────────────
+      map.addSource(ACLED_SOURCE, {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+
+      map.addLayer({
+        id: ACLED_LAYER,
+        type: 'circle',
+        source: ACLED_SOURCE,
+        layout: { visibility: 'none' },
+        paint: {
+          'circle-color': ['coalesce', ['get', 'color'], '#ef4444'],
+          'circle-radius': [
+            'case',
+            ['>', ['coalesce', ['get', 'fatalities'], 0], 0],
+            9,
+            6,
+          ],
+          'circle-opacity': 0.8,
+          'circle-stroke-width': 1,
+          'circle-stroke-color': 'rgba(255,255,255,0.4)',
+        },
+      });
+
+      // ACLED hover
+      map.on('mouseenter', ACLED_LAYER, (e) => {
+        map.getCanvas().style.cursor = 'pointer';
+        const f = e.features?.[0];
+        if (!f || f.geometry.type !== 'Point') return;
+        const p = f.properties ?? {};
+        const fatalitiesText = p.fatalities > 0 ? `${p.fatalities} fatalities` : 'No fatalities reported';
+        const html = `
+          <div class="map-tooltip">
+            <div class="map-tooltip__title">${escapeHtml(p.icon || '⚔️')} ${escapeHtml(p.event_type || 'Conflict Event')}</div>
+            ${p.actor1 ? `<div class="map-tooltip__row"><span>Actor</span><span>${escapeHtml(String(p.actor1))}</span></div>` : ''}
+            ${p.actor2 ? `<div class="map-tooltip__row"><span>vs</span><span>${escapeHtml(String(p.actor2))}</span></div>` : ''}
+            <div class="map-tooltip__row"><span>Location</span><span>${escapeHtml(p.location || '—')}</span></div>
+            <div class="map-tooltip__row"><span>Casualties</span><span>${fatalitiesText}</span></div>
+            ${p.date ? `<div class="map-tooltip__row"><span>Date</span><span>${new Date(p.date).toLocaleDateString()}</span></div>` : ''}
+          </div>`;
+        showTooltip(map, tooltipRef, f.geometry.coordinates as [number, number], html);
+      });
+      map.on('mouseleave', ACLED_LAYER, () => {
+        map.getCanvas().style.cursor = '';
+        tooltipRef.current?.remove();
+        tooltipRef.current = null;
+      });
+
+      // ACLED click popup
+      map.on('click', ACLED_LAYER, (e) => {
+        const f = e.features?.[0];
+        if (!f || f.geometry.type !== 'Point') return;
+        const p = f.properties ?? {};
+        const color = p.color || '#ef4444';
+        const fatalitiesText = p.fatalities > 0
+          ? `<span style="color:#ef4444;font-weight:600">⚠ ${p.fatalities} fatalities</span>`
+          : 'No fatalities reported';
+        const html = `
+          <div class="map-popup">
+            <div class="map-popup__source-badge" style="color:${color}">
+              <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color};flex-shrink:0"></span>
+              ${escapeHtml(p.icon || '⚔️')} ACLED — ${escapeHtml(p.event_type || 'Conflict')}
+            </div>
+            ${p.sub_event_type ? `<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">${escapeHtml(String(p.sub_event_type))}</div>` : ''}
+            ${p.actor1 ? `<div class="map-popup__author">${escapeHtml(String(p.actor1))}${p.actor2 ? ` <span style="color:var(--text-muted)">vs</span> ${escapeHtml(String(p.actor2))}` : ''}</div>` : ''}
+            <div class="map-popup__place">📍 ${escapeHtml(p.location || p.country || '—')}</div>
+            <div class="map-popup__content">
+              ${fatalitiesText}<br>
+              ${p.date ? `Date: ${new Date(p.date).toLocaleDateString()}` : ''}
+              ${p.title ? `<div style="margin-top:6px;font-size:11px;color:var(--text-muted)">${escapeHtml(String(p.title).slice(0, 200))}</div>` : ''}
+            </div>
+            ${p.source_url ? `<div class="map-popup__footer"><a class="map-popup__link" href="${escapeHtml(String(p.source_url))}" target="_blank" rel="noopener">Source →</a></div>` : ''}
+          </div>`;
+        if (popupRef.current) popupRef.current.remove();
+        popupRef.current = new maplibregl.Popup({ closeButton: true, maxWidth: '300px', offset: 10 })
+          .setLngLat(f.geometry.coordinates as [number, number])
+          .setHTML(html)
+          .addTo(map);
+      });
+
+    }; // end setupDataLayers
+
+    // Re-add all data layers after a base layer style switch.
+    // style.load fires on initial load too — guard with styleInitializedRef.
+    map.on('style.load', () => {
+      if (!styleInitializedRef.current) return;
+      setupDataLayers();
+
+      // Re-populate events source data
+      const evSrc = map.getSource(SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+      if (evSrc) evSrc.setData(eventsToGeoJSON(filteredEventsRef.current));
+
+      // Re-apply OSINT cluster / heatmap visibility
+      const curFilters = filtersRef.current;
+      const clusterVis = curFilters.showClusters ? 'visible' : 'none';
+      if (map.getLayer(CLUSTER_LAYER)) map.setLayoutProperty(CLUSTER_LAYER, 'visibility', clusterVis);
+      if (map.getLayer(CLUSTER_COUNT_LAYER)) map.setLayoutProperty(CLUSTER_COUNT_LAYER, 'visibility', clusterVis);
+      if (map.getLayer(UNCLUSTERED_LAYER)) map.setLayoutProperty(UNCLUSTERED_LAYER, 'visibility', clusterVis);
+      if (map.getLayer(HEATMAP_LAYER)) map.setLayoutProperty(HEATMAP_LAYER, 'visibility', curFilters.showHeatmap ? 'visible' : 'none');
+
+      // Re-apply data layer visibility + re-fetch loaded layers
+      const layerVisMap: Record<keyof LayerState, string[]> = {
+        flights: [FLIGHTS_LAYER],
+        ships: [SHIPS_LAYER],
+        firms: [FIRMS_LAYER],
+        frontlines: [FRONTLINES_LAYER_LINE, FRONTLINES_LAYER_FILL, FRONTLINES_LAYER_EVENTS],
+        satellites: [SATELLITES_LAYER],
+        sentiment: [SENTIMENT_LAYER_CIRCLES, SENTIMENT_LAYER_HEAT],
+      };
+      const curLayers = layersStateRef.current;
+      for (const [key, enabled] of Object.entries(curLayers) as [keyof LayerState, boolean][]) {
+        const vis = enabled ? 'visible' : 'none';
+        for (const lid of layerVisMap[key as keyof LayerState]) {
+          if (map.getLayer(lid)) map.setLayoutProperty(lid, 'visibility', vis);
+        }
+        if (enabled && loadedLayers.current.has(key)) {
+          fetchFnsRef.current[key as keyof LayerState]?.();
+        }
+      }
+    });
+
+    map.on('load', () => {
+      styleInitializedRef.current = true;
+      mapReadyRef.current = true;
+      setMapReady(true);
+
+      setupDataLayers();
 
       // ── Cluster click: popup + zoom ───────────────────────────────────────
       map.on('click', CLUSTER_LAYER, async (e) => {
@@ -1279,6 +1621,8 @@ export function MapView() {
         onRefresh={fetchEvents}
         onFullscreen={handleFullscreen}
         isFullscreen={isFullscreen}
+        baseLayer={baseLayer}
+        onBaseLayerChange={setBaseLayer}
       />
 
       {/* ── Mobile FABs (hidden on desktop via CSS) ── */}
@@ -1539,6 +1883,100 @@ export function MapView() {
                   <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#84cc16' }} />Positive (0.1 to 0.3)</div>
                   <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#22c55e' }} />Very Positive (&gt;0.3)</div>
                 </div>
+              </div>
+            )}
+
+            {/* GDELT Media Attention */}
+            <label className="map-layer-row">
+              <span className="map-layer-row__dot" style={{ background: '#f97316' }} />
+              <span className="map-layer-row__name">📰 Media Attention</span>
+              {layers.gdelt && layerCounts.gdelt > 0 && (
+                <span className="map-layer-row__count">{layerCounts.gdelt}</span>
+              )}
+              <span className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={layers.gdelt}
+                  onChange={(e) => toggleLayer('gdelt', e.target.checked)}
+                />
+                <span className="toggle-slider" />
+              </span>
+            </label>
+
+            {layers.gdelt && (
+              <div className="sentiment-controls">
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, marginBottom: 4 }}>
+                  GDELT Keyword
+                </div>
+                <div className="gdelt-keyword-input">
+                  <input
+                    type="text"
+                    placeholder="e.g. conflict"
+                    value={gdeltInputValue}
+                    onChange={(e) => {
+                      setGdeltInputValue(e.target.value);
+                      if (gdeltDebounceRef.current) clearTimeout(gdeltDebounceRef.current);
+                      gdeltDebounceRef.current = setTimeout(() => {
+                        if (e.target.value.trim()) {
+                          setGdeltKeyword(e.target.value.trim());
+                        }
+                      }, 800);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && gdeltInputValue.trim()) {
+                        if (gdeltDebounceRef.current) clearTimeout(gdeltDebounceRef.current);
+                        setGdeltKeyword(gdeltInputValue.trim());
+                      }
+                    }}
+                  />
+                </div>
+                <div className="gdelt-presets">
+                  {['conflict', 'nuclear', 'terrorism', 'protest', 'cyber attack'].map((preset) => (
+                    <button
+                      key={preset}
+                      className={`gdelt-preset-btn${gdeltKeyword === preset ? ' gdelt-preset-btn--active' : ''}`}
+                      onClick={() => {
+                        setGdeltInputValue(preset);
+                        setGdeltKeyword(preset);
+                      }}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── Conflict Intelligence ── */}
+          <div className="map-layers-section">
+            <div className="map-layers-section__label">Conflict Intelligence</div>
+
+            <label className="map-layer-row">
+              <span className="map-layer-row__dot" style={{ background: '#ef4444' }} />
+              <span className="map-layer-row__name">⚔️ Conflict Events (ACLED)</span>
+              {layers.acled && layerCounts.acled > 0 && (
+                <span className="map-layer-row__count">{layerCounts.acled}</span>
+              )}
+              <span className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={layers.acled}
+                  onChange={(e) => toggleLayer('acled', e.target.checked)}
+                />
+                <span className="toggle-slider" />
+              </span>
+            </label>
+
+            {layers.acled && (
+              <div className="sentiment-legend" style={{ marginTop: 6 }}>
+                <div className="sentiment-legend__title">Event Types</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#ef4444' }} />Battles</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#f97316' }} />Explosions/Remote Violence</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#991b1b' }} />Violence vs Civilians</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#eab308' }} />Protests</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#a855f7' }} />Riots</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#3b82f6' }} />Strategic Developments</div>
               </div>
             )}
           </div>

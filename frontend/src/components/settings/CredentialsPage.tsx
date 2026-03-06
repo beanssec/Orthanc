@@ -131,21 +131,22 @@ const PROVIDERS = [
     },
   },
   {
-    id: 'mapbox',
-    label: 'Mapbox (optional)',
-    icon: '🗺',
-    description: 'Not required — Orthanc uses free CartoDB tiles by default.',
+    id: 'acled',
+    label: 'ACLED (Conflict Data)',
+    icon: '⚔️',
+    description: 'Armed Conflict Location & Event Data — structured conflict events worldwide.',
     fields: [
-      { key: 'access_token', label: 'Access Token', placeholder: 'pk.eyJ1...', type: 'password' as const },
+      { key: 'api_key', label: 'API Key', placeholder: 'your-acled-key...', type: 'password' as const },
+      { key: 'email', label: 'Email', placeholder: 'you@example.com', type: 'text' as const },
     ],
     guide: {
-      title: 'Mapbox is optional',
+      title: 'How to get ACLED credentials',
       steps: [
-        'Orthanc uses free CartoDB dark-matter tiles — no Mapbox key needed',
-        'If you prefer Mapbox styling, go to https://mapbox.com and create an account',
-        'Copy your public access token from the account page',
+        'Go to https://developer.acleddata.com and register for free',
+        'Verify your email and log in',
+        'Your API key and registered email are your credentials',
       ],
-      note: 'Only needed if you want Mapbox-specific map styles. The default dark map works without any key.',
+      note: 'Free for researchers and non-commercial use. Provides the most reliable structured conflict data available.',
     },
   },
 ];

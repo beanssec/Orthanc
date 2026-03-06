@@ -14,6 +14,7 @@ from app.routers import search
 from app.routers import documents
 from app.routers import collaboration
 from app.routers import nlquery
+from app.routers import gdelt
 from app.collectors.orchestrator import orchestrator
 from app.collectors.satellite_collector import satellite_collector
 from app.services.brief_scheduler import brief_scheduler
@@ -123,6 +124,7 @@ app.include_router(documents.router)
 app.include_router(collaboration.router)
 app.include_router(nlquery.router)
 app.include_router(media.router)
+app.include_router(gdelt.router)
 
 
 @app.get("/")

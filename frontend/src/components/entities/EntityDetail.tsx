@@ -97,7 +97,17 @@ interface Props {
   entityId: string | number;
 }
 
-type DetailTab = 'overview' | 'timeline' | 'relationships' | 'notes';
+type DetailTab = 'overview' | 'timeline' | 'relationships' | 'notes' | 'global_media';
+
+interface GdeltArticle {
+  title: string;
+  url: string;
+  source: string;
+  language: string;
+  seendate: string;
+  tone: number;
+  image: string;
+}
 type TimeRange = 24 | 48 | 168 | 720 | 99999;
 
 // ── Helpers ────────────────────────────────────────────────
@@ -741,6 +751,11 @@ export function EntityDetail({ entityId }: Props) {
   // Path modal
   const [showPathModal, setShowPathModal] = useState(false);
 
+  // GDELT Global Media state
+  const [gdeltArticles, setGdeltArticles] = useState<GdeltArticle[]>([]);
+  const [gdeltLoading, setGdeltLoading] = useState(false);
+  const [gdeltError, setGdeltError] = useState<string | null>(null);
+
   // Load entity + connections + rel types
   useEffect(() => {
     let cancelled = false;
@@ -798,6 +813,28 @@ export function EntityDetail({ entityId }: Props) {
     setTimelinePage(1);
   }, []);
 
+  // GDELT articles loading
+  useEffect(() => {
+    if (activeTab !== 'global_media' || !entity) return;
+    let cancelled = false;
+    setGdeltLoading(true);
+    setGdeltError(null);
+    setGdeltArticles([]);
+
+    api.get('/gdelt/articles', { params: { q: entity.name, max_records: 20 } })
+      .then(res => {
+        if (!cancelled) {
+          setGdeltArticles((res.data as { articles: GdeltArticle[] }).articles ?? []);
+        }
+      })
+      .catch(err => {
+        if (!cancelled) setGdeltError(err instanceof Error ? err.message : 'Failed to load media coverage');
+      })
+      .finally(() => { if (!cancelled) setGdeltLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [entityId, activeTab, entity]);
+
   if (loading) {
     return <div className="entities-loading"><span className="spinner" />Loading entity…</div>;
   }
@@ -828,7 +865,7 @@ export function EntityDetail({ entityId }: Props) {
 
       {/* Tab bar */}
       <div className="entity-detail__tabs">
-        {(['overview', 'timeline', 'relationships', 'notes'] as DetailTab[]).map(tab => (
+        {(['overview', 'timeline', 'relationships', 'notes', 'global_media'] as DetailTab[]).map(tab => (
           <button
             key={tab}
             className={`entity-detail__tab${activeTab === tab ? ' entity-detail__tab--active' : ''}`}
@@ -837,6 +874,7 @@ export function EntityDetail({ entityId }: Props) {
             {tab === 'overview' ? 'Overview'
               : tab === 'timeline' ? `Timeline${timelineTotal > 0 && activeTab === 'timeline' ? ` (${timelineTotal})` : ''}`
               : tab === 'relationships' ? 'Relationships'
+              : tab === 'global_media' ? '🌐 Global Media'
               : 'Notes'}
           </button>
         ))}
@@ -969,6 +1007,87 @@ export function EntityDetail({ entityId }: Props) {
           <div className="entity-section">
             <div className="entity-section__title">Notes</div>
             <NotesSection targetType="entity" targetId={String(entity.id)} />
+          </div>
+        )}
+
+        {/* ── Global Media (GDELT) ── */}
+        {activeTab === 'global_media' && (
+          <div className="entity-section">
+            <div className="entity-section__title">Global Media Coverage</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>
+              Powered by GDELT — last 7 days
+            </div>
+            {gdeltLoading && (
+              <div className="entities-loading"><span className="spinner" /> Searching global media…</div>
+            )}
+            {gdeltError && (
+              <div style={{ padding: '12px 0', color: 'var(--danger)', fontSize: 12 }}>⚠ {gdeltError}</div>
+            )}
+            {!gdeltLoading && !gdeltError && gdeltArticles.length === 0 && (
+              <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+                No global media coverage found
+              </div>
+            )}
+            {!gdeltLoading && gdeltArticles.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {gdeltArticles.map((art, i) => {
+                  const tone = typeof art.tone === 'number' ? art.tone : parseFloat(String(art.tone)) || 0;
+                  const toneColor = tone < -1 ? '#ef4444' : tone > 1 ? '#22c55e' : '#9ca3af';
+                  const toneLabel = tone < -1 ? 'negative' : tone > 1 ? 'positive' : 'neutral';
+                  const dateStr = art.seendate
+                    ? art.seendate.replace(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z?/, '$1-$2-$3 $4:$5')
+                    : '';
+                  return (
+                    <div key={i} style={{
+                      padding: '10px 12px',
+                      background: 'var(--bg-surface)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 6,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                    }}>
+                      <a
+                        href={art.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)', textDecoration: 'none', lineHeight: 1.4 }}
+                        onMouseOver={e => (e.currentTarget.style.textDecoration = 'underline')}
+                        onMouseOut={e => (e.currentTarget.style.textDecoration = 'none')}
+                      >
+                        {art.title || art.url}
+                      </a>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        {art.source && (
+                          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono, monospace)' }}>
+                            {art.source}
+                          </span>
+                        )}
+                        {dateStr && (
+                          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{dateStr}</span>
+                        )}
+                        <span style={{
+                          fontSize: 10,
+                          color: toneColor,
+                          background: `${toneColor}22`,
+                          border: `1px solid ${toneColor}55`,
+                          borderRadius: 8,
+                          padding: '1px 6px',
+                          fontWeight: 600,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                        }}>
+                          {toneLabel}
+                        </span>
+                        {art.language && art.language !== 'English' && (
+                          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{art.language}</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
       </div>

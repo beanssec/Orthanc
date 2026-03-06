@@ -18,6 +18,7 @@ from .ais_collector import ais_collector
 from .market_collector import market_collector
 from .cashtag_collector import cashtag_collector
 from .telegram_collector import TelegramCollector
+from .acled_collector import acled_collector
 
 logger = logging.getLogger("orthanc.collectors.orchestrator")
 
@@ -236,6 +237,22 @@ class CollectorOrchestrator:
         else:
             logger.info("No AIS keys for user %s — AIS collector not started", user_id)
 
+        # --- ACLED collector ---
+        acled_keys = await collector_manager.get_keys(user_id, "acled")
+        if acled_keys:
+            api_key = acled_keys.get("api_key", "")
+            email = acled_keys.get("email", "")
+            if api_key and email:
+                try:
+                    await acled_collector.start(api_key, email)
+                    logger.info("ACLED collector started for user %s", user_id)
+                except Exception:
+                    logger.exception("Failed to start ACLED collector for user %s", user_id)
+            else:
+                logger.info("ACLED keys for user %s missing api_key or email", user_id)
+        else:
+            logger.info("No ACLED keys for user %s — ACLED collector not started", user_id)
+
         # --- Cashtag collector (requires xAI key) ---
         x_keys_for_cashtag = await collector_manager.get_keys(user_id, "x")
         if x_keys_for_cashtag:
@@ -300,6 +317,12 @@ class CollectorOrchestrator:
             await ais_collector.stop()
         except Exception:
             logger.exception("Error stopping AIS collector for user %s", user_id)
+
+        # ACLED
+        try:
+            await acled_collector.stop()
+        except Exception:
+            logger.exception("Error stopping ACLED collector for user %s", user_id)
 
         # Cashtag
         try:
@@ -381,6 +404,7 @@ class CollectorOrchestrator:
             "ais": "active" if (ais_collector._task and not ais_collector._task.done()) else "inactive",
             "market": "active" if (self._market_collector._task and not self._market_collector._task.done()) else "inactive",
             "cashtag": "active" if self._cashtag_collector._tasks else "inactive",
+            "acled": "active" if (acled_collector._task and not acled_collector._task.done()) else "inactive",
         }
 
 

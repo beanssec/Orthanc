@@ -37,6 +37,8 @@ Named after the tower that held the Palantír. The seeing stone shouldn't be loc
 
 ### 🗺️ Tactical Map
 - MapLibre GL with dark CartoDB tiles (free, no API key)
+- **Base layer switcher** — toggle between Dark, Satellite, and Hybrid base maps using the switcher in the map toolbar
+- Satellite imagery provided by Esri World Imagery (free, no API key required)
 - Clustered OSINT events with precision filtering
 - Click any cluster → browse events → click to inspect full detail in side panel
 - Heatmap and cluster visualization modes

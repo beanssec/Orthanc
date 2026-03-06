@@ -43,9 +43,20 @@ function GlobalTopBar() {
 
 export function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem('orthanc_sidebar_collapsed') === '1'; } catch { return false; }
+  });
+
+  const toggleCollapsed = () => {
+    setSidebarCollapsed(prev => {
+      const next = !prev;
+      try { localStorage.setItem('orthanc_sidebar_collapsed', next ? '1' : '0'); } catch {}
+      return next;
+    });
+  };
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${sidebarCollapsed ? ' app-shell--collapsed' : ''}`}>
       {/* Global top bar with search — always visible */}
       <GlobalTopBar />
 
@@ -68,7 +79,7 @@ export function AppShell() {
         aria-hidden="true"
       />
 
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} collapsed={sidebarCollapsed} onToggleCollapse={toggleCollapsed} />
       <main className="app-shell__main">
         <Outlet />
       </main>

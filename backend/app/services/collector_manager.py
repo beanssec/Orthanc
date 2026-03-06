@@ -38,7 +38,7 @@ class CollectorManager:
 
     async def get_status(self, user_id: str) -> list[CredentialStatus]:
         """Return status for all known providers."""
-        known_providers = ["telegram", "x", "mapbox", "shodan", "discord"]
+        known_providers = ["telegram", "x", "shodan", "discord"]
         user_keys = self._active_keys.get(user_id, {})
         return [
             CredentialStatus(

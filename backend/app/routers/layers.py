@@ -22,6 +22,16 @@ from app.services.translator import translator
 
 logger = logging.getLogger("orthanc.routers.layers")
 
+# ACLED event types — colour + icon per category
+ACLED_EVENT_TYPES = {
+    "Battles": {"color": "#ef4444", "icon": "⚔️"},
+    "Explosions/Remote violence": {"color": "#f97316", "icon": "💥"},
+    "Violence against civilians": {"color": "#991b1b", "icon": "🩸"},
+    "Protests": {"color": "#eab308", "icon": "✊"},
+    "Riots": {"color": "#a855f7", "icon": "🔥"},
+    "Strategic developments": {"color": "#3b82f6", "icon": "📋"},
+}
+
 router = APIRouter(tags=["layers"])
 
 
@@ -502,6 +512,81 @@ async def get_sentiment_layer(
 
     logger.debug("Sentiment layer: hours=%d → %d locations", hours, len(features))
     return {"type": "FeatureCollection", "features": features}
+
+
+# ---------------------------------------------------------------------------
+# ACLED conflict data layer
+# ---------------------------------------------------------------------------
+
+@router.get("/layers/acled")
+async def get_acled_data(
+    hours: int = Query(default=168, ge=1, le=720),
+    event_types: str | None = Query(default=None, description="Comma-separated ACLED event types"),
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict:
+    """Return ACLED conflict events as GeoJSON FeatureCollection for map overlay."""
+    from app.models.event import Event as GeoEvent
+
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    stmt = (
+        select(Post, GeoEvent)
+        .join(GeoEvent, GeoEvent.post_id == Post.id)
+        .where(Post.source_type == "acled")
+        .where(Post.timestamp >= since)
+        .order_by(Post.timestamp.desc())
+        .limit(5000)
+    )
+
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    # Optional event-type filter (post-query, avoids complex JSON queries)
+    filter_types: set[str] | None = None
+    if event_types:
+        filter_types = {t.strip() for t in event_types.split(",") if t.strip()}
+
+    features = []
+    for post, geo in rows:
+        meta = post.raw_json or {}
+        event_type = meta.get("event_type", "Unknown")
+
+        if filter_types and event_type not in filter_types:
+            continue
+
+        type_info = ACLED_EVENT_TYPES.get(event_type, {"color": "#6b7280", "icon": "❓"})
+
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [geo.lng, geo.lat]},
+            "properties": {
+                "id": str(post.id),
+                "title": post.content.split("\n")[0] if post.content else "",
+                "event_type": event_type,
+                "sub_event_type": meta.get("sub_event_type", ""),
+                "actor1": meta.get("actor1", ""),
+                "actor2": meta.get("actor2", ""),
+                "fatalities": meta.get("fatalities", 0),
+                "date": post.timestamp.isoformat() if post.timestamp else "",
+                "location": geo.place_name or "",
+                "color": type_info["color"],
+                "icon": type_info["icon"],
+                "source_url": meta.get("source_url", ""),
+                "country": meta.get("country", ""),
+                "region": meta.get("region", ""),
+            },
+        })
+
+    logger.debug("ACLED layer: hours=%d → %d features", hours, len(features))
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "metadata": {
+            "count": len(features),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        },
+    }
 
 
 # ---------------------------------------------------------------------------

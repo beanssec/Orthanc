@@ -7,7 +7,15 @@ interface MapControlsProps {
   onRefresh: () => void;
   onFullscreen: () => void;
   isFullscreen: boolean;
+  baseLayer: 'dark' | 'satellite' | 'hybrid';
+  onBaseLayerChange: (layer: 'dark' | 'satellite' | 'hybrid') => void;
 }
+
+const BASE_LAYER_OPTIONS: { key: 'dark' | 'satellite' | 'hybrid'; label: string }[] = [
+  { key: 'dark', label: '🌑 Dark' },
+  { key: 'satellite', label: '🛰 Sat' },
+  { key: 'hybrid', label: '🗺 Hybrid' },
+];
 
 export function MapControls({
   zoom,
@@ -16,6 +24,8 @@ export function MapControls({
   onRefresh,
   onFullscreen,
   isFullscreen,
+  baseLayer,
+  onBaseLayerChange,
 }: MapControlsProps) {
   return (
     <div className="map-controls">
@@ -24,6 +34,20 @@ export function MapControls({
 
       {/* Zoom level */}
       <div className="map-info-badge">z{zoom.toFixed(1)}</div>
+
+      {/* Base layer switcher */}
+      <div className="base-layer-switcher">
+        {BASE_LAYER_OPTIONS.map(({ key, label }) => (
+          <button
+            key={key}
+            className={`base-layer-btn${baseLayer === key ? ' base-layer-btn--active' : ''}`}
+            onClick={() => onBaseLayerChange(key)}
+            title={`Switch to ${key} base map`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
       {/* Control buttons */}
       <div className="map-controls__group">

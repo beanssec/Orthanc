@@ -29,6 +29,9 @@ class Post(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
+    # ── Generic dedup identifier (migration 010) ─────────────────────────────
+    external_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+
     # ── Media fields (migration 009) ──────────────────────────────────────────
     media_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     # 'image', 'video', 'document' — null if no media downloaded

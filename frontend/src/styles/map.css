@@ -310,12 +310,46 @@
   background: #fff;
 }
 
+/* ── Base Layer Switcher ────────────────────────────────── */
+.base-layer-switcher {
+  display: flex;
+  gap: 2px;
+  background: rgba(10, 14, 26, 0.92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px;
+}
+
+.base-layer-btn {
+  padding: 4px 8px;
+  font-size: 11px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.base-layer-btn:hover {
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--text-primary);
+}
+
+.base-layer-btn--active {
+  background: var(--accent);
+  color: #fff;
+}
+
 /* ── Map Controls (top-right) ───────────────────────────── */
 .map-controls {
   position: absolute;
   top: 12px;
   right: 12px;
-  z-index: 10;
+  z-index: 15;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1137,6 +1171,55 @@
   transition: background 0.12s;
   padding: 6px 4px;
   margin: 0 -4px;
+}
+
+/* ── GDELT Layer Controls ────────────────────────────────── */
+.gdelt-keyword-input {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.gdelt-keyword-input input {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 11px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-primary);
+  font-family: inherit;
+  outline: none;
+}
+
+.gdelt-keyword-input input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.gdelt-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.gdelt-preset-btn {
+  padding: 2px 6px;
+  font-size: 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.gdelt-preset-btn:hover,
+.gdelt-preset-btn--active {
+  border-color: var(--accent);
+  color: var(--text-primary);
 }
 
 /* Mobile: detail panel full width */
