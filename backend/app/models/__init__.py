@@ -11,6 +11,7 @@ from .entity_relationship import EntityRelationship, EntityProperty
 from .collaboration import UserNote, UserBookmark, UserTag
 from .brief import Brief
 from .financial import Holding, Quote, EntityTickerMap, Signal
+from .sanctions import SanctionsEntity, EntitySanctionsMatch
 
 __all__ = [
     "Base", "User", "Credential", "Post", "Event", "Source",
@@ -20,4 +21,5 @@ __all__ = [
     "UserNote", "UserBookmark", "UserTag",
     "Brief",
     "Holding", "Quote", "EntityTickerMap", "Signal",
+    "SanctionsEntity", "EntitySanctionsMatch",
 ]

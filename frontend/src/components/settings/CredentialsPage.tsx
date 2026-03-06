@@ -131,6 +131,24 @@ const PROVIDERS = [
     },
   },
   {
+    id: 'occrp',
+    label: 'OCCRP Aleph',
+    icon: '🔍',
+    description: 'Organized Crime and Corruption Reporting Project — 1B+ records of corporate, court, and leaked data.',
+    fields: [
+      { key: 'api_key', label: 'API Key', placeholder: 'your-aleph-key...', type: 'password' as const },
+    ],
+    guide: {
+      title: 'How to get an OCCRP Aleph API key',
+      steps: [
+        'Go to https://aleph.occrp.org and create a free account',
+        'Go to Settings → API Key',
+        'Copy your API key',
+      ],
+      note: 'Free account provides access to 1B+ records. OCCRP key is optional — basic search works without authentication, but results may be limited.',
+    },
+  },
+  {
     id: 'acled',
     label: 'ACLED (Conflict Data)',
     icon: '⚔️',

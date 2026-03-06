@@ -15,7 +15,7 @@ from app.services.crypto import encrypt_credentials
 
 router = APIRouter(prefix="/credentials", tags=["credentials"])
 
-KNOWN_PROVIDERS = ["telegram", "x", "openrouter", "shodan", "discord", "ais", "acled"]
+KNOWN_PROVIDERS = ["telegram", "x", "openrouter", "shodan", "discord", "ais", "acled", "occrp"]
 
 
 @router.post("/", response_model=CredentialResponse, status_code=status.HTTP_201_CREATED)

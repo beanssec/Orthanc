@@ -29,6 +29,9 @@ router = APIRouter(prefix="/briefs", tags=["briefs"])
 class BriefRequest(BaseModel):
     hours: int = 24
     model: Optional[str] = None
+    topic: Optional[str] = None
+    source_types: Optional[list[str]] = None
+    custom_prompt: Optional[str] = None
 
 
 class BriefScheduleRequest(BaseModel):
@@ -61,7 +64,12 @@ async def generate_brief(
     """Generate an AI intelligence brief from recent posts."""
     hours = max(1, min(body.hours, 168))  # clamp to 1h–7d
     result = await brief_generator.generate_brief(
-        str(current_user.id), hours=hours, model_id=body.model
+        str(current_user.id),
+        hours=hours,
+        model_id=body.model,
+        topic=body.topic,
+        source_types=body.source_types,
+        custom_prompt=body.custom_prompt,
     )
     return result
 

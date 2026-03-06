@@ -735,3 +735,93 @@
 .briefs-toggle input:checked + .briefs-toggle__track::after {
   transform: translateX(16px);
 }
+
+/* ── Brief filters ──────────────────────────────────────── */
+.briefs-topic-input {
+  width: 100%;
+  max-width: 400px;
+}
+
+.briefs-source-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.briefs-source-filter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.briefs-source-filter:hover {
+  border-color: var(--accent);
+}
+
+.briefs-source-filter input[type="checkbox"] {
+  width: 12px;
+  height: 12px;
+  accent-color: var(--accent);
+}
+
+.briefs-source-filter__label {
+  color: var(--text-secondary);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.briefs-source-clear {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.briefs-source-clear:hover {
+  text-decoration: underline;
+}
+
+.briefs-filter-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.briefs-advanced-toggle {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 0;
+  text-align: left;
+}
+
+.briefs-advanced-toggle:hover {
+  color: var(--text-secondary);
+}
+
+.briefs-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.briefs-custom-prompt {
+  width: 100%;
+  max-width: 500px;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 12px;
+  min-height: 60px;
+}

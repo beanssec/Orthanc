@@ -183,6 +183,10 @@ export function BriefsView() {
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [hours, setHours] = useState(24);
+  const [topic, setTopic] = useState('');
+  const [sourceFilters, setSourceFilters] = useState<string[]>([]);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [customPrompt, setCustomPrompt] = useState('');
 
   // ── Generation state ──
   const [generating, setGenerating] = useState(false);
@@ -287,7 +291,11 @@ export function BriefsView() {
     setGenerating(true);
     setGenerateError(null);
     try {
-      const res = await api.post('/briefs/generate', { hours, model: selectedModel });
+      const payload: Record<string, unknown> = { hours, model: selectedModel };
+      if (topic.trim()) payload.topic = topic.trim();
+      if (sourceFilters.length > 0) payload.source_types = sourceFilters;
+      if (customPrompt.trim()) payload.custom_prompt = customPrompt.trim();
+      const res = await api.post('/briefs/generate', payload);
       if (res.data.error) {
         setGenerateError(res.data.error);
       } else {
@@ -468,6 +476,60 @@ export function BriefsView() {
               ))}
             </div>
 
+            {/* Topic filter */}
+            <span className="briefs-controls__label">Topic Filter</span>
+            <input
+              className="input briefs-topic-input"
+              type="text"
+              placeholder="All topics (or type: Ukraine, cyber, Iran, finance…)"
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+            />
+
+            {/* Source type filter */}
+            <span className="briefs-controls__label">Source Filter</span>
+            <div className="briefs-source-filters">
+              {['rss', 'x', 'telegram', 'reddit', 'discord', 'shodan', 'acled', 'webhook', 'document'].map((src) => (
+                <label key={src} className="briefs-source-filter">
+                  <input
+                    type="checkbox"
+                    checked={sourceFilters.includes(src)}
+                    onChange={(e) => {
+                      if (e.target.checked) setSourceFilters((prev) => [...prev, src]);
+                      else setSourceFilters((prev) => prev.filter((s) => s !== src));
+                    }}
+                  />
+                  <span className="briefs-source-filter__label">{src.toUpperCase()}</span>
+                </label>
+              ))}
+              {sourceFilters.length > 0 && (
+                <button className="briefs-source-clear" onClick={() => setSourceFilters([])}>Clear</button>
+              )}
+            </div>
+            {sourceFilters.length === 0 && (
+              <span className="briefs-filter-hint">No filter = all sources included</span>
+            )}
+
+            {/* Advanced: custom prompt */}
+            <button
+              className="briefs-advanced-toggle"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+            >
+              {showAdvanced ? '▾ Hide advanced' : '▸ Advanced options'}
+            </button>
+            {showAdvanced && (
+              <div className="briefs-advanced">
+                <span className="briefs-controls__label">Custom System Prompt</span>
+                <textarea
+                  className="input briefs-custom-prompt"
+                  rows={3}
+                  placeholder="Override the default analyst prompt (e.g., 'You are a cyber threat analyst focusing on APT groups…')"
+                  value={customPrompt}
+                  onChange={(e) => setCustomPrompt(e.target.value)}
+                />
+              </div>
+            )}
+
             {!selectedModel && !modelsLoading && (
               <span className="briefs-no-model">⚠ Select a model above</span>
             )}
@@ -478,7 +540,7 @@ export function BriefsView() {
               onClick={handleGenerate}
             >
               {generating ? (
-                <><span className="spinner spinner-sm" /> Analyzing {hours}h of posts…</>
+                <><span className="spinner spinner-sm" /> Analyzing{topic ? ` "${topic}"` : ''} {hours}h of posts…</>
               ) : (
                 '▶ Generate Brief'
               )}

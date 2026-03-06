@@ -97,7 +97,23 @@ interface Props {
   entityId: string | number;
 }
 
-type DetailTab = 'overview' | 'timeline' | 'relationships' | 'notes' | 'global_media';
+type DetailTab = 'overview' | 'timeline' | 'relationships' | 'notes' | 'global_media' | 'sanctions' | 'investigations';
+
+// ── Sanctions types ────────────────────────────────────────
+interface SanctionsMatch {
+  match_id: string;
+  entity_id: string;
+  sanctions_entity_id: string;
+  sanctions_entity_name: string;
+  entity_type: string | null;
+  confidence: number;
+  matched_on: string | null;
+  datasets: string[];
+  countries: string[];
+  aliases: string[];
+  created_at: string;
+  opensanctions_url: string;
+}
 
 interface GdeltArticle {
   title: string;
@@ -731,6 +747,258 @@ function RelationshipsSection({ entityId, relTypes }: RelationshipsSectionProps)
   );
 }
 
+// ── Dataset label prettifier ───────────────────────────────
+function formatDataset(ds: string): string {
+  const known: Record<string, string> = {
+    us_ofac_sdn: 'OFAC SDN',
+    us_ofac_cons: 'OFAC Consolidated',
+    eu_sanctions: 'EU Financial Sanctions',
+    un_sc_sanctions: 'UN Security Council',
+    gb_hmt_sanctions: 'UK HMT',
+    ch_seco_sanctions: 'Switzerland SECO',
+    ca_dfatd_sema_sanctions: 'Canada SEMA',
+    au_dfat_sanctions: 'Australia DFAT',
+    us_bis_denied: 'BIS Denied Persons',
+    ru_nsd_isin: 'Russia NSD',
+  };
+  return known[ds] ?? ds.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// ── Sanctions Tab Component ────────────────────────────────
+interface SanctionsTabProps {
+  entityId: string;
+}
+
+function SanctionsTab({ entityId }: SanctionsTabProps) {
+  const [matches, setMatches] = useState<SanctionsMatch[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  const loadMatches = () => {
+    setLoading(true);
+    setError(null);
+    api.get(`/sanctions/matches/${entityId}`)
+      .then(res => setMatches(res.data as SanctionsMatch[]))
+      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load sanctions data'))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadMatches();
+  }, [entityId]);
+
+  const runCheck = async () => {
+    setChecking(true);
+    try {
+      await api.post(`/sanctions/check/${entityId}`);
+      loadMatches();
+    } catch {
+      /* ignore */
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="entities-loading"><span className="spinner" />Checking sanctions lists…</div>;
+  }
+
+  if (error) {
+    return (
+      <div className="entity-section">
+        <div style={{ color: 'var(--danger)', fontSize: 12, padding: '12px 0' }}>⚠ {error}</div>
+      </div>
+    );
+  }
+
+  const strongMatches = matches.filter(m => m.confidence >= 0.9);
+  const possibleMatches = matches.filter(m => m.confidence >= 0.7 && m.confidence < 0.9);
+
+  return (
+    <div className="entity-section" style={{ paddingBottom: 24 }}>
+      {/* Header row */}
+      <div className="entity-section__title-row" style={{ marginBottom: 12 }}>
+        <span className="entity-section__title">Sanctions Screening</span>
+        <button
+          className="btn btn-secondary btn-sm"
+          style={{ fontSize: 10, padding: '2px 8px' }}
+          onClick={runCheck}
+          disabled={checking}
+        >
+          {checking ? 'Checking…' : '⟳ Recheck'}
+        </button>
+      </div>
+
+      {matches.length === 0 ? (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '12px 14px',
+          background: 'rgba(16, 185, 129, 0.06)',
+          border: '1px solid rgba(16, 185, 129, 0.2)',
+          borderRadius: 6,
+        }}>
+          <span className="sanctions-badge sanctions-badge--clear">✓ Clear</span>
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+            No sanctions matches found in available databases.
+          </span>
+        </div>
+      ) : (
+        <>
+          {/* Summary banner */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '10px 14px',
+            background: 'rgba(239, 68, 68, 0.08)',
+            border: '1px solid rgba(239, 68, 68, 0.25)',
+            borderRadius: 6,
+            marginBottom: 16,
+          }}>
+            <span className="sanctions-badge sanctions-badge--match">🔴 SANCTIONED</span>
+            <div style={{ fontSize: 12 }}>
+              <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
+                {matches.length} match{matches.length !== 1 ? 'es' : ''} found
+              </span>
+              {strongMatches.length > 0 && (
+                <span style={{ color: 'var(--danger)', marginLeft: 8 }}>
+                  {strongMatches.length} strong
+                </span>
+              )}
+              {possibleMatches.length > 0 && (
+                <span style={{ color: 'var(--warning)', marginLeft: 8 }}>
+                  {possibleMatches.length} possible
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Match cards */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {matches.map(match => {
+              const isStrong = match.confidence >= 0.9;
+              const accentColor = isStrong ? 'var(--danger)' : 'var(--warning)';
+              const confPct = Math.round(match.confidence * 100);
+
+              return (
+                <div key={match.match_id} style={{
+                  padding: '12px 14px',
+                  background: 'var(--bg-surface)',
+                  border: `1px solid ${isStrong ? 'rgba(239,68,68,0.25)' : 'rgba(245,158,11,0.2)'}`,
+                  borderLeft: `3px solid ${accentColor}`,
+                  borderRadius: 6,
+                }}>
+                  {/* Name + confidence */}
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+                    <div>
+                      <a
+                        href={match.opensanctions_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}
+                      >
+                        {match.sanctions_entity_name}
+                      </a>
+                      {match.entity_type && (
+                        <span style={{
+                          marginLeft: 8, fontSize: 10, color: 'var(--text-muted)',
+                          textTransform: 'uppercase', letterSpacing: '0.04em',
+                        }}>
+                          {match.entity_type}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: accentColor, lineHeight: 1 }}>
+                        {confPct}%
+                      </div>
+                      <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>
+                        {isStrong ? 'STRONG MATCH' : 'POSSIBLE MATCH'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Matched on */}
+                  {match.matched_on && (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
+                      Matched on:{' '}
+                      <span style={{ color: 'var(--text-secondary)' }}>
+                        {match.matched_on === 'name' ? 'exact name' : `alias`}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Datasets */}
+                  {match.datasets.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+                      {match.datasets.map(ds => (
+                        <span key={ds} style={{
+                          fontSize: 10, padding: '2px 6px',
+                          background: 'rgba(239,68,68,0.1)',
+                          border: '1px solid rgba(239,68,68,0.2)',
+                          borderRadius: 3,
+                          color: 'var(--danger)',
+                          fontWeight: 600,
+                        }}>
+                          {formatDataset(ds)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Countries */}
+                  {match.countries.length > 0 && (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
+                      Countries:{' '}
+                      <span style={{ color: 'var(--text-secondary)' }}>
+                        {match.countries.join(', ')}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Aliases (first 3) */}
+                  {match.aliases.length > 0 && (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      Aliases:{' '}
+                      <span style={{ color: 'var(--text-secondary)' }}>
+                        {match.aliases.slice(0, 3).join(', ')}
+                        {match.aliases.length > 3 && ` +${match.aliases.length - 3} more`}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Link */}
+                  <div style={{ marginTop: 8 }}>
+                    <a
+                      href={match.opensanctions_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontSize: 11, color: 'var(--accent)' }}
+                    >
+                      View on OpenSanctions →
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      <div style={{ marginTop: 16, fontSize: 10, color: 'var(--text-muted)' }}>
+        Data sourced from{' '}
+        <a href="https://opensanctions.org" target="_blank" rel="noopener noreferrer">
+          OpenSanctions
+        </a>
+        . Use /sanctions/refresh to populate the database.
+      </div>
+    </div>
+  );
+}
+
 // ── Main Component ──────────────────────────────────────────
 export function EntityDetail({ entityId }: Props) {
   const navigate = useNavigate();
@@ -755,6 +1023,12 @@ export function EntityDetail({ entityId }: Props) {
   const [gdeltArticles, setGdeltArticles] = useState<GdeltArticle[]>([]);
   const [gdeltLoading, setGdeltLoading] = useState(false);
   const [gdeltError, setGdeltError] = useState<string | null>(null);
+
+  // Investigations (ICIJ + OCCRP) state
+  const [icijResults, setIcijResults] = useState<Record<string, unknown>[]>([]);
+  const [icijLoading, setIcijLoading] = useState(false);
+  const [occrpResults, setOccrpResults] = useState<Record<string, unknown>[]>([]);
+  const [occrpLoading, setOccrpLoading] = useState(false);
 
   // Load entity + connections + rel types
   useEffect(() => {
@@ -835,6 +1109,39 @@ export function EntityDetail({ entityId }: Props) {
     return () => { cancelled = true; };
   }, [entityId, activeTab, entity]);
 
+  // Investigations loading
+  useEffect(() => {
+    if (activeTab !== 'investigations' || !entity) return;
+    let cancelled = false;
+
+    setIcijLoading(true);
+    setOccrpLoading(true);
+    setIcijResults([]);
+    setOccrpResults([]);
+
+    api.get('/investigations/icij/search', { params: { q: entity.name, limit: 20 } })
+      .then(res => {
+        if (!cancelled) {
+          const data = res.data;
+          setIcijResults(Array.isArray(data) ? data as Record<string, unknown>[] : []);
+        }
+      })
+      .catch(() => { if (!cancelled) setIcijResults([]); })
+      .finally(() => { if (!cancelled) setIcijLoading(false); });
+
+    api.get('/investigations/occrp/search', { params: { q: entity.name, limit: 20 } })
+      .then(res => {
+        if (!cancelled) {
+          const data = res.data;
+          setOccrpResults(Array.isArray(data) ? data as Record<string, unknown>[] : []);
+        }
+      })
+      .catch(() => { if (!cancelled) setOccrpResults([]); })
+      .finally(() => { if (!cancelled) setOccrpLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [entityId, activeTab, entity]);
+
   if (loading) {
     return <div className="entities-loading"><span className="spinner" />Loading entity…</div>;
   }
@@ -865,7 +1172,7 @@ export function EntityDetail({ entityId }: Props) {
 
       {/* Tab bar */}
       <div className="entity-detail__tabs">
-        {(['overview', 'timeline', 'relationships', 'notes', 'global_media'] as DetailTab[]).map(tab => (
+        {(['overview', 'timeline', 'relationships', 'notes', 'global_media', 'sanctions', 'investigations'] as DetailTab[]).map(tab => (
           <button
             key={tab}
             className={`entity-detail__tab${activeTab === tab ? ' entity-detail__tab--active' : ''}`}
@@ -875,6 +1182,8 @@ export function EntityDetail({ entityId }: Props) {
               : tab === 'timeline' ? `Timeline${timelineTotal > 0 && activeTab === 'timeline' ? ` (${timelineTotal})` : ''}`
               : tab === 'relationships' ? 'Relationships'
               : tab === 'global_media' ? '🌐 Global Media'
+              : tab === 'sanctions' ? '🔴 Sanctions'
+              : tab === 'investigations' ? '🔎 Investigations'
               : 'Notes'}
           </button>
         ))}
@@ -1086,6 +1395,170 @@ export function EntityDetail({ entityId }: Props) {
                     </div>
                   );
                 })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Sanctions ── */}
+        {activeTab === 'sanctions' && (
+          <SanctionsTab entityId={String(entity.id)} />
+        )}
+
+        {/* ── Investigations (ICIJ + OCCRP) ── */}
+        {activeTab === 'investigations' && (
+          <div className="entity-section">
+            <div className="entity-section__title" style={{ marginBottom: 4 }}>🔎 Investigations</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 14 }}>
+              Offshore Leaks (ICIJ) + OCCRP Aleph — searched on demand, cached 24h
+            </div>
+
+            {/* ── ICIJ Offshore Leaks ── */}
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>🗂 Offshore Leaks (ICIJ)</span>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>Panama, Pandora, Paradise Papers &amp; more</span>
+              </div>
+              {icijLoading ? (
+                <div className="entities-loading"><span className="spinner" /> Searching Offshore Leaks…</div>
+              ) : icijResults.length === 0 ? null : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {icijResults.map((item, i) => {
+                    const dataset = String(item.dataset ?? '');
+                    const badgeClass = dataset.toLowerCase().includes('panama') ? 'leak-badge--panama'
+                      : dataset.toLowerCase().includes('paradise') ? 'leak-badge--paradise'
+                      : dataset.toLowerCase().includes('pandora') ? 'leak-badge--pandora'
+                      : dataset.toLowerCase().includes('bahamas') ? 'leak-badge--bahamas'
+                      : 'leak-badge--default';
+                    return (
+                      <div key={i} style={{
+                        padding: '10px 12px',
+                        background: 'var(--bg-surface)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 6,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 5,
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                            {String(item.name ?? '—')}
+                          </span>
+                          {item.type && (
+                            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                              {Array.isArray(item.type) ? (item.type as string[]).join(', ') : String(item.type)}
+                            </span>
+                          )}
+                          {dataset && (
+                            <span className={`leak-badge ${badgeClass}`}>{dataset}</span>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11, color: 'var(--text-muted)' }}>
+                          {item.jurisdiction && (
+                            <span>📍 {String(item.jurisdiction)}</span>
+                          )}
+                          {item.incorporation_date && (
+                            <span>Founded: {String(item.incorporation_date)}</span>
+                          )}
+                          {item.inactivation_date && (
+                            <span>Inactive: {String(item.inactivation_date)}</span>
+                          )}
+                          {item.linked_count != null && Number(item.linked_count) > 0 && (
+                            <span>🔗 {String(item.linked_count)} connections</span>
+                          )}
+                          {item.status && (
+                            <span style={{ color: 'var(--text-muted)' }}>{String(item.status)}</span>
+                          )}
+                        </div>
+                        {item.address && (
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{String(item.address)}</div>
+                        )}
+                        {item.url && (
+                          <a href={String(item.url)} target="_blank" rel="noopener noreferrer"
+                            style={{ fontSize: 10, color: 'var(--accent)', marginTop: 2 }}>
+                            View on ICIJ Offshore Leaks ↗
+                          </a>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* ── OCCRP Aleph ── */}
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>🔍 OCCRP Aleph</span>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>1B+ records of organized crime &amp; corruption data</span>
+              </div>
+              {occrpLoading ? (
+                <div className="entities-loading"><span className="spinner" /> Searching OCCRP Aleph…</div>
+              ) : occrpResults.length === 0 ? null : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {occrpResults.map((item, i) => (
+                    <div key={i} style={{
+                      padding: '10px 12px',
+                      background: 'var(--bg-surface)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 6,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 5,
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                          {String(item.name ?? '—')}
+                        </span>
+                        {item.schema && (
+                          <span style={{
+                            fontSize: 10, padding: '1px 6px', borderRadius: 3,
+                            background: 'rgba(59,130,246,0.12)', color: '#60a5fa', fontWeight: 600,
+                          }}>
+                            {String(item.schema)}
+                          </span>
+                        )}
+                        {item.score != null && Number(item.score) > 0 && (
+                          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                            score: {typeof item.score === 'number' ? item.score.toFixed(2) : String(item.score)}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11, color: 'var(--text-muted)' }}>
+                        {item.dataset && (
+                          <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>{String(item.dataset)}</span>
+                        )}
+                        {item.dataset_category && (
+                          <span style={{ color: 'var(--text-muted)' }}>[{String(item.dataset_category)}]</span>
+                        )}
+                        {Array.isArray(item.countries) && (item.countries as string[]).length > 0 && (
+                          <span>🌐 {(item.countries as string[]).join(', ')}</span>
+                        )}
+                        {item.updated_at && (
+                          <span>Updated: {String(item.updated_at).slice(0, 10)}</span>
+                        )}
+                      </div>
+                      {item.summary && (
+                        <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontStyle: 'italic', lineHeight: 1.4 }}>
+                          {String(item.summary)}
+                        </div>
+                      )}
+                      {item.aleph_url && (
+                        <a href={String(item.aleph_url)} target="_blank" rel="noopener noreferrer"
+                          style={{ fontSize: 10, color: 'var(--accent)', marginTop: 2 }}>
+                          View on OCCRP Aleph ↗
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* ── Empty state ── */}
+            {!icijLoading && !occrpLoading && icijResults.length === 0 && occrpResults.length === 0 && (
+              <div style={{ padding: '28px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+                ✅ No investigation records found for <strong style={{ color: 'var(--text-secondary)' }}>{entity.name}</strong>
               </div>
             )}
           </div>

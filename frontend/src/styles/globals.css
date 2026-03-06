@@ -92,3 +92,62 @@ a:hover {
   font-weight: 700;
   text-transform: uppercase;
 }
+
+/* ── Sanctions badges ───────────────────────────────────── */
+.sanctions-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.sanctions-badge--match {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.sanctions-badge--clear {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--success);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+/* ── Leak dataset badges (ICIJ) ─────────────────────────── */
+.leak-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.leak-badge--panama {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.leak-badge--paradise {
+  background: rgba(168, 85, 247, 0.15);
+  color: #a855f7;
+}
+
+.leak-badge--pandora {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+}
+
+.leak-badge--bahamas {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+
+.leak-badge--default {
+  background: rgba(156, 163, 175, 0.15);
+  color: #9ca3af;
+}

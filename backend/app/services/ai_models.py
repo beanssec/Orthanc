@@ -31,7 +31,7 @@ AI_MODELS = [
         "key_field": "api_key",
     },
     {
-        "id": "anthropic/claude-sonnet-4-20250514",
+        "id": "anthropic/claude-sonnet-4",
         "provider": "openrouter",
         "name": "Claude Sonnet 4",
         "description": "Excellent analytical reasoning. Best for nuanced intelligence reports with careful hedging.",
@@ -45,7 +45,7 @@ AI_MODELS = [
         "key_field": "api_key",
     },
     {
-        "id": "anthropic/claude-haiku-3.5",
+        "id": "anthropic/claude-3.5-haiku",
         "provider": "openrouter",
         "name": "Claude Haiku 3.5",
         "description": "Fast and cheap. Good balance of quality and speed for frequent briefs.",

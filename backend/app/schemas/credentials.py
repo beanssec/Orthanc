@@ -6,7 +6,7 @@ from typing import Literal
 
 
 class CredentialCreate(BaseModel):
-    provider: Literal["telegram", "x", "openrouter", "shodan", "discord", "ais", "acled"]
+    provider: Literal["telegram", "x", "openrouter", "shodan", "discord", "ais", "acled", "occrp"]
     api_keys: dict
 
 
