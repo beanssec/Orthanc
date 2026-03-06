@@ -1921,8 +1921,10 @@ export function MapView() {
               <label key={key} className="map-layer-row">
                 <span className="map-layer-row__dot" style={{ background: color }} />
                 <span className="map-layer-row__name">{label}</span>
-                {layers[key] && layerCounts[key] > 0 && (
-                  <span className="map-layer-row__count">{layerCounts[key]}</span>
+                {layers[key] && (
+                  <span className={`map-layer-row__count${layerCounts[key] === 0 ? ' map-layer-row__count--zero' : ''}`}>
+                    {layerCounts[key] || 0}
+                  </span>
                 )}
                 <span className="toggle-switch">
                   <input
@@ -1934,6 +1936,9 @@ export function MapView() {
                 </span>
               </label>
             ))}
+            {layers.ships && layerCounts.ships === 0 && (
+              <div className="map-layer-hint">Requires AIS API key — <a href="/settings/credentials" onClick={(e) => { e.preventDefault(); navigate('/settings/credentials'); }}>Configure</a></div>
+            )}
           </div>
 
           {/* ── Intel Overlays ── */}
@@ -1943,8 +1948,8 @@ export function MapView() {
             <label className="map-layer-row">
               <span className="map-layer-row__dot" style={{ background: '#ef4444' }} />
               <span className="map-layer-row__name">Frontlines</span>
-              {layers.frontlines && layerCounts.frontlines > 0 && (
-                <span className="map-layer-row__count">{layerCounts.frontlines}</span>
+              {layers.frontlines && (
+                <span className={`map-layer-row__count${layerCounts.frontlines === 0 ? ' map-layer-row__count--zero' : ''}`}>{layerCounts.frontlines || 0}</span>
               )}
               <span className="toggle-switch">
                 <input
@@ -1981,8 +1986,8 @@ export function MapView() {
             <label className="map-layer-row">
               <span className="map-layer-row__dot" style={{ background: '#22c55e' }} />
               <span className="map-layer-row__name">🛰 Satellites</span>
-              {layers.satellites && layerCounts.satellites > 0 && (
-                <span className="map-layer-row__count">{layerCounts.satellites}</span>
+              {layers.satellites && (
+                <span className={`map-layer-row__count${layerCounts.satellites === 0 ? ' map-layer-row__count--zero' : ''}`}>{layerCounts.satellites || 0}</span>
               )}
               <span className="toggle-switch">
                 <input
@@ -1998,8 +2003,8 @@ export function MapView() {
             <label className="map-layer-row">
               <span className="map-layer-row__dot" style={{ background: '#eab308' }} />
               <span className="map-layer-row__name">🎯 Sentiment</span>
-              {layers.sentiment && layerCounts.sentiment > 0 && (
-                <span className="map-layer-row__count">{layerCounts.sentiment}</span>
+              {layers.sentiment && (
+                <span className={`map-layer-row__count${layerCounts.sentiment === 0 ? ' map-layer-row__count--zero' : ''}`}>{layerCounts.sentiment || 0}</span>
               )}
               <span className="toggle-switch">
                 <input
@@ -2042,8 +2047,8 @@ export function MapView() {
             <label className="map-layer-row">
               <span className="map-layer-row__dot" style={{ background: '#f97316' }} />
               <span className="map-layer-row__name">📰 Media Attention</span>
-              {layers.gdelt && layerCounts.gdelt > 0 && (
-                <span className="map-layer-row__count">{layerCounts.gdelt}</span>
+              {layers.gdelt && (
+                <span className={`map-layer-row__count${layerCounts.gdelt === 0 ? ' map-layer-row__count--zero' : ''}`}>{layerCounts.gdelt || 0}</span>
               )}
               <span className="toggle-switch">
                 <input
@@ -2107,8 +2112,8 @@ export function MapView() {
             <label className="map-layer-row">
               <span className="map-layer-row__dot" style={{ background: '#ef4444' }} />
               <span className="map-layer-row__name">⚔️ Conflict Events (ACLED)</span>
-              {layers.acled && layerCounts.acled > 0 && (
-                <span className="map-layer-row__count">{layerCounts.acled}</span>
+              {layers.acled && (
+                <span className={`map-layer-row__count${layerCounts.acled === 0 ? ' map-layer-row__count--zero' : ''}`}>{layerCounts.acled || 0}</span>
               )}
               <span className="toggle-switch">
                 <input
@@ -2120,7 +2125,11 @@ export function MapView() {
               </span>
             </label>
 
-            {layers.acled && (
+            {layers.acled && layerCounts.acled === 0 && (
+              <div className="map-layer-hint">Requires ACLED API key — <a href="/settings/credentials" onClick={(e) => { e.preventDefault(); navigate('/settings/credentials'); }}>Configure</a></div>
+            )}
+
+            {layers.acled && layerCounts.acled > 0 && (
               <div className="sentiment-legend" style={{ marginTop: 6 }}>
                 <div className="sentiment-legend__title">Event Types</div>
                 <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#ef4444' }} />Battles</div>
@@ -2140,8 +2149,8 @@ export function MapView() {
             <label className="map-layer-row">
               <span className="map-layer-row__dot" style={{ background: 'linear-gradient(135deg, #ef4444, #3b82f6)', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8 }} />
               <span className="map-layer-row__name">◆ Multi-Source Fusion</span>
-              {layers.fusion && layerCounts.fusion > 0 && (
-                <span className="map-layer-row__count">{layerCounts.fusion}</span>
+              {layers.fusion && (
+                <span className={`map-layer-row__count${layerCounts.fusion === 0 ? ' map-layer-row__count--zero' : ''}`}>{layerCounts.fusion || 0}</span>
               )}
               <span className="toggle-switch">
                 <input
@@ -2153,7 +2162,11 @@ export function MapView() {
               </span>
             </label>
 
-            {layers.fusion && (
+            {layers.fusion && layerCounts.fusion === 0 && (
+              <div className="map-layer-hint">No multi-source clusters detected yet. Events from 2+ sources within 50km/6h will appear here.</div>
+            )}
+
+            {layers.fusion && layerCounts.fusion > 0 && (
               <div className="sentiment-legend" style={{ marginTop: 6 }}>
                 <div className="sentiment-legend__title">Severity</div>
                 <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#ef4444', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8, display: 'inline-block', marginRight: 6 }} />Flash (4+ sources or 10+ posts)</div>

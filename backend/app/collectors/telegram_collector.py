@@ -424,6 +424,18 @@ class TelegramCollector:
                 except Exception as exc:
                     logger.debug("Entity extraction failed for backfill post: %s", exc)
 
+                # Update last_polled on the source
+                try:
+                    from app.models.source import Source
+                    source_result = await session.execute(
+                        select(Source).where(Source.handle == entity.username if hasattr(entity, 'username') else Source.id == None)
+                    )
+                    src = source_result.scalars().first()
+                    if src:
+                        src.last_polled = datetime.now(timezone.utc)
+                except Exception:
+                    pass
+
                 await session.commit()
                 await session.refresh(post)
 

@@ -1245,3 +1245,25 @@
     to { transform: translateY(0); opacity: 1; }
   }
 }
+
+/* ── Layer count zero state ─────────────────────────────── */
+.map-layer-row__count--zero {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+.map-layer-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 4px 14px 6px;
+  line-height: 1.4;
+}
+
+.map-layer-hint a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.map-layer-hint a:hover {
+  text-decoration: underline;
+}
