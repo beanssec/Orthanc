@@ -1,0 +1,48 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: orthanc-postgres
+    volumes:
+      - /mnt/data/postgres/overwatch:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-orthanc}
+      POSTGRES_USER: ${POSTGRES_USER:-orthanc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orthanc_dev}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-orthanc} -d $${POSTGRES_DB:-orthanc}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    container_name: orthanc-backend
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://orthanc:orthanc_dev@postgres:5432/orthanc}
+      # TELEGRAM_BOT_TOKEN: ""  # Set in .env for alert delivery
+    volumes:
+      - ./backend:/app
+      - ./data/telegram_sessions:/app/data/telegram_sessions
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: orthanc-frontend
+    ports:
+      - "3001:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm run dev -- --host 0.0.0.0 --port 3000
+    restart: unless-stopped

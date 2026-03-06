@@ -1,0 +1,508 @@
+/* ═══════════════════════════════════════════════════════════
+   RESPONSIVE.CSS — Mobile-first overrides for Orthanc
+   Optimised for Pixel 7 Pro (412 × 915 viewport)
+
+   IMPORTANT ORDERING RULE:
+   "Desktop hidden" defaults come FIRST.
+   The mobile @media query comes AFTER — overriding those defaults
+   when the viewport is ≤ 768px.  Component CSS files (feed.css,
+   map.css, etc.) are injected AFTER this file, so we use
+   !important where we need to override them.
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── App shell layout ─────────────────────────────────────── */
+.app-shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  grid-template-rows: auto 1fr;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background-color: var(--bg-primary);
+}
+
+.app-shell__topbar {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  height: 44px;
+  border-bottom: 1px solid var(--border);
+  background-color: var(--bg-surface);
+  gap: 12px;
+  position: relative;
+  z-index: 100;
+}
+
+.app-shell__main {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  grid-column: 2;
+  grid-row: 2;
+}
+
+
+
+/* ── Elements HIDDEN on desktop, revealed on mobile ───────── */
+
+/* Mobile top header bar */
+.app-shell__mobile-header {
+  display: none;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  height: 48px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  z-index: 1002;  /* always above backdrops and panels */
+  position: relative;
+}
+
+/* Feed mobile controls bar */
+.feed-mobile-bar {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  flex-shrink: 0;
+}
+
+/* Map FAB buttons */
+.map-fabs {
+  display: none;
+  position: absolute;
+  bottom: 20px;
+  left: 0;
+  right: 0;
+  padding: 0 16px;
+  justify-content: space-between;
+  z-index: 800;
+  pointer-events: none;
+}
+
+/* Overlay close header (shown inside open overlays on mobile) */
+.mobile-overlay-close {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* Map panel backdrop */
+.map-panel-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 809;
+}
+
+/* Sidebar backdrop */
+.sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 998;
+}
+
+/* Sidebar base layout */
+.app-sidebar {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-surface);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+  grid-column: 1;
+  grid-row: 2;
+  min-height: 0;
+}
+
+/* Hamburger button */
+.app-shell__hamburger {
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  line-height: 1;
+  min-height: 44px;
+  min-width: 44px;
+  transition: background 0.15s;
+}
+
+.app-shell__hamburger:hover {
+  background: var(--bg-surface-hover);
+}
+
+.app-shell__mobile-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   MOBILE  (≤ 768px)
+   Declared AFTER the defaults above, so these win.
+   ═══════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+
+  /* ── App shell: single column, mobile header on top ─── */
+  .app-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 48px 1fr;
+  }
+
+  .app-shell__topbar {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .app-shell__mobile-header {
+    display: flex;
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .app-shell__main {
+    grid-column: 1;
+    grid-row: 3;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+
+  /* ── Sidebar: off-screen overlay ────────────────────── */
+  .app-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 260px;
+    z-index: 999;
+    transform: translateX(-100%);
+    transition: transform 0.28s ease;
+  }
+
+  .app-sidebar--open {
+    transform: translateX(0);
+  }
+
+  .sidebar-backdrop--visible {
+    display: block;
+  }
+
+  /* Show sidebar close button */
+  .sidebar-close-btn {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  /* Nav links: larger tap targets */
+  .sidebar-nav-link {
+    min-height: 48px;
+  }
+
+  /* ── Feed: single column ────────────────────────────── */
+  .feed-view {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: auto 1fr;
+  }
+
+  /* Hide filter sidebar and detail panel */
+  .feed-sidebar {
+    display: none !important;
+  }
+
+  .feed-detail {
+    display: none !important;
+  }
+
+  /* Mobile filter overlay (when open) */
+  .feed-sidebar--mobile-open {
+    display: flex !important;
+    flex-direction: column !important;
+    position: fixed !important;
+    inset: 0;
+    z-index: 900;
+    overflow-y: auto;
+    background: var(--bg-surface);
+    width: 100%;
+    border-right: none !important;
+  }
+
+  /* Mobile detail overlay (when open) */
+  .feed-detail--mobile-open {
+    display: flex !important;
+    flex-direction: column !important;
+    position: fixed !important;
+    inset: 0;
+    z-index: 901;
+    overflow-y: auto;
+    background: var(--bg-surface);
+    width: 100%;
+    border-left: none !important;
+  }
+
+  /* Show mobile controls bar */
+  .feed-mobile-bar {
+    display: flex;   /* Override the display:none default */
+  }
+
+  .feed-mobile-bar__btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+    min-height: 36px;
+  }
+
+  .feed-mobile-bar__btn:hover,
+  .feed-mobile-bar__btn--active {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* Show overlay close headers inside open overlays */
+  .feed-sidebar--mobile-open .mobile-overlay-close,
+  .feed-detail--mobile-open .mobile-overlay-close {
+    display: flex;
+  }
+
+  .mobile-overlay-close__title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .mobile-overlay-close__btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 4px 8px;
+    min-height: 44px;
+    min-width: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Feed items: larger touch targets */
+  .feed-item {
+    min-height: 72px;
+    max-height: 100px;
+  }
+
+  .feed-item__content {
+    font-size: 13px;
+  }
+
+  /* Feed timeline full width */
+  .feed-timeline {
+    min-width: 0;
+  }
+
+  /* ── Dashboard ──────────────────────────────────────── */
+  .dashboard {
+    padding: 10px 12px;
+  }
+
+  .kpi-strip {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  .dashboard-row--6040,
+  .dashboard-row--4060,
+  .dashboard-row--5050 {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Source health table: horizontal scroll */
+  .health-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* ── Map: full viewport, FABs ───────────────────────── */
+  .map-sidebar {
+    transform: translateX(-320px) !important;
+    transition: transform 0.28s ease;
+  }
+
+  .map-sidebar--mobile-sheet {
+    position: fixed !important;
+    top: auto !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    max-height: 60vh;
+    border-right: none !important;
+    border-top: 1px solid var(--border);
+    border-radius: 14px 14px 0 0;
+    z-index: 810;
+    transform: translateY(0) !important;
+  }
+
+  .map-layers-panel {
+    transform: translateX(220px) !important;
+    transition: transform 0.28s ease;
+  }
+
+  .map-layers-panel--mobile-sheet {
+    position: fixed !important;
+    top: auto !important;
+    right: auto !important;
+    left: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    max-height: 55vh;
+    border-left: none !important;
+    border-top: 1px solid var(--border);
+    border-radius: 14px 14px 0 0;
+    z-index: 810;
+    transform: translateX(0) !important;
+  }
+
+  /* Hide desktop toggle handles */
+  .map-sidebar__toggle,
+  .map-layers-panel__toggle {
+    display: none !important;
+  }
+
+  /* Show FABs */
+  .map-fabs {
+    display: flex;   /* Override the display:none default */
+    pointer-events: none;
+  }
+
+  .map-fab {
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 16px;
+    background: rgba(10, 14, 26, 0.92);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    min-height: 44px;
+    transition: border-color 0.15s, color 0.15s;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+
+  .map-fab:hover,
+  .map-fab--active {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* Show panel backdrop when visible */
+  .map-panel-backdrop--visible {
+    display: block;
+  }
+
+  /* ── Tables: horizontal scroll ──────────────────────── */
+  .table-scroll-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* ── Finance ─────────────────────────────────────────── */
+  .portfolio-view,
+  .markets-view,
+  .signals-view {
+    padding: 12px;
+  }
+
+  .portfolio-summary {
+    flex-direction: column;
+  }
+
+  .portfolio-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .watchlist-groups {
+    grid-template-columns: 1fr !important;
+  }
+
+  .mapping-add-form {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* ── Touch targets ───────────────────────────────────── */
+  .btn {
+    min-height: 36px;
+    padding: 6px 12px;
+  }
+
+  /* ── Auth pages ──────────────────────────────────────── */
+  .auth-card {
+    padding: 24px 20px;
+    margin: 16px;
+  }
+
+  /* ── Entity / Brief tables ───────────────────────────── */
+  .entities-table-wrap,
+  .briefs-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   TABLET  (769px – 1200px)
+   ═══════════════════════════════════════════════════════════ */
+@media (min-width: 769px) and (max-width: 1200px) {
+  .kpi-strip {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+
+  .dashboard-row--6040,
+  .dashboard-row--4060 {
+    grid-template-columns: 1fr 1fr !important;
+  }
+
+  .watchlist-groups {
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  }
+}

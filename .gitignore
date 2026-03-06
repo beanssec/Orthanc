@@ -1,0 +1,57 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Environment (contains real credentials)
+.env
+*.env.local
+
+# Data (users build their own)
+data/
+*.db
+*.sqlite
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Docker volumes
+postgres_data/
+
+# Screenshots and test artifacts
+*.png
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Agent workspace files (not part of the app)
+memory/
+MEMORY.md
+HEARTBEAT.md
+BOOTSTRAP.md
+TOOLS.md
+IDENTITY.md
+USER.md
+SOUL.md
+AGENTS.md
+BUILD_LOG.md
+
+# Telegram session files
+*.session
+*.session-journal
+.openclaw/

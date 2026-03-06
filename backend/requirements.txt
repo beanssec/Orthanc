@@ -1,0 +1,31 @@
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+sqlalchemy[asyncio]>=2.0.29
+asyncpg>=0.29.0
+alembic>=1.13.1
+python-jose[cryptography]>=3.3.0
+passlib[argon2]>=1.7.4
+argon2-cffi>=23.1.0
+pydantic-settings>=2.2.1
+cryptography>=42.0.5
+python-multipart>=0.0.9
+websockets>=12.0
+telethon>=1.36.0
+feedparser>=6.0.11
+httpx>=0.27.0
+spacy>=3.7.0
+requests>=2.31.0
+aiohttp>=3.9.0
+# Financial intelligence layer
+yfinance>=0.2.36
+# Satellite tracking
+sgp4>=2.22
+# Fast XML parsing (for KML frontline sources)
+lxml>=5.0.0
+# PDF report generation
+reportlab>=4.0
+# Document parsing
+pdfminer.six>=20221105
+python-docx>=1.0
+# Image processing (media download, thumbnailing, EXIF)
+Pillow>=10.0

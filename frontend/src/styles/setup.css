@@ -1,0 +1,432 @@
+/* ── Setup Wizard ────────────────────────────────────────── */
+
+.setup-page {
+  min-height: 100vh;
+  background-color: var(--bg-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 20px;
+}
+
+.setup-card {
+  width: 100%;
+  max-width: 640px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 40px;
+}
+
+/* ── Header ─────────────────────────────────────────────── */
+.setup-header {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.setup-logo {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.25em;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+/* ── Step Indicator ─────────────────────────────────────── */
+.setup-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 40px;
+}
+
+.setup-step-item {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.setup-step-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  border: 2px solid var(--border);
+  color: var(--text-muted);
+  background: var(--bg-primary);
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.setup-step-circle.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.setup-step-circle.done {
+  border-color: var(--success);
+  color: var(--success);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.setup-step-line {
+  width: 80px;
+  height: 2px;
+  background: var(--border);
+  transition: background 0.2s ease;
+}
+
+.setup-step-line.done {
+  background: var(--success);
+}
+
+/* ── Content Area ───────────────────────────────────────── */
+.setup-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.setup-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-align: center;
+}
+
+.setup-subtitle {
+  font-size: 14px;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* ── RSS Suggestion Cards ───────────────────────────────── */
+.setup-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setup-suggestions-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 4px;
+}
+
+.setup-suggestion-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  gap: 12px;
+}
+
+.setup-suggestion-card:hover {
+  border-color: var(--accent);
+  background: rgba(59, 130, 246, 0.05);
+}
+
+.setup-suggestion-card.added {
+  border-color: var(--success);
+  background: rgba(16, 185, 129, 0.07);
+  cursor: default;
+}
+
+.setup-suggestion-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.setup-suggestion-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.setup-suggestion-url {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.setup-suggestion-action {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  padding: 4px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  white-space: nowrap;
+}
+
+.setup-suggestion-action:hover {
+  background: rgba(59, 130, 246, 0.15);
+}
+
+.setup-suggestion-action.added {
+  color: var(--success);
+  border-color: var(--success);
+  cursor: default;
+}
+
+.setup-suggestion-action.added:hover {
+  background: transparent;
+}
+
+/* ── Custom URL Input ───────────────────────────────────── */
+.setup-custom-url {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setup-custom-url-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.setup-custom-url-row {
+  display: flex;
+  gap: 8px;
+}
+
+.setup-custom-url-row .input {
+  flex: 1;
+}
+
+/* ── Added Sources List ─────────────────────────────────── */
+.setup-added-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.setup-added-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--success);
+}
+
+.setup-added-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.setup-added-name {
+  font-weight: 600;
+  flex: 1;
+  color: var(--text-secondary);
+}
+
+/* ── Provider Cards ─────────────────────────────────────── */
+.setup-providers-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.setup-provider-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.15s ease;
+}
+
+.setup-provider-card.configured {
+  border-color: var(--success);
+}
+
+.setup-provider-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setup-provider-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.setup-provider-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.setup-provider-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.setup-provider-status {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--success);
+}
+
+/* ── Credential inline form ─────────────────────────────── */
+.setup-cred-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+
+/* ── Done Step ──────────────────────────────────────────── */
+.setup-done-checkmark {
+  text-align: center;
+  font-size: 48px;
+  margin-bottom: 8px;
+}
+
+.setup-done-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  background: var(--bg-primary);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.setup-done-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.setup-done-check {
+  color: var(--success);
+  font-weight: 700;
+}
+
+.setup-tip {
+  padding: 12px 14px;
+  background: rgba(59, 130, 246, 0.08);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* ── Footer Actions ─────────────────────────────────────── */
+.setup-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.setup-footer-buttons {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  justify-content: center;
+}
+
+.setup-skip-link {
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
+.setup-skip-link:hover {
+  color: var(--text-secondary);
+}
+
+.setup-alt-link {
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  text-decoration: none;
+}
+
+.setup-alt-link:hover {
+  text-decoration: underline;
+}
+
+/* ── Error ──────────────────────────────────────────────── */
+.setup-error {
+  font-size: 12px;
+  color: var(--danger);
+  padding: 8px 12px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 6px;
+}
+
+/* ── Loading indicator ──────────────────────────────────── */
+.setup-adding {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+/* ── Responsive ─────────────────────────────────────────── */
+@media (max-width: 520px) {
+  .setup-card {
+    padding: 24px 20px;
+  }
+
+  .setup-providers-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .setup-step-line {
+    width: 40px;
+  }
+}

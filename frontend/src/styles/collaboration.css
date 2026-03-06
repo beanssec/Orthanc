@@ -1,0 +1,565 @@
+/* ── Collaboration: Relationship Type Badges ─────────────── */
+.rel-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.rel-badge--commands    { background: #7c3aed22; color: #a78bfa; border: 1px solid #7c3aed44; }
+.rel-badge--funds       { background: #059669 22; color: #34d399; border: 1px solid #05966944; }
+.rel-badge--supplies    { background: #0891b222; color: #22d3ee; border: 1px solid #0891b244; }
+.rel-badge--sanctions   { background: #dc262622; color: #f87171; border: 1px solid #dc262644; }
+.rel-badge--allied_with { background: #1d4ed822; color: #60a5fa; border: 1px solid #1d4ed844; }
+.rel-badge--opposes     { background: #b4530822; color: #fb923c; border: 1px solid #b4530844; }
+.rel-badge--member_of   { background: #71717122; color: #d4d4d4; border: 1px solid #71717144; }
+.rel-badge--located_in  { background: #15803d22; color: #4ade80; border: 1px solid #15803d44; }
+.rel-badge--parent_org  { background: #92400e22; color: #fcd34d; border: 1px solid #92400e44; }
+.rel-badge--subsidiary  { background: #78350f22; color: #fbbf24; border: 1px solid #78350f44; }
+.rel-badge--associated  { background: #1e3a5f22; color: #93c5fd; border: 1px solid #1e3a5f44; }
+
+/* ── Confidence Bar ──────────────────────────────────────── */
+.confidence-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.confidence-bar__label {
+  font-size: 10px;
+  color: var(--text-muted);
+  display: flex;
+  justify-content: space-between;
+}
+.confidence-bar__track {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  min-width: 60px;
+}
+.confidence-bar__fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+/* high confidence = green, medium = yellow, low = red */
+
+/* ── Relationships Section ───────────────────────────────── */
+.entity-relationships {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.entity-relationship__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+.entity-relationship__item:hover {
+  background: var(--bg-surface-hover);
+}
+
+.entity-relationship__badge-col {
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+
+.entity-relationship__target {
+  flex: 1;
+  min-width: 0;
+}
+
+.entity-relationship__target-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.entity-relationship__target-name:hover {
+  color: var(--accent);
+}
+
+.entity-relationship__notes {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  white-space: pre-wrap;
+}
+
+.entity-relationship__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.entity-relationship__delete-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.1s, color 0.1s;
+}
+.entity-relationship__item:hover .entity-relationship__delete-btn {
+  opacity: 1;
+}
+.entity-relationship__delete-btn:hover {
+  color: var(--danger);
+  background: #ef444420;
+}
+
+/* ── Add Relationship Modal ──────────────────────────────── */
+.rel-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+}
+
+.rel-modal {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.rel-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.rel-modal__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.rel-modal__close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.rel-modal__close:hover {
+  color: var(--text-primary);
+  background: var(--border);
+}
+
+.rel-modal__body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.rel-modal__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rel-modal__label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.rel-modal__confidence-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rel-modal__confidence-row input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+.rel-modal__confidence-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 36px;
+  text-align: right;
+}
+
+.rel-modal__entity-search {
+  position: relative;
+}
+.rel-modal__dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-focus);
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 10;
+}
+.rel-modal__dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition: background 0.1s;
+}
+.rel-modal__dropdown-item:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+.rel-modal__selected-entity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.rel-modal__clear-btn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+}
+.rel-modal__clear-btn:hover { color: var(--danger); }
+
+/* ── Notes Section ───────────────────────────────────────── */
+.collab-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.note-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.note-card__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.note-card__timestamp {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.note-card__actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.note-card:hover .note-card__actions {
+  opacity: 1;
+}
+
+.note-card__action-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  transition: color 0.1s, background 0.1s;
+}
+.note-card__action-btn:hover {
+  color: var(--text-primary);
+  background: var(--border);
+}
+.note-card__action-btn--danger:hover {
+  color: var(--danger);
+  background: #ef444420;
+}
+
+.note-card__content {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.note-card__edit-area {
+  width: 100%;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-focus);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 8px;
+  resize: vertical;
+  min-height: 60px;
+}
+
+.note-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.note-add-form textarea {
+  width: 100%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 10px 12px;
+  resize: vertical;
+  min-height: 72px;
+  transition: border-color 0.15s;
+}
+.note-add-form textarea:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.note-add-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ── Bookmark Button ─────────────────────────────────────── */
+.bookmark-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.bookmark-btn:hover {
+  border-color: #f59e0b;
+  color: #f59e0b;
+  background: #f59e0b10;
+}
+.bookmark-btn--active {
+  border-color: #f59e0b;
+  color: #f59e0b;
+  background: #f59e0b15;
+}
+.bookmark-btn .bookmark-star {
+  font-size: 14px;
+  transition: transform 0.15s;
+}
+.bookmark-btn--active .bookmark-star {
+  filter: drop-shadow(0 0 4px #f59e0b);
+}
+
+/* ── Tag Pills ───────────────────────────────────────────── */
+.tag-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.tag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #3b82f615;
+  border: 1px solid #3b82f630;
+  color: #60a5fa;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.tag-pill:hover {
+  background: #3b82f625;
+  border-color: #3b82f660;
+}
+
+.tag-pill__remove {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 10px;
+  padding: 0;
+  opacity: 0.6;
+  transition: opacity 0.1s;
+  line-height: 1;
+}
+.tag-pill__remove:hover { opacity: 1; }
+
+.tag-add-input {
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 8px;
+  width: 90px;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.tag-add-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  color: var(--text-primary);
+  width: 120px;
+}
+.tag-add-input::placeholder {
+  color: var(--text-muted);
+}
+
+/* ── Bookmarks Page ──────────────────────────────────────── */
+.bookmarks-page {
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.bookmarks-page__title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bookmarks-group {
+  margin-bottom: 28px;
+}
+
+.bookmarks-group__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.bookmarks-group__label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.bookmarks-group__count {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--border);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.bookmark-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+.bookmark-item:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--accent);
+}
+
+.bookmark-item__label {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.bookmark-item__sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.bookmark-item__remove-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.1s, color 0.1s;
+}
+.bookmark-item:hover .bookmark-item__remove-btn { opacity: 1; }
+.bookmark-item__remove-btn:hover {
+  color: var(--danger);
+  background: #ef444420;
+}
