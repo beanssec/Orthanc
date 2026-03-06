@@ -177,8 +177,9 @@ function CredentialModal({
       await api.post('/credentials/', { provider: provider.id, api_keys });
       onSave();
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      setError(msg ?? 'Failed to save credentials.');
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+      const msg = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((d: { msg?: string }) => d.msg || '').join('; ') : 'Failed to save credentials.';
+      setError(msg || 'Failed to save credentials.');
     } finally {
       setLoading(false);
     }
