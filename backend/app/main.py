@@ -17,9 +17,12 @@ from app.routers import nlquery
 from app.routers import gdelt
 from app.routers import investigations
 from app.routers import sanctions
+from app.routers import fusion
+from app.routers import cases
 from app.collectors.orchestrator import orchestrator
 from app.collectors.satellite_collector import satellite_collector
 from app.services.brief_scheduler import brief_scheduler
+from app.services.fusion_service import fusion_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("orthanc")
@@ -80,6 +83,10 @@ async def lifespan(app: FastAPI):
     scheduler_task = asyncio.create_task(brief_scheduler.run_loop())
     logger.info("Brief scheduler started")
 
+    # Start cross-source intelligence fusion service
+    await fusion_service.start()
+    logger.info("Fusion service started")
+
     yield
 
     logger.info("Orthanc API shutting down")
@@ -91,6 +98,7 @@ async def lifespan(app: FastAPI):
             await task
         except asyncio.CancelledError:
             pass
+    await fusion_service.stop()
     await orchestrator.stop_all()
     try:
         await satellite_collector.stop()
@@ -129,6 +137,8 @@ app.include_router(media.router)
 app.include_router(gdelt.router)
 app.include_router(investigations.router)
 app.include_router(sanctions.router)
+app.include_router(fusion.router)
+app.include_router(cases.router)
 
 
 @app.get("/")

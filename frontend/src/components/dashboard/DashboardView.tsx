@@ -69,6 +69,17 @@ interface AlertEvent {
   acknowledged?: boolean;
 }
 
+interface FusedIntelEvent {
+  id: string;
+  severity: string;
+  source_count: number;
+  post_count: number;
+  ai_summary: string | null;
+  entity_names: string[];
+  component_source_types: string[];
+  created_at: string | null;
+}
+
 // ── Source type colours ────────────────────────────────────
 const SOURCE_COLORS: Record<string, string> = {
   rss:      '#10b981',
@@ -391,6 +402,7 @@ export function DashboardView() {
   const [trendingEntities, setTrendingEntities] = useState<TrendingEntity[]>([]);
   const [geoHotspots, setGeoHotspots] = useState<GeoHotspot[]>([]);
   const [alerts, setAlerts] = useState<AlertEvent[]>([]);
+  const [fusedEvents, setFusedEvents] = useState<FusedIntelEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
@@ -417,6 +429,14 @@ export function DashboardView() {
         setAlerts(alertRes.data?.items ?? alertRes.data ?? []);
       } catch {
         // alerts endpoint may not exist yet
+      }
+
+      // Fused intelligence events — best-effort
+      try {
+        const fusionRes = await api.get('/fusion/events?hours=24&limit=10');
+        setFusedEvents(fusionRes.data ?? []);
+      } catch {
+        // fusion endpoint may have no data yet
       }
 
       setLastRefresh(new Date());
@@ -694,6 +714,53 @@ export function DashboardView() {
           </div>
         </div>
       </div>
+
+      {/* ── Row 6: Intelligence Fusion (only if data exists) ─────────── */}
+      {fusedEvents.length > 0 && (
+        <div className="dash-card dash-card--full">
+          <div className="dash-card__header">
+            <span className="dash-card__title">◆ Intelligence Fusion</span>
+            <span className="dash-card__meta">{fusedEvents.length} multi-source events · last 24h</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => navigate('/map')}>
+              Map →
+            </button>
+          </div>
+          <div className="dash-card__body">
+            <div className="fusion-list">
+              {fusedEvents.slice(0, 5).map((ev) => {
+                const sevColors: Record<string, string> = { flash: '#ef4444', urgent: '#f97316', routine: '#3b82f6' };
+                const color = sevColors[ev.severity] ?? '#6b7280';
+                const summary = (ev.ai_summary ?? '').slice(0, 180);
+                const places = ev.entity_names?.slice(0, 3).join(', ') || '';
+                return (
+                  <div key={ev.id} className="fusion-row">
+                    <div className="fusion-row__sev" style={{ color }}>
+                      <span style={{ display: 'inline-block', width: 10, height: 10, transform: 'rotate(45deg)', background: color, flexShrink: 0, marginRight: 4 }} />
+                      {ev.severity.toUpperCase()}
+                    </div>
+                    <div className="fusion-row__body">
+                      <div className="fusion-row__meta">
+                        <span className="fusion-row__sources">{ev.source_count} sources</span>
+                        <span className="fusion-row__posts">{ev.post_count} posts</span>
+                        {places && <span className="fusion-row__place">📍 {places}</span>}
+                        <span className="fusion-row__time">{formatTime(ev.created_at)}</span>
+                      </div>
+                      <div className="fusion-row__types">
+                        {ev.component_source_types.map((s) => (
+                          <span key={s} className="fusion-row__tag" style={{ background: `${sourceColor(s)}22`, color: sourceColor(s), border: `1px solid ${sourceColor(s)}44` }}>
+                            {s}
+                          </span>
+                        ))}
+                      </div>
+                      {summary && <div className="fusion-row__summary">{summary}</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

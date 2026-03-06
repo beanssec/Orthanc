@@ -3,6 +3,7 @@ import type { Post } from '../../stores/feedStore'
 import api from '../../services/api'
 import '../../styles/collaboration.css'
 import { AuthImage, AuthVideo } from '../common/AuthMedia'
+import { AddToCase } from '../cases/AddToCase'
 
 // ── Media Analysis Panel ──────────────────────────────────
 interface MediaAnalysisResult {
@@ -551,6 +552,14 @@ const FeedDetail: React.FC<FeedDetailProps> = ({ post }) => {
           {copied ? '✓ Copied' : '⎘ Copy'}
         </button>
         <PostBookmarkButton postId={post.id} />
+        <AddToCase
+          itemType="post"
+          itemId={post.id}
+          title={post.author ? `${post.author}: ${(post.content || '').substring(0, 80)}` : (post.content || '').substring(0, 80)}
+          content={(post.content || '').substring(0, 500)}
+          lat={post.event?.lat}
+          lng={post.event?.lng}
+        />
       </div>
 
       {/* Full content */}

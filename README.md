@@ -2,7 +2,7 @@
 
 **Open source intelligence for everyone.**
 
-Orthanc is a self-hosted OSINT intelligence platform that aggregates data from dozens of sources into a unified analyst workspace. Live feeds, geospatial mapping, entity extraction, AI-powered analysis, financial intelligence, media verification, and correlation-based alerting — all running on your own hardware.
+Orthanc is a self-hosted OSINT intelligence platform that aggregates data from dozens of sources into a unified analyst workspace. Live feeds, geospatial mapping, entity extraction, AI-powered analysis, financial intelligence, media verification, sanctions matching, leaked data enrichment, cross-source fusion, and investigation workspaces — all running on your own hardware.
 
 Named after the tower that held the Palantír. The seeing stone shouldn't be locked in a corporate vault.
 
@@ -24,103 +24,120 @@ Named after the tower that held the Palantír. The seeing stone shouldn't be loc
 - **Shodan** — Infrastructure scanning and exposure detection
 - **Webhooks** — Ingest from any source via POST
 - **Document Upload** — PDF, DOCX, TXT, MD, CSV ingestion with automatic NER
+- **ACLED** — Armed conflict events (battles, protests, riots, violence) with structured actor data
 - **FIRMS** — NASA thermal anomaly detection for conflict zones
 - **Flight Tracking** — Live aircraft via OpenSky Network
 - **Ship Tracking** — AIS vessel monitoring
 - **Satellite Tracking** — ISS, military, weather satellites via CelesTrak
 
+### 📰 Global Media Intelligence (GDELT)
+- **Article search** — Query global news coverage across 65 languages via GDELT DOC API
+- **Media attention heatmap** — Map layer showing where the world is talking about any topic
+- **Entity enrichment** — "Global Media" tab on entities shows worldwide coverage
+- Keyword presets: conflict, nuclear, terrorism, protest, cyber attack
+- On-demand queries with 15-minute caching, no API key required
+
+### 🔴 Sanctions & Watchlist Matching (OpenSanctions)
+- **350k+ entities** from OFAC SDN, EU sanctions, UN sanctions, Interpol, PEPs
+- **Automatic fuzzy matching** — trigram similarity against your extracted entities
+- Strong match (≥90%), possible match (≥70%) with dataset attribution
+- Bulk dataset download (~200MB), daily refresh, opt-in
+- Entity detail shows sanctions badges with links to OpenSanctions profiles
+
+### 🔎 Leaked Data & Corporate Intelligence
+- **ICIJ Offshore Leaks** — Panama Papers, Paradise Papers, Pandora Papers, Bahamas Leaks
+- **OCCRP Aleph** — 1B+ records: corporate registries, court records, leaked documents
+- "Investigations" tab on entities shows offshore connections and OCCRP records
+- Color-coded dataset badges (Panama=red, Paradise=purple, Pandora=blue)
+- No bulk download — on-demand queries cached 24 hours
+
+### ◆ Cross-Source Intelligence Fusion
+- **Automatic multi-source correlation** — detects when events from 2+ different sources occur within 50km and 6 hours
+- Severity classification: 🔴 FLASH (4+ sources) / 🟠 URGENT (3 sources) / 🔵 ROUTINE (2 sources)
+- Fused events appear as diamond markers on the map
+- Background scanning every 5 minutes
+- Dashboard widget shows recent corroborated events
+
+### 🕵️ Investigation Workspaces
+- **Case management** — create investigations with title, description, classification level
+- **Evidence board** — pin posts, entities, notes, and map markers to a case
+- **Case timeline** — automatic audit trail of all case mutations
+- **Case map** — embedded map showing only case-related locations
+- **"Add to Case"** — context action on feed items and entity details
+- **PDF export** — export full case as intelligence report
+- Status workflow: Open → Active → Closed → Archived
+
 ### 🔍 Global Search & Natural Language Querying
 - **Unified search** across posts, entities, events, and briefs (Ctrl+K)
-- **Natural language queries** — ask questions in plain English ("What's happening with Iran?") and get structured results + AI-generated analysis
+- **Natural language queries** — ask questions in plain English and get AI-analyzed answers
 - Instant search dropdown with debounced results
-- Full search results page with filter tabs and keyword highlighting
 
 ### 🗺️ Tactical Map
 - MapLibre GL with dark CartoDB tiles (free, no API key)
-- **Base layer switcher** — toggle between Dark, Satellite, and Hybrid base maps using the switcher in the map toolbar
-- Satellite imagery provided by Esri World Imagery (free, no API key required)
+- **Base layer switcher** — Dark / 🛰️ Satellite / 🗺️ Hybrid (Esri World Imagery, free)
 - Clustered OSINT events with precision filtering
 - Click any cluster → browse events → click to inspect full detail in side panel
-- Heatmap and cluster visualization modes
 
-**7 intelligence layers (all toggleable, no API keys required for most):**
+**9 intelligence layers (all toggleable):**
 
-| Layer | What It Shows | Source | Auth Required |
-|-------|--------------|--------|---------------|
-| **OSINT Events** | Geolocated posts from your feeds, clustered on the map | Internal (auto-geocoded from NER) | No |
-| **Frontlines** | Ukraine conflict territorial control zones + battle events | DeepStateMap, AMK, Suriyak, UA Control Map, Playfra, Radov | No |
-| **Flights** | Live aircraft positions with military/civilian filtering | OpenSky Network | No |
-| **Ships** | Vessel positions with military/civilian filtering | AIS (aisstream.io) | API key |
-| **FIRMS** | Thermal anomalies / fire hotspots (conflict zone detection) | NASA FIRMS | No |
-| **Satellites** | ISS, military, weather satellite positions | CelesTrak + sgp4 | No |
-| **Sentiment** | Keyword-based sentiment heatmap by region | Internal (auto-scored) | No |
-
-**Frontlines are built-in and require zero configuration.** Open the map, toggle on the Frontlines layer, and you'll see live territorial control data from 6 independent mapping sources covering the Ukraine conflict. Data refreshes every 1–6 hours depending on the source. You can switch between sources using the dropdown in the layers panel.
+| Layer | What It Shows | Source | Auth Required | Default |
+|-------|--------------|--------|---------------|---------|
+| **OSINT Events** | Geolocated posts from your feeds | Internal (NER + geocoding) | No | ON |
+| **Frontlines** | Ukraine territorial control + battle events | 6 mapping sources | No | ON |
+| **Flights** | Live aircraft with military/civilian filtering | OpenSky Network | No | ON |
+| **Ships** | Vessel positions with military/civilian filtering | AIS (aisstream.io) | API key | OFF |
+| **FIRMS** | Thermal anomalies / fire hotspots | NASA FIRMS | No | ON |
+| **Satellites** | ISS, military, weather satellite positions | CelesTrak + sgp4 | No | ON |
+| **Sentiment** | Keyword-based sentiment heatmap | Internal | No | OFF |
+| **Conflict Events** | ACLED battles, protests, riots, violence | ACLED | API key | OFF |
+| **Media Attention** | GDELT global news heatmap by keyword | GDELT | No | OFF |
+| **Fused Intelligence** | Multi-source corroborated events | Internal fusion engine | No | OFF |
 
 ### 🧠 AI Intelligence Briefs
 - Generate structured intelligence briefs from collected data
+- **Topic filtering** — scope briefs to "Ukraine", "cyber", "finance", etc.
+- **Source filtering** — include only RSS, Telegram, ACLED, etc.
+- **Custom prompts** — override the analyst persona ("You are a cyber threat analyst…")
 - 9+ model support (xAI Grok, Claude, GPT-4o, Gemini, Mistral, Llama via OpenRouter)
-- Transparent per-brief cost estimates
-- Scheduled briefs (hourly/daily/weekly) with full history
-- PDF intelligence report export with classification banners
+- Scheduled briefs with full history and PDF export
 
 ### 🔗 Entity Extraction, Linking & Analysis
 - Automatic NER via spaCy (PERSON, ORG, GPE, NORP, EVENT)
-- Entity deduplication and canonical name linking
-- **Entity timeline** — chronological view of all mentions per entity
-- **Link/path analysis** — BFS shortest-path between entities via co-occurrence
-- **Typed relationships** — commands, funds, allied_with, opposes, sanctions, member_of, and more with confidence scoring
-- **Entity network graph** — force-directed canvas visualization with path highlighting
-- Custom properties (extensible key-value per entity)
+- **Entity timeline** — chronological view of all mentions
+- **Link/path analysis** — BFS shortest-path between entities
+- **Typed relationships** — commands, funds, allied_with, opposes, sanctions, member_of
+- **Entity network graph** — force-directed canvas visualization
+- **Sanctions tab** — automatic matching against 350k+ watchlist entries
+- **Investigations tab** — ICIJ offshore leaks + OCCRP records
+- **Global Media tab** — GDELT worldwide news coverage
 
 ### 📷 Media Capture & Verification
-- **Opt-in media download** from Telegram — separate toggles for images vs videos with configurable size limits
+- **Opt-in media download** from Telegram — separate toggles for images vs videos
 - **EXIF metadata extraction** — camera model, GPS, timestamps, software detection
-- **AI-powered authenticity analysis** — vision models (Grok Vision / GPT-4o) detect AI-generated content
+- **AI-powered authenticity analysis** — GPT-4o / Grok Vision detect AI-generated content
 - Authenticity badges: 🟢 Likely Real / 🟡 Uncertain / 🔴 Possibly AI-Generated
-- SHA256 file hashing for deduplication
-- Thumbnail generation for feed preview
 
 ### 💰 Financial Intelligence
 - Portfolio tracking with live market data (Yahoo Finance)
-- Watchlist: indices, commodities, forex, crypto
 - Cashtag ($TICKER) monitoring from X/Twitter
 - **OSINT → Market signal correlation** — entity spikes mapped to affected tickers
-- AI-generated risk/opportunity signals
 - Bloomberg Terminal aesthetic with monospaced numbers
 
 ### 🚨 Correlation Alert Engine
-Five alert types:
 - **Keyword Match** — Regex/keyword match on ingest
-- **Entity Velocity** — Entity mention rate exceeds baseline threshold
-- **Multi-Stage Correlation** — OSSIM-style directives with time windows ("if Iran spikes AND keyword 'strike' appears within 2 hours → escalate to URGENT")
-- **Geo-Proximity** — Alert when events occur within configurable radius of a location
-- **Silence Detection** — Alert when an entity or source goes unexpectedly quiet
-- Delivery: in-app toast, Telegram bot, webhook
-- Severity tiers: 🔴 FLASH / 🟠 URGENT / 🔵 ROUTINE
-
-### 📝 Collaboration & Analysis Tools
-- **Notes** — Add analyst notes to any entity, post, or event
-- **Bookmarks** — Star and organize important items across all data types
-- **Tags** — User-defined labels on any object, searchable across the platform
-- **Translate** — Per-item AI translation with language detection
-
-### 🌐 Translation
-- Automatic language detection
-- AI-powered translation via configured LLM
-- Per-item translate button in feed
+- **Entity Velocity** — Entity mention rate exceeds baseline
+- **Multi-Stage Correlation** — OSSIM-style with time windows
+- **Geo-Proximity** — Events within configurable radius
+- **Silence Detection** — Source/entity goes unexpectedly quiet
 
 ### 🔒 Security
-- Per-user credential encryption (Argon2id key derivation + Fernet)
+- Per-user credential encryption (Argon2id + Fernet)
 - Zero-knowledge design — server never stores encryption keys on disk
-- Credentials decrypted into memory on login, wiped on restart
-- JWT authentication with in-memory token storage (not localStorage)
+- JWT authentication with in-memory token storage
 
 ### 📱 Mobile Responsive
-- Hamburger sidebar navigation
-- Bottom-sheet panels on map view
-- Touch-optimized targets
-- Tested on Pixel 7 Pro (412×915 viewport)
+- Hamburger sidebar, bottom-sheet panels, touch targets
+- Collapsible sidebar navigation (icon-only mode)
 
 ---
 
@@ -134,10 +151,9 @@ Five alert types:
 ### 1. Clone & Configure
 
 ```bash
-git clone https://github.com/yourusername/orthanc.git
-cd orthanc
+git clone https://github.com/beanssec/Orthanc.git
+cd Orthanc
 cp .env.example .env
-# Edit .env if you want to change defaults
 ```
 
 ### 2. Launch
@@ -146,31 +162,42 @@ cp .env.example .env
 docker compose up -d
 ```
 
-This starts three containers:
+Three containers start:
 - **orthanc-postgres** — PostgreSQL 16 + PostGIS (port 5433)
 - **orthanc-backend** — FastAPI Python backend (port 8000)
 - **orthanc-frontend** — React + Vite frontend (port 3001)
 
 ### 3. Open & Register
 
-Navigate to `http://localhost:3001`
+Navigate to `http://localhost:3001` → Register → Setup wizard.
 
-Register an account → the setup wizard walks you through adding your first sources.
-
-### 4. Add More Sources
+### 4. Add Data Sources
 
 Go to **Settings → Credentials** to add API keys:
 
-| Provider | What You Get | Free Tier |
-|----------|-------------|-----------|
-| xAI (Grok) | X/Twitter monitoring + AI briefs + media verification | Free credits on signup |
-| Telegram | Channel monitoring + media capture | Free (needs phone number) |
-| OpenRouter | 7+ AI models for briefs + NL queries | Pay-per-use, most models < $0.01/brief |
+| Provider | What You Get | Cost |
+|----------|-------------|------|
+| xAI (Grok) | X/Twitter monitoring + AI briefs | Free credits on signup |
+| Telegram | Channel monitoring + media capture | Free (needs phone) |
+| OpenRouter | 7+ AI models for briefs/queries/verification | Pay-per-use (~$0.01/brief) |
+| ACLED | Structured conflict event data | Free (register at developer.acleddata.com) |
+| OCCRP | 1B+ corporate/legal/leaked records | Free (register at aleph.occrp.org) |
 | Shodan | Infrastructure scanning | Free tier: 100 queries/month |
 | Discord | Server monitoring | Free (bot token) |
 | AIS | Ship tracking | Free tier available |
 
-RSS feeds, Reddit, flight tracking, satellite tracking, and FIRMS thermal data require **no API keys**.
+**No API key needed:** RSS, Reddit, flights, satellites, FIRMS, GDELT, ICIJ, OpenSanctions, frontlines.
+
+### 5. Optional: Enable Enrichment Sources
+
+All enrichment sources default to **OFF**. Enable them in **Settings → Sources**:
+
+| Source | What It Adds | Storage Impact |
+|--------|-------------|----------------|
+| ACLED | Conflict events on the map | ~500MB/year |
+| GDELT | Global media attention heatmap | ~50MB cache |
+| OpenSanctions | Sanctions matching on entities | ~500MB (bulk download) |
+| ICIJ/OCCRP | Leaked data enrichment on entities | ~100MB cache |
 
 ---
 
@@ -183,26 +210,21 @@ RSS feeds, Reddit, flight tracking, satellite tracking, and FIRMS thermal data r
 │  Port 3001   │     │  Port 8000   │     │  Port 5433   │
 └─────────────┘     └──────┬───────┘     └─────────────┘
                            │
-                    ┌──────┴───────┐
-                    │  Collectors   │
-                    │  (in-process) │
-                    │               │
-                    │ RSS • X/Twitter│
-                    │ Telegram • Reddit│
-                    │ Discord • Shodan│
-                    │ FIRMS • Flights│
-                    │ Ships • Satellites│
-                    │ Market • Cashtag│
-                    └───────────────┘
+              ┌────────────┼────────────┐
+              │            │            │
+        ┌─────┴─────┐ ┌───┴───┐ ┌─────┴─────┐
+        │ Collectors │ │Fusion │ │ Enrichment│
+        │            │ │Engine │ │ Services  │
+        │ RSS/X/TG   │ │       │ │           │
+        │ Reddit     │ │ 5min  │ │ Sanctions │
+        │ Discord    │ │ scan  │ │ GDELT     │
+        │ Shodan     │ │       │ │ ICIJ      │
+        │ ACLED      │ │ 50km  │ │ OCCRP     │
+        │ FIRMS      │ │ 6hr   │ │           │
+        │ Flights    │ │window │ │ On-demand │
+        │ Ships/Sats │ │       │ │ + cached  │
+        └───────────┘ └───────┘ └───────────┘
 ```
-
-### Key Design Decisions
-- **Collectors run in-process** as async tasks — simpler lifecycle with in-memory credential management
-- **Per-user encryption** means credentials are only available when a user is logged in
-- **MapLibre GL** (free fork of Mapbox GL) with CartoDB dark-matter tiles — no token needed
-- **spaCy** for NER, **Nominatim** for geocoding — both free, self-contained
-- **CelesTrak** + **sgp4** for satellite tracking — free TLE data
-- **Vision models** for media authenticity — uses existing AI credentials, no extra APIs
 
 ---
 
@@ -210,62 +232,41 @@ RSS feeds, Reddit, flight tracking, satellite tracking, and FIRMS thermal data r
 
 | Page | Description |
 |------|-------------|
-| **Dashboard** | KPI strip, velocity chart, source health, trending entities, geo hotspots, recent alerts |
-| **Feed** | 3-column SIEM-style live timeline with WebSocket, infinite scroll, time presets |
-| **Map** | Full-screen tactical map with 7 layer types, frontline data, clustering |
-| **Entities** | Sortable entity table, detail view with timeline/relationships/graph/path analysis |
-| **Briefs** | AI brief generation, scheduling, history, PDF export |
+| **Dashboard** | KPI strip, velocity chart, source health pills, trending entities, geo hotspots, alerts, fusion events |
+| **Feed** | 3-column SIEM-style live timeline with WebSocket, infinite scroll, source/time filters |
+| **Map** | Full-screen tactical map with 10 layer types, satellite imagery, frontlines |
+| **Entities** | Entity table with detail view: timeline, relationships, graph, sanctions, investigations, media |
+| **Briefs** | AI brief generation with topic/source filters, custom prompts, scheduling, PDF export |
+| **Cases** | Investigation workspaces with evidence boards, timelines, case maps, PDF export |
 | **Documents** | Drag-and-drop upload with automatic NER processing |
-| **Ask AI** | Natural language query interface with structured results |
-| **Portfolio** | Holdings tracker with live quotes and P&L |
-| **Markets** | Watchlist with real-time market data |
+| **Ask AI** | Natural language query interface |
+| **Portfolio** | Holdings tracker with live quotes |
+| **Markets** | Watchlist with real-time data |
 | **Signals** | OSINT→market correlation signals |
-| **Bookmarks** | Saved items across all data types |
-| **Sources** | Source management with per-source media settings |
-| **Credentials** | API key management (encrypted at rest) |
-| **Alerts** | 5-type rule builder with delivery configuration |
-
----
-
-## Configuration
-
-### Environment Variables
-
-```bash
-# Database (defaults work with docker-compose)
-DATABASE_URL=postgresql+asyncpg://orthanc:orthanc_dev@postgres:5432/orthanc
-JWT_SECRET=your-secret-key-change-this
-
-# Optional: Telegram bot for alert delivery
-TELEGRAM_BOT_TOKEN=your-bot-token
-
-# Optional: Override ports
-FRONTEND_PORT=3001
-BACKEND_PORT=8000
-POSTGRES_PORT=5433
-```
-
-### Data Storage
-
-All persistent data lives in Docker volumes:
-- PostgreSQL data: configurable via `docker-compose.yml`
-- Telegram sessions: `./data/telegram_sessions/`
-- Media files: `./data/media/` (when media download is enabled)
+| **Bookmarks** | Saved items across all types |
+| **Settings** | Sources, credentials, alerts |
 
 ---
 
 ## Database Migrations
 
-9 Alembic migrations:
-1. `001_initial_schema` — users, credentials, posts, sources, events, alerts
-2. `002_entities` — entities, entity_mentions
-3. `003_briefs` — intelligence briefs
-4. `004_financial` — holdings, quotes, entity_ticker_map, signals
-5. `005_geo_precision` — location precision scoring on events
-6. `006_alert_rules` — alert_rules, alert_events (correlation engine)
-7. `007_alert_enhancements` — geo-proximity + silence detection fields
-8. `008_entity_relationships` — typed relationships, properties, notes, bookmarks, tags
-9. `009_media_support` — media columns on posts, download settings on sources
+13 Alembic migrations:
+
+| # | Migration | What It Adds |
+|---|-----------|-------------|
+| 001 | `initial_schema` | Users, credentials, posts, sources, events, alerts |
+| 002 | `entities` | Entities, entity_mentions |
+| 003 | `briefs` | Intelligence briefs |
+| 004 | `financial` | Holdings, quotes, entity_ticker_map, signals |
+| 005 | `geo_precision` | Location precision scoring |
+| 006 | `alert_rules` | Alert rules + events (correlation engine) |
+| 007 | `alert_enhancements` | Geo-proximity + silence detection |
+| 008 | `entity_relationships` | Typed relationships, notes, bookmarks, tags |
+| 009 | `media_support` | Media columns, download settings |
+| 010 | `acled` | External ID column for dedup |
+| 011 | `sanctions` | Sanctions entities + matches, pg_trgm |
+| 012 | `fused_events` | Cross-source fused intelligence events |
+| 013 | `investigations` | Cases, case items, case timeline |
 
 ---
 
@@ -294,36 +295,30 @@ alembic upgrade head
 
 ---
 
-## Roadmap
-
-- [ ] Investigation/case management — analyst workspaces with pinned items
-- [ ] Connector plugin framework — community-extensible data sources
-- [ ] 3D globe view (CesiumJS) for satellites and aircraft
-- [ ] More connectors: YouTube transcripts, NOAA/FAA NOTAMs, paste sites
-- [ ] Reverse image search integration
-- [ ] Video frame analysis for authenticity
-
----
-
 ## Contributing
 
-Contributions welcome. Open an issue first for large changes.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ---
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
 
 ---
 
 ## Acknowledgments
 
+- [ACLED](https://acleddata.com) — Armed conflict event data
+- [GDELT Project](https://gdeltproject.org) — Global media monitoring
+- [OpenSanctions](https://opensanctions.org) — Sanctions and watchlist data
+- [ICIJ](https://offshoreleaks.icij.org) — Offshore leaks database
+- [OCCRP Aleph](https://aleph.occrp.org) — Organized crime and corruption data
 - [DeepStateMap](https://deepstatemap.live) — Ukraine frontline data
-- [AMK Mapping](https://x.com/AMK_Mapping_), [Suriyakmaps](https://x.com/Suriyakmaps), [UA Control Map](https://uacontrolmap.com), [Playfra](https://playframap.github.io), Anatoly Radov — Additional frontline mapping sources
-- [OpenSky Network](https://opensky-network.org) — Flight tracking data
+- [OpenSky Network](https://opensky-network.org) — Flight tracking
 - [CelesTrak](https://celestrak.org) — Satellite TLE data
 - [NASA FIRMS](https://firms.modaps.eosdis.nasa.gov) — Thermal anomaly data
+- [Esri](https://www.arcgis.com) — Satellite imagery tiles
 - [CartoDB](https://carto.com) — Dark matter map tiles
 - [spaCy](https://spacy.io) — NLP/NER
 - [Nominatim](https://nominatim.org) — Geocoding

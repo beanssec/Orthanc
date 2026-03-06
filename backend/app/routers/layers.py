@@ -19,6 +19,7 @@ from app.models.user import User
 from app.services.frontline_service import frontline_service
 from app.services.sentiment_analyzer import analyze_sentiment
 from app.services.translator import translator
+from app.services.fusion_service import fusion_service
 
 logger = logging.getLogger("orthanc.routers.layers")
 
@@ -596,6 +597,54 @@ async def get_acled_data(
 class TranslateRequest(BaseModel):
     text: str
     target_lang: str = "en"
+
+
+@router.get("/layers/fusion")
+async def get_fusion_layer_alias(
+    hours: int = Query(default=48, ge=1, le=720),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Return fused intelligence events as GeoJSON FeatureCollection for map overlay."""
+    events = await fusion_service.get_recent(hours=hours, limit=200)
+
+    SEVERITY_COLORS = {
+        "flash": "#ef4444",
+        "urgent": "#f97316",
+        "routine": "#3b82f6",
+    }
+
+    features = []
+    for e in events:
+        if e["centroid_lat"] is None or e["centroid_lng"] is None:
+            continue
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [e["centroid_lng"], e["centroid_lat"]],
+            },
+            "properties": {
+                "id": e["id"],
+                "severity": e["severity"],
+                "source_count": e["source_count"],
+                "post_count": e["post_count"],
+                "summary": (e["ai_summary"] or "")[:200],
+                "entity_names": e["entity_names"],
+                "source_types": e["component_source_types"],
+                "radius_km": e["radius_km"],
+                "created_at": e["created_at"],
+                "color": SEVERITY_COLORS.get(e["severity"], "#6b7280"),
+            },
+        })
+
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "metadata": {
+            "count": len(features),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        },
+    }
 
 
 @router.post("/translate")

@@ -12,6 +12,7 @@ from .collaboration import UserNote, UserBookmark, UserTag
 from .brief import Brief
 from .financial import Holding, Quote, EntityTickerMap, Signal
 from .sanctions import SanctionsEntity, EntitySanctionsMatch
+from .fused_event import FusedEvent
 
 __all__ = [
     "Base", "User", "Credential", "Post", "Event", "Source",
@@ -22,4 +23,5 @@ __all__ = [
     "Brief",
     "Holding", "Quote", "EntityTickerMap", "Signal",
     "SanctionsEntity", "EntitySanctionsMatch",
+    "FusedEvent",
 ]

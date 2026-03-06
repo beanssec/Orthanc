@@ -251,6 +251,32 @@ function createSatelliteImage(color: string): { width: number; height: number; d
   return { width: size, height: size, data: ctx.getImageData(0, 0, size, size).data };
 }
 
+function createDiamondImage(color: string, size: number = 28): { width: number; height: number; data: Uint8ClampedArray } {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0, 0, size, size);
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = size / 2 - 2;
+  // Diamond shape
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - r);      // top
+  ctx.lineTo(cx + r, cy);      // right
+  ctx.lineTo(cx, cy + r);      // bottom
+  ctx.lineTo(cx - r, cy);      // left
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.85;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+  ctx.lineWidth = 1.5;
+  ctx.globalAlpha = 1;
+  ctx.stroke();
+  return { width: size, height: size, data: ctx.getImageData(0, 0, size, size).data };
+}
+
 // ---------------------------------------------------------------------------
 // Layer constants
 // ---------------------------------------------------------------------------
@@ -289,6 +315,9 @@ const GDELT_GEO_SOURCE = 'gdelt-geo-source';
 const GDELT_GEO_HEAT = 'gdelt-geo-heat';
 const GDELT_GEO_CIRCLES = 'gdelt-geo-circles';
 
+const FUSION_SOURCE = 'fusion-source';
+const FUSION_LAYER = 'fusion-layer';
+
 // ---------------------------------------------------------------------------
 // Layer state interface
 // ---------------------------------------------------------------------------
@@ -302,6 +331,7 @@ interface LayerState {
   sentiment: boolean;
   gdelt: boolean;
   acled: boolean;
+  fusion: boolean;
 }
 
 interface LayerCounts {
@@ -313,6 +343,7 @@ interface LayerCounts {
   sentiment: number;
   gdelt: number;
   acled: number;
+  fusion: number;
 }
 
 interface FrontlineSourceInfo {
@@ -393,6 +424,7 @@ export function MapView() {
     sentiment: false,
     gdelt: false,
     acled: false,
+    fusion: false,
   });
   const [layerCounts, setLayerCounts] = useState<LayerCounts>({
     flights: 0,
@@ -403,6 +435,7 @@ export function MapView() {
     sentiment: 0,
     gdelt: 0,
     acled: 0,
+    fusion: 0,
   });
 
   // GDELT GEO state
@@ -610,6 +643,20 @@ export function MapView() {
     }
   }, []);
 
+  const fetchFusion = useCallback(async () => {
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+    try {
+      const res = await api.get('/layers/fusion?hours=48');
+      const data = res.data as GeoJSON.FeatureCollection;
+      const src = map.getSource(FUSION_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      if (src) src.setData(data);
+      setLayerCounts((c) => ({ ...c, fusion: data.features?.length ?? 0 }));
+    } catch (err) {
+      console.error('Failed to fetch fusion data', err);
+    }
+  }, []);
+
   // Keep refs in sync with React state for use in style.load callback (can't use state directly in closure)
   useEffect(() => { filteredEventsRef.current = filteredEvents; }, [filteredEvents]);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
@@ -618,8 +665,9 @@ export function MapView() {
     fetchFnsRef.current = {
       flights: fetchFlights, ships: fetchShips, firms: fetchFirms,
       frontlines: fetchFrontlines, satellites: fetchSatellites, sentiment: fetchSentiment,
+      gdelt: () => fetchGdelt(), acled: fetchAcled, fusion: fetchFusion,
     };
-  }, [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment]);
+  }, [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment, fetchGdelt, fetchAcled, fetchFusion]);
 
   // Switch base map layer
   useEffect(() => {
@@ -641,7 +689,8 @@ export function MapView() {
     sentiment: { fetch: fetchSentiment, interval: 300_000 },
     gdelt: { fetch: fetchGdelt, interval: 900_000 },
     acled: { fetch: fetchAcled, interval: 3_600_000 },
-  }), [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment, fetchGdelt, fetchAcled]);
+    fusion: { fetch: fetchFusion, interval: 300_000 },
+  }), [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment, fetchGdelt, fetchAcled, fetchFusion]);
 
   // Handle layer toggle
   const toggleLayer = useCallback((key: keyof LayerState, enabled: boolean) => {
@@ -662,10 +711,11 @@ export function MapView() {
       sentiment: [SENTIMENT_LAYER_CIRCLES, SENTIMENT_LAYER_HEAT],
       gdelt: [GDELT_GEO_HEAT, GDELT_GEO_CIRCLES],
       acled: [ACLED_LAYER],
+      fusion: [FUSION_LAYER],
     };
 
     for (const [key, enabled] of Object.entries(layers) as [keyof LayerState, boolean][]) {
-      const mapLayers = layerVisMap[key];
+      const mapLayers = layerVisMap[key] ?? [];
       const vis = enabled ? 'visible' : 'none';
       for (const lid of mapLayers) {
         if (map.getLayer(lid)) {
@@ -1209,6 +1259,94 @@ export function MapView() {
           .addTo(map);
       });
 
+      // ── Fused Intelligence source + layer ────────────────────────────────
+      map.addSource(FUSION_SOURCE, {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+
+      // Register diamond icons for each severity
+      const diamondFlash = createDiamondImage('#ef4444', 32);
+      const diamondUrgent = createDiamondImage('#f97316', 28);
+      const diamondRoutine = createDiamondImage('#3b82f6', 24);
+      if (!map.hasImage('fusion-flash')) map.addImage('fusion-flash', { width: diamondFlash.width, height: diamondFlash.height, data: diamondFlash.data });
+      if (!map.hasImage('fusion-urgent')) map.addImage('fusion-urgent', { width: diamondUrgent.width, height: diamondUrgent.height, data: diamondUrgent.data });
+      if (!map.hasImage('fusion-routine')) map.addImage('fusion-routine', { width: diamondRoutine.width, height: diamondRoutine.height, data: diamondRoutine.data });
+
+      map.addLayer({
+        id: FUSION_LAYER,
+        type: 'symbol',
+        source: FUSION_SOURCE,
+        layout: {
+          visibility: 'none',
+          'icon-image': ['concat', 'fusion-', ['coalesce', ['get', 'severity'], 'routine']],
+          'icon-size': ['interpolate', ['linear'], ['zoom'], 3, 0.7, 8, 1.0, 12, 1.3],
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': false,
+        },
+      });
+
+      // Fusion hover tooltip
+      map.on('mouseenter', FUSION_LAYER, (e) => {
+        map.getCanvas().style.cursor = 'pointer';
+        const f = e.features?.[0];
+        if (!f || f.geometry.type !== 'Point') return;
+        const p = f.properties ?? {};
+        const severityColors: Record<string, string> = { flash: '#ef4444', urgent: '#f97316', routine: '#3b82f6' };
+        const color = severityColors[p.severity] ?? '#6b7280';
+        const html = `
+          <div class="map-tooltip">
+            <div class="map-tooltip__title" style="color:${color}">◆ Fused Intelligence — ${String(p.severity || 'routine').toUpperCase()}</div>
+            <div class="map-tooltip__row"><span>Sources</span><span>${p.source_count || 0}</span></div>
+            <div class="map-tooltip__row"><span>Reports</span><span>${p.post_count || 0}</span></div>
+            ${p.summary ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px;max-width:200px">${escapeHtml(String(p.summary).slice(0, 120))}</div>` : ''}
+          </div>`;
+        showTooltip(map, tooltipRef, f.geometry.coordinates as [number, number], html);
+      });
+      map.on('mouseleave', FUSION_LAYER, () => {
+        map.getCanvas().style.cursor = '';
+        tooltipRef.current?.remove();
+        tooltipRef.current = null;
+      });
+
+      // Fusion click popup
+      map.on('click', FUSION_LAYER, (e) => {
+        const f = e.features?.[0];
+        if (!f || f.geometry.type !== 'Point') return;
+        const p = f.properties ?? {};
+        const severityColors: Record<string, string> = { flash: '#ef4444', urgent: '#f97316', routine: '#3b82f6' };
+        const color = severityColors[p.severity] ?? '#6b7280';
+        const severityLabel = String(p.severity || 'routine').toUpperCase();
+        // Parse entity_names (stored as JSON string in GeoJSON properties)
+        let entityNames: string[] = [];
+        try { entityNames = JSON.parse(p.entity_names || '[]'); } catch { /* */ }
+        // Parse source_types
+        let sourceTypes: string[] = [];
+        try { sourceTypes = JSON.parse(p.source_types || '[]'); } catch { /* */ }
+        const summary = String(p.summary || '').slice(0, 300);
+        const html = `
+          <div class="map-popup">
+            <div class="map-popup__source-badge" style="color:${color}">
+              <span style="display:inline-block;width:8px;height:8px;transform:rotate(45deg);background:${color};flex-shrink:0"></span>
+              ◆ FUSED INTELLIGENCE — ${severityLabel}
+            </div>
+            <div class="map-popup__author" style="font-size:12px">
+              ${p.source_count || 0} sources · ${p.post_count || 0} reports
+            </div>
+            ${entityNames.length > 0 ? `<div class="map-popup__place">📍 ${escapeHtml(entityNames.slice(0, 3).join(', '))}</div>` : ''}
+            ${summary ? `<div class="map-popup__content" style="font-size:11px">${escapeHtml(summary)}</div>` : ''}
+            ${sourceTypes.length > 0 ? `<div style="margin-top:6px;font-size:10px;color:var(--text-muted)">Sources: ${escapeHtml(sourceTypes.join(', '))}</div>` : ''}
+            <div class="map-popup__footer">
+              <a class="map-popup__link" href="/feed">View component posts →</a>
+            </div>
+          </div>`;
+        if (popupRef.current) popupRef.current.remove();
+        popupRef.current = new maplibregl.Popup({ closeButton: true, maxWidth: '320px', offset: 10 })
+          .setLngLat(f.geometry.coordinates as [number, number])
+          .setHTML(html)
+          .addTo(map);
+      });
+
     }; // end setupDataLayers
 
     // Re-add all data layers after a base layer style switch.
@@ -1237,11 +1375,14 @@ export function MapView() {
         frontlines: [FRONTLINES_LAYER_LINE, FRONTLINES_LAYER_FILL, FRONTLINES_LAYER_EVENTS],
         satellites: [SATELLITES_LAYER],
         sentiment: [SENTIMENT_LAYER_CIRCLES, SENTIMENT_LAYER_HEAT],
+        gdelt: [GDELT_GEO_HEAT, GDELT_GEO_CIRCLES],
+        acled: [ACLED_LAYER],
+        fusion: [FUSION_LAYER],
       };
       const curLayers = layersStateRef.current;
       for (const [key, enabled] of Object.entries(curLayers) as [keyof LayerState, boolean][]) {
         const vis = enabled ? 'visible' : 'none';
-        for (const lid of layerVisMap[key as keyof LayerState]) {
+        for (const lid of (layerVisMap[key as keyof LayerState] ?? [])) {
           if (map.getLayer(lid)) map.setLayoutProperty(lid, 'visibility', vis);
         }
         if (enabled && loadedLayers.current.has(key)) {
@@ -1977,6 +2118,39 @@ export function MapView() {
                 <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#eab308' }} />Protests</div>
                 <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#a855f7' }} />Riots</div>
                 <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#3b82f6' }} />Strategic Developments</div>
+              </div>
+            )}
+          </div>
+
+          {/* ── Fused Intelligence ── */}
+          <div className="map-layers-section">
+            <div className="map-layers-section__label">Fused Intelligence</div>
+
+            <label className="map-layer-row">
+              <span className="map-layer-row__dot" style={{ background: 'linear-gradient(135deg, #ef4444, #3b82f6)', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8 }} />
+              <span className="map-layer-row__name">◆ Multi-Source Fusion</span>
+              {layers.fusion && layerCounts.fusion > 0 && (
+                <span className="map-layer-row__count">{layerCounts.fusion}</span>
+              )}
+              <span className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={layers.fusion}
+                  onChange={(e) => toggleLayer('fusion', e.target.checked)}
+                />
+                <span className="toggle-slider" />
+              </span>
+            </label>
+
+            {layers.fusion && (
+              <div className="sentiment-legend" style={{ marginTop: 6 }}>
+                <div className="sentiment-legend__title">Severity</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#ef4444', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8, display: 'inline-block', marginRight: 6 }} />Flash (4+ sources or 10+ posts)</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#f97316', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8, display: 'inline-block', marginRight: 6 }} />Urgent (3 sources)</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#3b82f6', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8, display: 'inline-block', marginRight: 6 }} />Routine (2 sources)</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Auto-detected every 5 min within 50km / 6h windows
+                </div>
               </div>
             )}
           </div>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import '../../styles/collaboration.css';
+import { AddToCase } from '../cases/AddToCase';
 
 // ── Types ──────────────────────────────────────────────────
 interface EntityDetailData {
@@ -1162,6 +1163,12 @@ export function EntityDetail({ entityId }: Props) {
             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>aka {entity.canonical_name}</span>
           )}
           <BookmarkButton targetType="entity" targetId={String(entity.id)} label={entity.name} />
+          <AddToCase
+            itemType="entity"
+            itemId={String(entity.id)}
+            title={`${entity.type}: ${entity.name}`}
+            content={entity.canonical_name ? `Canonical: ${entity.canonical_name} | Mentions: ${entity.mention_count}` : `Mentions: ${entity.mention_count}`}
+          />
         </div>
       </div>
 
