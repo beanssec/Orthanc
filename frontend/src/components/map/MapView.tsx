@@ -123,7 +123,7 @@ function buildPopupHtml(event: MapEvent): string {
       ${content ? `<div class="map-popup__content">${escapeHtml(content)}</div>` : ''}
       <div class="map-popup__footer">
         <span class="map-popup__time">${time}</span>
-        <a class="map-popup__link" href="/feed?post=${event.post.id}">View in Feed →</a>
+        <a class="map-popup__link" data-navigate="/feed?post=${event.post.id}" href="#">View in Feed →</a>
       </div>
     </div>
   `;
@@ -1337,7 +1337,7 @@ export function MapView() {
             ${summary ? `<div class="map-popup__content" style="font-size:11px">${escapeHtml(summary)}</div>` : ''}
             ${sourceTypes.length > 0 ? `<div style="margin-top:6px;font-size:10px;color:var(--text-muted)">Sources: ${escapeHtml(sourceTypes.join(', '))}</div>` : ''}
             <div class="map-popup__footer">
-              <a class="map-popup__link" href="/feed">View component posts →</a>
+              <a class="map-popup__link" data-navigate="/feed" href="#">View component posts →</a>
             </div>
           </div>`;
         if (popupRef.current) popupRef.current.remove();
@@ -1662,7 +1662,7 @@ export function MapView() {
               Posts analyzed: <strong>${p.post_count ?? 0}</strong>
             </div>
             <div class="map-popup__footer">
-              <a class="map-popup__link" href="/feed?q=${encodeURIComponent(p.place_name || '')}">View in Feed →</a>
+              <a class="map-popup__link" data-navigate="/feed?source=&q=${encodeURIComponent(p.place_name || '')}" href="#">View in Feed →</a>
             </div>
           </div>`;
         if (popupRef.current) popupRef.current.remove();
@@ -1671,6 +1671,16 @@ export function MapView() {
           .setHTML(html)
           .addTo(map);
       });
+    });
+
+    // Global handler for data-navigate links in popups (avoids full page reload which wipes auth)
+    map.getContainer().addEventListener('click', (evt) => {
+      const link = (evt.target as HTMLElement).closest('[data-navigate]');
+      if (link) {
+        evt.preventDefault();
+        const path = link.getAttribute('data-navigate');
+        if (path) navigate(path);
+      }
     });
 
     mapRef.current = map;
