@@ -6,6 +6,8 @@ const api = axios.create({
     ? `http://${window.location.hostname}:8000`
     : '/api',
   headers: { 'Content-Type': 'application/json' },
+  // Serialize arrays as repeated params: source_types=a&source_types=b (FastAPI style)
+  paramsSerializer: { indexes: null },
 });
 
 // Attach Bearer token

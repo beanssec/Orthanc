@@ -9,6 +9,63 @@ import FeedFilters from './FeedFilters'
 import api from '../../services/api'
 import '../../styles/feed.css'
 
+// ── Active Filter Pills ────────────────────────────────────
+function ActiveFilterPills() {
+  const filters    = useFeedStore((s) => s.filters)
+  const setFilters = useFeedStore((s) => s.setFilters)
+
+  const pills: Array<{ label: string; clear: () => void }> = []
+
+  filters.source_types.forEach((st) => {
+    pills.push({
+      label: st.charAt(0).toUpperCase() + st.slice(1),
+      clear: () => setFilters({ source_types: filters.source_types.filter((t) => t !== st) }),
+    })
+  })
+  if (filters.keyword) pills.push({ label: `"${filters.keyword}"`, clear: () => setFilters({ keyword: '' }) })
+  if (filters.author) pills.push({ label: `Author: ${filters.author}`, clear: () => setFilters({ author: null }) })
+  if (filters.media_type) pills.push({ label: `Media: ${filters.media_type}`, clear: () => setFilters({ media_type: null, has_media: null }) })
+  if (filters.has_media === true && !filters.media_type) pills.push({ label: 'Has Media', clear: () => setFilters({ has_media: null }) })
+  if (filters.has_geo === true) pills.push({ label: 'Has Location', clear: () => setFilters({ has_geo: null }) })
+  if (filters.location) pills.push({ label: `Location: ${filters.location}`, clear: () => setFilters({ location: null }) })
+  if (filters.entity) pills.push({ label: `Entity: ${filters.entity}`, clear: () => setFilters({ entity: null }) })
+  if (filters.min_authenticity !== null) pills.push({ label: `Auth ≥${filters.min_authenticity}`, clear: () => setFilters({ min_authenticity: null }) })
+  if (filters.max_authenticity !== null) pills.push({ label: `Auth ≤${filters.max_authenticity}`, clear: () => setFilters({ max_authenticity: null }) })
+
+  if (pills.length === 0) return null
+
+  return (
+    <div className="feed-filter-pills">
+      {pills.map((pill, i) => (
+        <span key={i} className="feed-filter-pill">
+          {pill.label}
+          <button className="feed-filter-pill__remove" onClick={pill.clear} aria-label={`Remove ${pill.label} filter`}>×</button>
+        </span>
+      ))}
+      <button
+        className="feed-filter-pills__clear-all"
+        onClick={() => setFilters({
+          source_types: [],
+          keyword: '',
+          date_from: null,
+          date_to: null,
+          author: null,
+          has_media: null,
+          media_type: null,
+          has_geo: null,
+          location: null,
+          entity: null,
+          min_authenticity: null,
+          max_authenticity: null,
+          sort: 'newest',
+        })}
+      >
+        Clear All
+      </button>
+    </div>
+  )
+}
+
 // ── Source type colours (matches dashboard) ────────────────
 const SOURCE_COLORS: Record<string, string> = {
   rss:      '#10b981',
@@ -134,6 +191,7 @@ export function FeedView() {
   const { connected, reconnecting } = useWebSocket()
   const posts = useFeedStore((s) => s.posts)
   const filters = useFeedStore((s) => s.filters)
+  const totalCount = useFeedStore((s) => s.totalCount)
 
   // Apply URL param: ?source=telegram → pre-filter by source type
   useEffect(() => {
@@ -181,18 +239,10 @@ export function FeedView() {
     }
   }, [posts.length])
 
-  // Count posts per source type
-  const sourceCounts = posts.reduce(
-    (acc, p) => {
-      acc[p.source_type] = (acc[p.source_type] || 0) + 1
-      return acc
-    },
-    {} as Record<string, number>
-  )
-
-  const hasActiveFilters = Object.values(filters).some((v) =>
-    Array.isArray(v) ? v.length > 0 : v !== null && v !== ''
-  )
+  const hasActiveFilters = Object.entries(filters).some(([k, v]) => {
+    if (k === 'sort') return false // sort is always set, not an "active filter"
+    return Array.isArray(v) ? v.length > 0 : v !== null && v !== ''
+  })
 
   return (
     <div className="feed-view">
@@ -221,6 +271,15 @@ export function FeedView() {
                   keyword: '',
                   date_from: null,
                   date_to: null,
+                  author: null,
+                  has_media: null,
+                  media_type: null,
+                  has_geo: null,
+                  location: null,
+                  entity: null,
+                  min_authenticity: null,
+                  max_authenticity: null,
+                  sort: 'newest',
                 })
               }
             >
@@ -228,14 +287,14 @@ export function FeedView() {
             </button>
           )}
         </div>
-        <FeedFilters counts={sourceCounts} />
+        <FeedFilters counts={{}} />
       </div>
 
       {/* ── Timeline (center column) ── */}
       <div className="feed-timeline">
         <div className="feed-timeline__header">
           <span className="feed-timeline__title">Live Feed</span>
-          <span className="feed-timeline__count">{posts.length} posts</span>
+          <span className="feed-timeline__count">{totalCount > 0 ? totalCount.toLocaleString() : posts.length} posts</span>
           <span
             className={`status-dot ${connected ? 'status-dot--active' : reconnecting ? 'status-dot--warning' : 'status-dot--error'}`}
             title={connected ? 'Connected' : reconnecting ? 'Reconnecting...' : 'Disconnected'}
@@ -259,6 +318,9 @@ export function FeedView() {
             </button>
           )}
         </div>
+
+        {/* Active filter pills */}
+        <ActiveFilterPills />
 
         {/* Volume sparkline between header and feed list */}
         <VolumeSparkline />

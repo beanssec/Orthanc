@@ -1,0 +1,589 @@
+/* ── OQL Query Page styles ───────────────────────────────────────────────────── */
+
+/* Layout */
+.oql-layout {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+.oql-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 20px;
+  gap: 14px;
+  min-width: 0;
+}
+
+.oql-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Query bar ─────────────────────────────────────────────────────────────── */
+
+.oql-bar {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.oql-input-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+}
+
+.oql-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 12px 16px;
+  resize: none;
+  min-height: 46px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.oql-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.oql-bar:focus-within {
+  border-color: var(--accent);
+}
+
+.oql-execute-btn {
+  align-self: flex-start;
+  margin: 8px 8px 0 0;
+  padding: 6px 16px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.oql-execute-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.oql-execute-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.oql-bar-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px 8px;
+  border-top: 1px solid var(--border);
+}
+
+.oql-bar-hint {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+/* ── Mode toggle ───────────────────────────────────────────────────────────── */
+
+.oql-mode-toggle {
+  display: flex;
+  background: var(--bg-primary);
+  border-radius: 20px;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--border);
+}
+
+.oql-mode-btn {
+  padding: 4px 14px;
+  border-radius: 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.oql-mode-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ── Error display ─────────────────────────────────────────────────────────── */
+
+.oql-error {
+  color: var(--danger);
+  font-size: 12px;
+  padding: 6px 12px 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.oql-error-icon {
+  flex-shrink: 0;
+}
+
+/* ── Stats bar ─────────────────────────────────────────────────────────────── */
+
+.oql-stats-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.oql-stats-text {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.oql-stats-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.oql-action-btn {
+  padding: 4px 10px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.oql-action-btn:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.oql-viz-btn {
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.oql-viz-btn:hover {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.oql-view-toggle {
+  display: flex;
+  gap: 4px;
+}
+
+.oql-view-btn {
+  padding: 3px 8px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.oql-view-btn.active {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+/* ── Results area ──────────────────────────────────────────────────────────── */
+
+.oql-results {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.oql-table-wrap {
+  flex: 1;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.oql-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.oql-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.oql-table th {
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.oql-table th:hover {
+  color: var(--text-primary);
+  background: var(--bg-surface-hover);
+}
+
+.oql-table th.sort-active {
+  color: var(--accent);
+}
+
+.oql-sort-icon {
+  margin-left: 4px;
+  opacity: 0.6;
+  font-size: 10px;
+}
+
+.oql-table td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  vertical-align: top;
+  max-width: 400px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oql-table tbody tr:nth-child(odd) {
+  background: var(--bg-surface);
+}
+
+.oql-table tbody tr:nth-child(even) {
+  background: var(--bg-primary);
+}
+
+.oql-table tbody tr:hover {
+  background: var(--bg-surface-hover);
+  cursor: pointer;
+}
+
+.oql-table td.num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.oql-table td.uuid {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.oql-table td.content-cell {
+  max-width: 500px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.oql-empty {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* ── JSON view ─────────────────────────────────────────────────────────────── */
+
+.oql-json-view {
+  flex: 1;
+  overflow: auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px;
+}
+
+.oql-json-view pre {
+  margin: 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ── Loading ───────────────────────────────────────────────────────────────── */
+
+.oql-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.oql-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: oql-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes oql-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Sidebar ───────────────────────────────────────────────────────────────── */
+
+.oql-sidebar-header {
+  padding: 12px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.oql-sidebar-section {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.oql-sidebar-section-title {
+  padding: 8px 14px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.oql-history-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 14px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 12px;
+  transition: background 0.1s;
+}
+
+.oql-history-item:hover {
+  background: var(--bg-surface-hover);
+}
+
+.oql-history-query {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+
+.oql-history-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+  display: flex;
+  gap: 6px;
+}
+
+.oql-sidebar-empty {
+  padding: 16px 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.oql-saved-item {
+  display: flex;
+  align-items: center;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+}
+
+.oql-saved-load {
+  flex: 1;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 12px;
+  overflow: hidden;
+}
+
+.oql-saved-name {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.oql-saved-query-preview {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.oql-saved-delete {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  line-height: 1;
+}
+
+.oql-saved-delete:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.oql-save-dialog {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.oql-save-dialog-box {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 24px;
+  width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.oql-save-dialog-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.oql-dialog-input {
+  width: 100%;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 8px 12px;
+  outline: none;
+}
+
+.oql-dialog-input:focus {
+  border-color: var(--accent);
+}
+
+.oql-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.oql-btn-primary {
+  padding: 6px 16px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.oql-btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.oql-btn-secondary {
+  padding: 6px 16px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.oql-btn-secondary:hover {
+  background: var(--bg-surface-hover);
+}

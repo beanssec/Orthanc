@@ -13,6 +13,7 @@ from .brief import Brief
 from .financial import Holding, Quote, EntityTickerMap, Signal
 from .sanctions import SanctionsEntity, EntitySanctionsMatch
 from .fused_event import FusedEvent
+from .query import SavedQuery, QueryHistory
 
 __all__ = [
     "Base", "User", "Credential", "Post", "Event", "Source",
@@ -24,4 +25,5 @@ __all__ = [
     "Holding", "Quote", "EntityTickerMap", "Signal",
     "SanctionsEntity", "EntitySanctionsMatch",
     "FusedEvent",
+    "SavedQuery", "QueryHistory",
 ]

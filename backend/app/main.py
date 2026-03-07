@@ -19,6 +19,7 @@ from app.routers import investigations
 from app.routers import sanctions
 from app.routers import fusion
 from app.routers import cases
+from app.routers import oql
 from app.collectors.orchestrator import orchestrator
 from app.collectors.satellite_collector import satellite_collector
 from app.services.brief_scheduler import brief_scheduler
@@ -139,6 +140,7 @@ app.include_router(investigations.router)
 app.include_router(sanctions.router)
 app.include_router(fusion.router)
 app.include_router(cases.router)
+app.include_router(oql.router)
 
 
 @app.get("/")
