@@ -876,12 +876,547 @@ All phases are independent — max parallelism is 3 agents in Wave A.
 
 ---
 
-## Future Roadmap (Post Sprint 15)
+## Sprint 16 — Narrative Intelligence Engine
+
+### Vision
+Build an automated narrative tracking system that clusters coverage of the same events across all sources, detects how different media ecosystems frame them, extracts specific claims, correlates claims against hard evidence (FIRMS, satellite, ACLED, flight data), and builds source bias profiles over time. No open-source platform does this today.
+
+### Core Concepts
+
+**Narrative** = A cluster of posts from multiple sources about the same real-world event or topic within a time window. Example: 47 posts across 12 sources about an Iranian facility explosion.
+
+**Stance** = How a specific post/source frames the narrative. Classifications:
+- `confirming` — presents event as fact
+- `denying` — says it didn't happen or is exaggerated
+- `attributing` — assigns responsibility to a specific actor
+- `contextualizing` — adds background/nuance
+- `deflecting` — shifts focus to a different topic
+- `speculating` — presents unverified theories
+
+**Claim** = A specific factual assertion extracted from a post that can potentially be verified. Example: "Explosion occurred at 32.7°N 51.7°E" (verifiable via satellite/FIRMS).
+
+**Evidence** = Hard data from non-editorial sources (FIRMS thermal, satellite imagery, ACLED events, flight tracking, seismic data) that confirms or contradicts a claim.
+
+**Source Group** = Configurable grouping of sources by editorial alignment:
+- `western` — BBC, NYT, Reuters, Al Jazeera English, Defense One, etc.
+- `russian` — TASS, Rybar, Two Majors, Legitimny, etc.
+- `chinese` — Xinhua, SCMP, etc.
+- `ukrainian` — Ukrinform, Kyiv Independent, DeepState UA, etc.
+- `osint` — Bellingcat, @Osinttechnical, @GeoConfirmed, @christogrozev, etc.
+- `independent` — War on the Rocks, Foreign Policy, think tanks, etc.
+- Custom groups configurable via UI
+
+**Bias Profile** = Per-source aggregate of stance patterns over 30 days, producing:
+- Alignment score (–1.0 Western ↔ +1.0 Eastern)
+- Reliability score (% of claims later confirmed by evidence)
+- Coverage bias (what topics they amplify vs ignore)
+- Speed rank (how fast they cover breaking events)
+
+---
+
+### Phase 1: Data Model & Embedding Pipeline (1 agent — `agent-narrative-model`)
+
+#### Migration `017_narratives.py`
+
+```sql
+-- Narrative clusters
+CREATE TABLE narratives (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    title TEXT NOT NULL,                    -- AI-generated title
+    summary TEXT,                           -- AI-generated summary
+    status VARCHAR(20) DEFAULT 'active',    -- active, resolved, stale
+    first_seen TIMESTAMPTZ NOT NULL,
+    last_updated TIMESTAMPTZ NOT NULL,
+    post_count INTEGER DEFAULT 0,
+    source_count INTEGER DEFAULT 0,
+    divergence_score FLOAT DEFAULT 0,       -- 0=consensus, 1=max disagreement
+    evidence_score FLOAT DEFAULT 0,         -- 0=unverified, 1=fully confirmed
+    consensus VARCHAR(50),                  -- confirmed, disputed, denied, unverified
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Posts belonging to narratives (M:N — a post can belong to multiple narratives)
+CREATE TABLE narrative_posts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    narrative_id UUID REFERENCES narratives(id) ON DELETE CASCADE,
+    post_id UUID REFERENCES posts(id) ON DELETE CASCADE,
+    stance VARCHAR(30),                     -- confirming, denying, attributing, etc.
+    stance_confidence FLOAT,                -- 0-1 AI confidence
+    stance_summary TEXT,                    -- one-line AI summary of this post's take
+    assigned_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(narrative_id, post_id)
+);
+
+-- Extracted claims
+CREATE TABLE claims (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    narrative_id UUID REFERENCES narratives(id) ON DELETE CASCADE,
+    claim_text TEXT NOT NULL,               -- "Explosion at Isfahan facility"
+    claim_type VARCHAR(30),                 -- factual, attribution, prediction, opinion
+    location_lat FLOAT,                     -- if claim has spatial component
+    location_lng FLOAT,
+    entity_names TEXT[],                    -- entities referenced
+    status VARCHAR(20) DEFAULT 'unverified', -- unverified, confirmed, debunked, disputed
+    evidence_count INTEGER DEFAULT 0,
+    first_claimed_at TIMESTAMPTZ,
+    first_claimed_by TEXT,                  -- source that first made this claim
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Evidence linking claims to hard data
+CREATE TABLE claim_evidence (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    claim_id UUID REFERENCES claims(id) ON DELETE CASCADE,
+    evidence_type VARCHAR(30),              -- firms, satellite, acled, flight, seismic, osint_image
+    evidence_source TEXT,                   -- "NASA FIRMS", "Sentinel-2", "OpenSky", etc.
+    evidence_data JSONB,                    -- structured evidence payload
+    supports BOOLEAN,                       -- true=confirms, false=contradicts
+    confidence FLOAT,                       -- 0-1
+    detected_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Source group definitions
+CREATE TABLE source_groups (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(50) NOT NULL UNIQUE,       -- "western", "russian", "osint"
+    display_name VARCHAR(100),              -- "Western Media"
+    color VARCHAR(7),                       -- hex color for charts
+    description TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Source ↔ group mapping
+CREATE TABLE source_group_members (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    source_group_id UUID REFERENCES source_groups(id) ON DELETE CASCADE,
+    source_id UUID REFERENCES sources(id) ON DELETE CASCADE,
+    UNIQUE(source_group_id, source_id)
+);
+
+-- Source bias profiles (computed weekly)
+CREATE TABLE source_bias_profiles (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    source_id UUID REFERENCES sources(id) ON DELETE CASCADE,
+    period_start TIMESTAMPTZ NOT NULL,
+    period_end TIMESTAMPTZ NOT NULL,
+    alignment_score FLOAT,                  -- -1.0 (western) ↔ +1.0 (eastern)
+    reliability_score FLOAT,                -- 0-1 (% claims confirmed)
+    coverage_bias JSONB,                    -- {topic: amplification_score}
+    speed_rank FLOAT,                       -- avg hours after event before first post
+    stance_distribution JSONB,              -- {confirming: 0.4, denying: 0.1, ...}
+    total_narratives INTEGER,
+    total_claims INTEGER,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX ix_narrative_posts_narrative ON narrative_posts(narrative_id);
+CREATE INDEX ix_narrative_posts_post ON narrative_posts(post_id);
+CREATE INDEX ix_claims_narrative ON claims(narrative_id);
+CREATE INDEX ix_claim_evidence_claim ON claim_evidence(claim_id);
+CREATE INDEX ix_source_bias_source ON source_bias_profiles(source_id);
+CREATE INDEX ix_narratives_status ON narratives(status);
+```
+
+#### Post Embedding Pipeline
+
+Add a lightweight embedding step to the post ingestion pipeline:
+- After entity extraction, compute a text embedding for each post
+- Use OpenRouter API: `POST /api/v1/embeddings` with a small model (e.g., `openai/text-embedding-3-small`)
+- Store embedding in a new `post_embeddings` table: `(post_id UUID, embedding vector(1536))`
+- Use pgvector extension for similarity search (add `CREATE EXTENSION vector` to migration)
+- If no OpenRouter key, fall back to TF-IDF with scikit-learn (no external API needed)
+
+**Files:**
+- `backend/alembic/versions/017_narratives.py`
+- `backend/app/models/narrative.py` (Narrative, NarrativePost, Claim, ClaimEvidence, SourceGroup, SourceGroupMember, SourceBiasProfile)
+- `backend/app/models/__init__.py` (register)
+- `backend/app/services/embedding_service.py` (~100 lines) — compute embeddings via OpenRouter or TF-IDF fallback
+
+#### Seed Default Source Groups
+
+On first run, seed these groups and auto-assign existing sources:
+
+```python
+DEFAULT_GROUPS = {
+    "western": {
+        "display_name": "Western Media",
+        "color": "#3b82f6",
+        "sources": ["BBC World", "NYT World", "Al Jazeera", "Defense One", "Foreign Policy",
+                     "Breaking Defense", "Defense News", "Stars and Stripes", "The Diplomat",
+                     "War on the Rocks", "The War Zone", "Naval News", "Kyiv Independent",
+                     "Ukrinform", "@sentdefender", "@CENTCOM", "@Mr_Andrew_Fox", "@ASPI_org"]
+    },
+    "russian": {
+        "display_name": "Russian/Eastern Media",
+        "color": "#ef4444",
+        "sources": ["TASS English", "Rybar (RU mil mapping)", "Two Majors",
+                     "Intel Slava Z", "South Front", "Legitimny"]
+    },
+    "osint": {
+        "display_name": "OSINT Community",
+        "color": "#10b981",
+        "sources": ["Bellingcat", "@Osinttechnical", "@UAWeapons", "@DefMon3",
+                     "@GeoConfirmed", "@IntelCrab", "@ELINTNews", "@RALee85",
+                     "@christogrozev", "@EliotHiggins", "@AricToler",
+                     "@TankerTrackers", "@SquawkMilitary", "@AircraftSpots",
+                     "AMK_Mapping Telegram", "AMK Mapping", "MES", "CyberspecNews"]
+    },
+    "independent": {
+        "display_name": "Independent Analysis",
+        "color": "#f59e0b",
+        "sources": ["Arms Control Assoc", "Bulletin Atomic Scientists", "IAEA News",
+                     "UN ReliefWeb", "r/geopolitics", "r/CredibleDefense"]
+    },
+    "cyber": {
+        "display_name": "Cyber Intelligence",
+        "color": "#8b5cf6",
+        "sources": ["The Record", "BleepingComputer", "Krebs on Security",
+                     "CyberScoop", "Cyberspec News", "r/OSINT"]
+    },
+    "maritime": {
+        "display_name": "Maritime/Logistics",
+        "color": "#06b6d4",
+        "sources": ["gCaptain", "FreightWaves", "Splash247", "OilPrice", "Rigzone"]
+    }
+}
+```
+
+---
+
+### Phase 2: Narrative Clustering Engine (1 agent — `agent-narrative-cluster`)
+
+#### Background Service: `backend/app/services/narrative_engine.py`
+
+Runs as a background task (like fusion_service), polls every 10 minutes.
+
+**Clustering algorithm:**
+1. Fetch all posts from last 24 hours that aren't yet assigned to a narrative
+2. Compute pairwise cosine similarity of embeddings
+3. Group posts with similarity > 0.75 into candidate clusters
+4. For clusters with ≥3 posts from ≥2 sources: create a Narrative
+5. For existing active narratives: check new posts against narrative centroid embedding, add if similarity > 0.70
+6. Mark narratives as `stale` if no new posts in 12 hours
+
+**If no embeddings available** (no OpenRouter key), fall back to:
+- TF-IDF vectorization on post content
+- Entity overlap (posts sharing 2+ entities = candidate cluster)
+- Keyword overlap (Jaccard similarity > 0.4)
+
+**Title/summary generation:**
+- After clustering, use AI (grok-3-mini or OpenRouter) to generate a one-line narrative title and 2-sentence summary from the top 5 posts
+- Update title/summary when new posts join the cluster
+
+**Divergence scoring:**
+- For each narrative, count unique stances per source group
+- `divergence_score = 1 - (max_group_agreement / total_stances)`
+- 0.0 = all sources agree, 1.0 = every group has a different take
+
+**Files:**
+- `backend/app/services/narrative_engine.py` (~500 lines)
+- `backend/app/main.py` (start in lifespan)
+
+---
+
+### Phase 3: Stance & Claim Extraction (1 agent — `agent-narrative-analysis`)
+
+#### Stance Classification Service: `backend/app/services/stance_classifier.py`
+
+When a post is added to a narrative, classify its stance using AI:
+
+```python
+STANCE_PROMPT = """You are analyzing how a news source covers a specific event.
+
+NARRATIVE: {narrative_title} — {narrative_summary}
+
+POST from {source_name} ({source_group}):
+{post_content}
+
+Classify this post's stance toward the narrative:
+- confirming: presents the event as factual
+- denying: disputes the event occurred or its severity
+- attributing: assigns blame/credit to a specific actor
+- contextualizing: adds historical or political context
+- deflecting: redirects attention to a different topic
+- speculating: presents unverified theories
+
+Respond with JSON:
+{
+    "stance": "<classification>",
+    "confidence": <0.0-1.0>,
+    "summary": "<one sentence describing this source's take>",
+    "claims": [
+        {"text": "<specific factual claim>", "type": "factual|attribution|prediction|opinion",
+         "entities": ["entity1", "entity2"],
+         "lat": <optional>, "lng": <optional>}
+    ]
+}
+"""
+```
+
+- Batch process: when a narrative reaches 5+ posts, classify all at once
+- Rate limit: max 10 AI calls per minute to avoid burning API credits
+- Cache results: don't re-classify a post that's already been classified
+
+#### Claim Deduplication
+- Compare new claims against existing claims in the narrative using string similarity
+- Merge duplicates (e.g., "explosion at Isfahan" and "blast near Isfahan nuclear plant" → same claim)
+- Track which source first made each claim + timestamp
+
+**Files:**
+- `backend/app/services/stance_classifier.py` (~300 lines)
+- `backend/app/services/claim_extractor.py` (~200 lines)
+
+---
+
+### Phase 4: Evidence Correlation (1 agent — `agent-narrative-evidence`)
+
+#### Evidence Linker Service: `backend/app/services/evidence_linker.py`
+
+For each claim with spatial data (lat/lng), automatically search for corroborating evidence:
+
+**Evidence sources (already in Orthanc):**
+| Source | Check | Supports If |
+|--------|-------|-------------|
+| FIRMS thermal | Query `/layers/firms` within 50km of claim location | Thermal anomaly within 6h of claim |
+| ACLED events | Query ACLED data near claim location | Conflict event recorded |
+| Flight data | Query `/layers/flights` for unusual patterns | Military aircraft in area |
+| Ship data | Query `/layers/ships` for AIS anomalies | Naval activity detected |
+| USGS seismic | Check earthquake feed for tremors at location | Seismic event correlates with explosion claim |
+| DeepState frontlines | Check frontline proximity | Claim location matches active conflict zone |
+| Other OSINT posts | Search posts with geolocated media near claim | Independent verification exists |
+
+**Evidence scoring per claim:**
+```
+evidence_score = weighted_sum([
+    (firms_match * 0.3),      # hard sensor data
+    (acled_match * 0.2),      # conflict database
+    (flight_anomaly * 0.15),  # flight patterns
+    (osint_images * 0.2),     # geolocated imagery
+    (seismic_match * 0.15),   # seismic data
+]) / total_weight_of_available_sources
+```
+
+**Narrative-level evidence score** = average across all claims.
+
+**Consensus determination:**
+- `confirmed` — evidence_score > 0.7 AND divergence < 0.3
+- `disputed` — evidence_score > 0.3 AND divergence > 0.5
+- `denied` — multiple denying stances from non-aligned sources
+- `unverified` — evidence_score < 0.3
+
+**Files:**
+- `backend/app/services/evidence_linker.py` (~400 lines)
+
+---
+
+### Phase 5: API Endpoints (1 agent — `agent-narrative-api`)
+
+#### Router: `backend/app/routers/narratives.py`
+
+```
+GET  /narratives/                    — list active narratives (paginated, filterable by status/date/divergence)
+GET  /narratives/{id}                — full narrative detail with posts, stances, claims, evidence
+GET  /narratives/{id}/timeline       — hourly post count by source group
+GET  /narratives/{id}/stances        — stance breakdown by source group
+GET  /narratives/{id}/claims         — claims with evidence status
+GET  /narratives/trending            — top 5 narratives by post volume in last 6h
+POST /narratives/{id}/refresh        — force re-cluster and re-classify
+
+GET  /source-groups/                 — list source groups with members
+POST /source-groups/                 — create custom group
+PUT  /source-groups/{id}             — update group
+POST /source-groups/{id}/members     — add source to group
+DELETE /source-groups/{id}/members/{source_id}
+
+GET  /bias/profiles                  — all source bias profiles
+GET  /bias/profiles/{source_id}      — single source bias history
+GET  /bias/compass                   — data for bias compass scatter plot
+POST /bias/compute                   — force recompute all bias profiles
+```
+
+**Files:**
+- `backend/app/routers/narratives.py` (~400 lines)
+- `backend/app/schemas/narrative.py` (~100 lines)
+- `backend/app/main.py` (register router)
+
+---
+
+### Phase 6: Frontend — Narratives Page (1 agent — `agent-narrative-ui`)
+
+#### New page: `/narratives` — Narrative Intelligence Dashboard
+
+**Layout:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  NARRATIVE INTELLIGENCE          [Active ▾] [24h ▾] [⟳ Refresh]│
+├──────────────────────────────────────┬──────────────────────────┤
+│                                      │                          │
+│  ┌──────────────────────────────┐    │  NARRATIVE DETAIL        │
+│  │ 🔴 Iranian Facility Attack   │    │                          │
+│  │ 47 posts · 12 sources        │    │  Title + AI Summary      │
+│  │ Divergence: ██████████ HIGH  │    │                          │
+│  │ Evidence:   ████████░░ 0.8   │    │  ┌─ STANCE BREAKDOWN ──┐ │
+│  │ 🕐 2h ago                    │    │  │ Western    ████ CONF │ │
+│  └──────────────────────────────┘    │  │ Russian    ██░░ DENY │ │
+│  ┌──────────────────────────────┐    │  │ OSINT      ████ EVID │ │
+│  │ 🟡 Black Sea Naval Buildup   │    │  │ Chinese    ░░░░ SILE │ │
+│  │ 23 posts · 8 sources         │    │  └────────────────────┘ │
+│  │ Divergence: ████░░░░░░ MED  │    │                          │
+│  │ Evidence:   ██████░░░░ 0.6   │    │  ┌─ CLAIMS ────────────┐│
+│  │ 🕐 5h ago                    │    │  │ ✅ Explosion at site  ││
+│  └──────────────────────────────┘    │  │ ⏳ "Israeli strike"   ││
+│  ┌──────────────────────────────┐    │  │ ❌ "No casualties"    ││
+│  │ 🟢 NATO Exercise Baltic      │    │  └─────────────────────┘│
+│  │ 15 posts · 6 sources         │    │                          │
+│  │ Divergence: ██░░░░░░░░ LOW  │    │  ┌─ TIMELINE ──────────┐│
+│  │ Evidence:   ██████████ 1.0   │    │  │  ╱╲    [bar chart   ││
+│  │ 🕐 12h ago                   │    │  │ ╱  ╲   by source    ││
+│  └──────────────────────────────┘    │  │╱    ╲  group/hour]  ││
+│                                      │  └─────────────────────┘│
+│                                      │                          │
+│                                      │  ┌─ EVIDENCE ──────────┐│
+│                                      │  │ 🔥 FIRMS: thermal    ││
+│                                      │  │ ✈ Flights: mil A/C   ││
+│                                      │  │ 📡 Sentinel: change   ││
+│                                      │  └─────────────────────┘│
+├──────────────────────────────────────┴──────────────────────────┤
+│  BIAS COMPASS                                                    │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │              Reliable                                      │  │
+│  │                 │                                          │  │
+│  │  @GeoConfirmed ●│  ● Bellingcat                           │  │
+│  │         BBC ●   │      ● NYT                              │  │
+│  │                 │                                          │  │
+│  │  Western ───────┼──────── Eastern                         │  │
+│  │                 │                                          │  │
+│  │                 │          ● TASS                          │  │
+│  │                 │    ● Rybar                               │  │
+│  │              Unreliable                                    │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│  Sources positioned by alignment (X) and reliability (Y)         │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+#### Components:
+
+**`NarrativesView.tsx`** — Main page layout
+- Left panel: scrollable narrative card list with search/filter
+- Right panel: selected narrative detail
+- Bottom panel: bias compass (collapsible)
+
+**`NarrativeCard.tsx`** — List item
+- Title, post count, source count
+- Divergence bar (green=consensus → red=divergence)
+- Evidence bar (empty=unverified → full=confirmed)
+- Time since last update
+- Status badge (Active/Resolved/Stale)
+
+**`NarrativeDetail.tsx`** — Full detail view
+- Tabs: Overview | Stances | Claims | Timeline | Sources
+- **Overview**: AI summary, consensus status, divergence/evidence scores
+- **Stances**: Grouped by source group, each post's stance + one-line summary, color-coded
+- **Claims**: Table of extracted claims with evidence status icons (✅❌⏳), click to see evidence
+- **Timeline**: SVG stacked bar chart showing post volume per source group per hour
+- **Sources**: Which sources covered this, which didn't (silence detection)
+
+**`BiasCompass.tsx`** — SVG scatter plot
+- X axis: –1.0 (Western-aligned) ↔ +1.0 (Eastern-aligned)
+- Y axis: 0.0 (Unreliable) ↔ 1.0 (Reliable)
+- Each source as a colored dot (color = source group)
+- Hover shows source name, scores, stance distribution
+- Click navigates to source's full bias profile
+
+**`SourceBiasProfile.tsx`** — Source detail
+- Historical alignment score over time (line chart)
+- Stance distribution pie chart
+- List of narratives this source has covered with their stances
+- "Coverage gaps" — narratives they haven't covered
+
+#### Styles: `frontend/src/styles/narratives.css`
+- Narrative cards: subtle left border color by divergence level
+- Stance badges: color-coded (green=confirming, red=denying, blue=contextualizing, orange=attributing, gray=deflecting, purple=speculating)
+- Evidence icons: ✅ green, ❌ red, ⏳ amber
+- Bias compass: quadrant labels, grid lines, source dots with group colors
+- All CSS variables from globals.css
+
+**Files:**
+- `frontend/src/components/narratives/NarrativesView.tsx`
+- `frontend/src/components/narratives/NarrativeCard.tsx`
+- `frontend/src/components/narratives/NarrativeDetail.tsx`
+- `frontend/src/components/narratives/BiasCompass.tsx`
+- `frontend/src/components/narratives/SourceBiasProfile.tsx`
+- `frontend/src/styles/narratives.css`
+- `frontend/src/App.tsx` (add `/narratives` route)
+- Sidebar: add "Narratives" nav item with 🔍 icon under ANALYSIS section
+
+---
+
+### Phase 7: Integration & Dashboard Widget (1 agent — `agent-narrative-integration`)
+
+Wire narrative intelligence into the rest of the platform:
+
+**Dashboard widget:**
+- "Trending Narratives" card showing top 3 active narratives with divergence indicators
+- Replaces or supplements existing "Trending Entities" widget
+
+**Feed integration:**
+- Each feed item shows a "📖 Part of: [Narrative Title]" link if it belongs to a narrative
+- Click navigates to `/narratives?id=NARRATIVE_ID`
+
+**Entity integration:**
+- Entity detail page: "Narratives" tab showing all narratives mentioning this entity
+- Stance breakdown for this entity across source groups
+
+**Map integration:**
+- Narrative layer: show narrative clusters on map where claims have lat/lng
+- Color-coded by consensus status (green=confirmed, yellow=disputed, red=denied)
+
+**Alert integration:**
+- New alert condition: `narrative_divergence` — trigger when a narrative's divergence score exceeds threshold
+- New alert condition: `source_silence` — trigger when a source group hasn't covered a narrative that others have
+
+**OQL integration:**
+- New target table: `narratives:` — query narratives by status, divergence, evidence_score
+- Example: `narratives: divergence_score > 0.7 | sort -post_count`
+
+**Files:**
+- `frontend/src/components/dashboard/DashboardView.tsx` (add widget)
+- `frontend/src/components/feed/FeedItem.tsx` (add narrative link)
+- `frontend/src/components/entities/EntityDetail.tsx` (add Narratives tab)
+- `frontend/src/components/map/MapView.tsx` (add narrative layer)
+- `backend/app/services/correlation_engine.py` (add narrative alert conditions)
+- `backend/app/services/oql_parser.py` (add narratives table)
+
+---
+
+### Agent Delegation Plan
+
+| Order | Agent | Phase | Key Deliverables | Dependency |
+|-------|-------|-------|-----------------|------------|
+| 1 | `agent-narrative-model` | 1 | Migration, models, embedding service, seed groups | None |
+| 2 | `agent-narrative-cluster` | 2 | Clustering engine, background task | Phase 1 |
+| 3 | `agent-narrative-analysis` | 3 | Stance classifier, claim extractor | Phase 2 |
+| 4 | `agent-narrative-evidence` | 4 | Evidence linker, scoring | Phase 3 |
+| 5 | `agent-narrative-api` | 5 | REST endpoints, schemas | Phase 4 |
+| 6 | `agent-narrative-ui` | 6 | Full frontend page, bias compass | Phase 5 |
+| 7 | `agent-narrative-integration` | 7 | Dashboard, feed, map, alerts, OQL | Phase 6 |
+
+**Execution**: Strictly sequential — each phase builds on the previous.
+Phase 1 can start immediately. Estimated total: 7 agent runs.
+
+**AI cost estimate**: Stance classification + claim extraction uses ~500 tokens per post. At 100 posts/narrative, ~50k tokens per narrative. With grok-3-mini at ~$0.001/1k tokens, ~$0.05 per narrative analyzed. Budget ~$5-10/day at full ingestion volume.
+
+---
+
+## Future Roadmap (Post Sprint 16)
 
 - **Cyber OSINT**: VirusTotal, CVE/NVD, WHOIS/DNS — tie Shodan findings to vulnerabilities
 - **SEC EDGAR**: Corporate filings, insider trades — extend financial intelligence
 - **3D Globe**: CesiumJS for satellite/aircraft visualization
-- **Bluesky/Mastodon**: Open social protocol firehose ingestion
 - **Email ingestion**: IMAP collector for tip lines
 - **Plugin framework**: Standardized interface for community-contributed collectors
 - **Multi-user teams**: Shared cases, role-based access
+- **Narrative predictions**: Use historical narrative patterns to predict escalation
+- **Counter-narrative detection**: Identify coordinated inauthentic messaging campaigns
