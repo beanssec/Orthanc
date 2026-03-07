@@ -397,7 +397,303 @@ Existing free sources (FIRMS, Flights, Satellites, Frontlines) remain ON by defa
 
 ---
 
-## Future Roadmap (Post Sprint 13)
+## Current: Sprint 14 — SIEM Query Engine & Field-Level Search
+
+### Vision
+Transform Orthanc from a feed viewer into a proper SIEM-style analytics platform. Every field in the data model becomes searchable, filterable, and visualisable. Users can write structured queries, build ad-hoc visualizations, and save them as dashboard widgets — like Splunk/OpenSearch but purpose-built for OSINT.
+
+### Design Principles
+- **Server-side filtering**: Filters push to the API, not client-side filter on 50 pre-loaded posts
+- **Every field is searchable**: Any column in the posts/entities/events tables can be filtered on
+- **Query results are visualisable**: Any result set can be rendered as table, chart, map, or timeline
+- **Composable**: Filters, queries, and visualizations can be saved and shared
+- **Progressive disclosure**: Simple filters for casual use, full query language for power users
+
+---
+
+### Phase 1: Server-Side Feed Filtering (1 agent — `agent-feed-filters`)
+
+**Problem**: Current feed filtering is 100% client-side. Only 50 posts are loaded per page, and filters operate on that tiny window. Selecting "Telegram" might show 0 results because the loaded page is all RSS.
+
+#### Backend Changes
+- **Extend `GET /feed/`** — already accepts `source_types`, `keyword`, `date_from`, `date_to` but frontend doesn't use them
+- **Add new filter params**:
+  - `author` — ILIKE match on post author
+  - `has_media` — boolean, filter posts with/without media attachments
+  - `media_type` — filter by image/video/document
+  - `has_geo` — boolean, filter posts with/without geo events
+  - `location` — ILIKE on event place_name
+  - `entity` — filter posts that mention a specific entity (join through entity_mentions)
+  - `min_authenticity` / `max_authenticity` — float range on authenticity_score
+  - `external_id` — exact match on external_id (for ACLED, etc.)
+  - `sort` — `newest` (default), `oldest`, `relevance` (when keyword present)
+- **Add `GET /feed/facets`** — returns available field values with counts:
+  ```json
+  {
+    "source_types": [{"value": "telegram", "count": 341}, ...],
+    "authors": [{"value": "AMK_Mapping", "count": 89}, ...],
+    "media_types": [{"value": "image", "count": 60}, ...],
+    "locations": [{"value": "Gaza", "count": 45}, ...],
+    "entities": [{"value": "Iran", "count": 120, "type": "GPE"}, ...]
+  }
+  ```
+  Accepts same filter params as `/feed/` so facets update as you filter (like Splunk's sidebar)
+- **Add `total_count` response header** or wrap response in `{ items: [...], total: N, page: N }` for proper pagination display
+
+#### Frontend Changes (`FeedTimeline.tsx`, `FeedFilters.tsx`, `feedStore.ts`)
+- **Move ALL filtering server-side**: Pass filter params in API request instead of client-side `.filter()`
+- **FeedFilters.tsx** — expand sidebar with new filter sections:
+  - **Sources**: existing checkboxes (keep) + counts from facets API
+  - **Author**: searchable dropdown populated from facets
+  - **Media**: checkbox group (Has Image / Has Video / Has Document)
+  - **Location**: searchable dropdown of known locations from facets
+  - **Entity Mentions**: searchable entity picker (typeahead from `/entities?search=`)
+  - **Authenticity**: range slider (0.0–1.0) for posts with authenticity scores
+- **FeedTimeline.tsx** — remove client-side filter logic, re-fetch from API when filters change (debounced 300ms)
+- **feedStore.ts** — extend `FeedFilters` interface with new fields, add `totalCount` state
+- **Pagination indicator**: "Showing 1–50 of 1,247 posts" in timeline header
+- **Active filter pills**: Show active filters as dismissible chips above the timeline
+
+#### Files to modify:
+- `backend/app/routers/feed.py` — extend params + new facets endpoint
+- `backend/app/schemas/feed.py` — extend FeedFilter schema
+- `frontend/src/stores/feedStore.ts` — extend filter state
+- `frontend/src/components/feed/FeedFilters.tsx` — rebuild with new fields
+- `frontend/src/components/feed/FeedTimeline.tsx` — remove client-side filtering, re-fetch on filter change
+- `frontend/src/styles/feed.css` — new filter component styles
+
+---
+
+### Phase 2: Structured Query Language (1 agent — `agent-query-engine`)
+
+Build a query bar that accepts structured queries against all Orthanc data, with autocomplete and syntax highlighting.
+
+#### Query Syntax (OQL — Orthanc Query Language)
+Simple, Splunk-inspired syntax:
+```
+source_type=telegram author="AMK*" content="drone strike"
+| where timestamp > now() - 24h
+| stats count by author
+| sort -count
+```
+
+**Operators**:
+- `field=value` — exact match
+- `field="wildcard*"` — ILIKE match
+- `field>value`, `field<value`, `field>=value` — comparison
+- `field IN (a, b, c)` — set membership
+- `NOT field=value` — negation
+- `AND` / `OR` — boolean logic (AND is implicit between terms)
+
+**Pipes** (post-processing):
+- `| where CONDITION` — additional filter
+- `| stats FUNC by FIELD` — aggregate (count, avg, sum, min, max, distinct_count)
+- `| sort [-]FIELD` — sort (- for descending)
+- `| top N FIELD` — top N values by count
+- `| timechart span=1h count by source_type` — time-bucketed aggregation
+- `| head N` — limit results
+- `| table FIELD1, FIELD2, ...` — select specific fields for output
+
+**Target tables** (optional prefix):
+- `posts:` (default) — search posts
+- `entities:` — search entities
+- `events:` — search geo events
+- `alerts:` — search triggered alerts
+
+**Examples**:
+```
+source_type=telegram | stats count by author | sort -count
+content="nuclear" | timechart span=6h count
+entities: type=PERSON | top 20 name
+events: place_name="Gaza" | stats count by source_type
+source_type IN (rss, x) content="Iran" | stats count by source_type
+```
+
+#### Backend
+- **New router**: `backend/app/routers/oql.py`
+  - `POST /oql/execute` — parse OQL string, translate to SQL, execute, return results
+  - `POST /oql/explain` — parse OQL, return the SQL it would execute (for debugging)
+  - `GET /oql/schema` — return searchable fields with types for autocomplete
+  - `GET /oql/history` — saved query history per user
+  - `POST /oql/save` — save a named query
+- **New service**: `backend/app/services/oql_parser.py`
+  - Tokenizer + recursive descent parser for OQL syntax
+  - Translates to SQLAlchemy queries (NOT raw SQL — prevents injection)
+  - Validates field names against known schema
+  - Handles pipes as post-processing transforms
+  - `timechart` uses `date_trunc()` for bucketing
+  - Returns typed result: `{ columns: [...], rows: [...], total: N, query_time_ms: N }`
+- **Migration**: `014_saved_queries.py`
+  - `saved_queries` table (id, user_id, name, query_text, description, visualization_config JSONB, is_pinned, created_at, updated_at)
+  - `query_history` table (id, user_id, query_text, executed_at, row_count, duration_ms)
+
+#### Frontend
+- **Query bar component**: `frontend/src/components/query/QueryBar.tsx`
+  - Full-width input with monospaced font
+  - Syntax highlighting (field names blue, operators grey, values green, pipes orange)
+  - Autocomplete dropdown: field names, operators, known values (from facets)
+  - `Ctrl+Enter` to execute, `↑`/`↓` for history navigation
+  - Error display with position indicator for syntax errors
+- **Results panel**: `frontend/src/components/query/QueryResults.tsx`
+  - **Table view** (default): sortable columns, row click → detail view
+  - **JSON view**: raw JSON toggle for power users
+  - Result count + query execution time
+  - Export: CSV, JSON download
+  - "Visualize" button → opens visualization builder (Phase 3)
+
+#### Files:
+- `backend/app/routers/oql.py` (~300 lines)
+- `backend/app/services/oql_parser.py` (~500 lines)
+- `backend/alembic/versions/014_saved_queries.py`
+- `backend/app/models/query.py`
+- `frontend/src/components/query/QueryBar.tsx`
+- `frontend/src/components/query/QueryResults.tsx`
+- `frontend/src/styles/oql.css`
+
+---
+
+### Phase 3: Visualization Builder (1 agent — `agent-viz-builder`)
+
+Turn any query result into a chart, and optionally pin it to the dashboard.
+
+#### Visualization Types
+All rendered with raw SVG/Canvas (no external chart libs per project rules):
+
+1. **Time Series** — line/area chart, `timechart` results
+   - X axis: time buckets, Y axis: count/value
+   - Multiple series support (e.g., count by source_type)
+   - Hover tooltip with values
+2. **Bar Chart** — horizontal/vertical bars from `stats count by FIELD`
+   - Clickable bars → drill down to filtered results
+3. **Pie/Donut** — proportion breakdown (e.g., posts by source_type)
+4. **Stat Card** — single big number (e.g., `| stats count`)
+   - With sparkline trend from last 7 periods
+5. **Data Table** — enhanced sortable table with pagination
+6. **Map** — if results have lat/lng, plot on MapLibre
+
+#### Backend
+- **Extend `POST /oql/execute`** response with `visualization_hint`:
+  - If query uses `timechart` → suggest "timeseries"
+  - If query uses `stats count by` → suggest "bar"
+  - If query uses `top N` → suggest "bar" or "pie"
+  - If results have lat/lng columns → suggest "map"
+  - Otherwise → "table"
+
+#### Frontend
+- **Viz builder component**: `frontend/src/components/query/VizBuilder.tsx`
+  - Viz type selector (icons: 📊 bar, 📈 line, 🍩 donut, 🔢 stat, 📋 table, 🗺️ map)
+  - Auto-selects based on `visualization_hint`
+  - Field mapping: drag columns to X axis, Y axis, group-by, color
+  - Live preview as you configure
+- **Chart components** (all raw SVG):
+  - `TimeSeriesChart.tsx` — responsive SVG, auto-scaling axes, hover crosshair
+  - `BarChart.tsx` — horizontal/vertical, click-to-drill
+  - `DonutChart.tsx` — animated segments with legend
+  - `StatCard.tsx` — big number + sparkline
+- **Save to dashboard**: "Pin to Dashboard" button
+  - Saves query + visualization config to `saved_queries` with `is_pinned=true`
+  - Dashboard renders pinned queries as live widgets that auto-refresh
+- **Saved queries page**: `/queries` — list of saved queries with run/edit/delete
+
+#### Files:
+- `frontend/src/components/query/VizBuilder.tsx`
+- `frontend/src/components/charts/TimeSeriesChart.tsx`
+- `frontend/src/components/charts/BarChart.tsx`
+- `frontend/src/components/charts/DonutChart.tsx`
+- `frontend/src/components/charts/StatCard.tsx`
+- `frontend/src/components/query/SavedQueries.tsx`
+- `frontend/src/styles/charts.css`
+- `frontend/src/styles/oql.css` (extend)
+
+---
+
+### Phase 4: Integration & Polish (1 agent — `agent-query-integration`)
+
+Wire everything together across the platform.
+
+#### Global Query Bar
+- Add collapsible query bar to the top of every page (below the nav)
+- `Ctrl+/` hotkey to focus query bar from anywhere
+- Results open in a slide-out panel or navigate to `/query` page
+
+#### Feed → Query Bidirectional
+- "Open as Query" button on feed filters → translates current filter state to OQL string
+- Query results with post data → "View in Feed" link per row
+
+#### Dashboard Widget Queries
+- Each dashboard widget backed by a saved OQL query
+- Default widgets ship with built-in queries:
+  - Velocity: `posts: | timechart span=1h count`
+  - Source Health: `posts: | stats count, max(timestamp) by source_type`
+  - Trending Entities: `entities: | sort -mention_count | head 10`
+- Users can add custom widgets from saved queries
+
+#### Entity/Map Integration
+- Entity detail page: "Query mentions" button → `posts: entity="EntityName"`
+- Map: "Query this area" → `events: lat>X lat<Y lng>A lng<B`
+
+#### Files:
+- `frontend/src/components/layout/GlobalQueryBar.tsx`
+- `frontend/src/components/dashboard/DashboardView.tsx` (extend with pinned query widgets)
+- Minor modifications across entity, map, feed views
+
+---
+
+### Agent Delegation Plan
+
+| Order | Agent | Phase | Key Deliverables | Est. Files |
+|-------|-------|-------|-----------------|------------|
+| 1 | `agent-feed-filters` | Phase 1 | Server-side filtering, facets API, expanded filter sidebar | ~6 files |
+| 2 | `agent-query-engine` | Phase 2 | OQL parser, execute/explain/schema endpoints, query bar + results | ~8 files |
+| 3 | `agent-viz-builder` | Phase 3 | SVG chart components, viz type picker, save-to-dashboard | ~8 files |
+| 4 | `agent-query-integration` | Phase 4 | Global query bar, feed↔query bridge, dashboard widgets | ~6 files |
+
+**Dependency chain**: Phase 1 → independent. Phase 2 → independent. Phase 3 → depends on Phase 2 (needs OQL results). Phase 4 → depends on all.
+
+**Parallel plan**: Phases 1 and 2 in parallel (Wave A), then Phase 3 (Wave B), then Phase 4 (Wave C).
+
+---
+
+### Schema Reference (searchable fields for OQL)
+
+**Posts** (`posts:` prefix):
+| Field | Type | Description |
+|-------|------|-------------|
+| id | uuid | Post ID |
+| source_type | string | telegram, x, rss, reddit, discord, shodan, webhook, firms, flight, ais, cashtag, acled |
+| source_id | string | Source-specific identifier |
+| author | string | Post author/channel |
+| content | text | Post content body |
+| timestamp | datetime | Original post time |
+| ingested_at | datetime | When Orthanc ingested it |
+| media_type | string | image, video, document, null |
+| authenticity_score | float | 0.0–1.0 AI authenticity score |
+| external_id | string | External system ID (ACLED data_id, etc.) |
+
+**Entities** (`entities:` prefix):
+| Field | Type | Description |
+|-------|------|-------------|
+| id | uuid | Entity ID |
+| name | string | Entity name |
+| type | string | PERSON, ORG, GPE, NORP, EVENT |
+| mention_count | int | Total mentions across all posts |
+| first_seen | datetime | First mention timestamp |
+| last_seen | datetime | Most recent mention |
+
+**Events** (`events:` prefix):
+| Field | Type | Description |
+|-------|------|-------------|
+| id | uuid | Event ID |
+| lat | float | Latitude |
+| lng | float | Longitude |
+| place_name | string | Geocoded location name |
+| confidence | float | Geocoding confidence |
+| precision | string | exact, city, region, country, continent |
+| post_id | uuid | Associated post |
+
+---
+
+## Future Roadmap (Post Sprint 14)
 
 - **Cyber OSINT**: VirusTotal, CVE/NVD, WHOIS/DNS — tie Shodan findings to vulnerabilities
 - **SEC EDGAR**: Corporate filings, insider trades — extend financial intelligence
