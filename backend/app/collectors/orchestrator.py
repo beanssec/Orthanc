@@ -19,6 +19,8 @@ from .market_collector import market_collector
 from .cashtag_collector import cashtag_collector
 from .telegram_collector import TelegramCollector
 from .acled_collector import acled_collector
+from app.services.notam_service import notam_service
+from .youtube_collector import youtube_collector
 
 logger = logging.getLogger("orthanc.collectors.orchestrator")
 
@@ -29,6 +31,7 @@ class CollectorOrchestrator:
     def __init__(self):
         self._rss_collector = RSSCollector()
         self._reddit_collector = RedditCollector()
+        self._youtube_collector = youtube_collector  # module-level singleton
         self._firms_collector = FIRMSCollector()
         self._flight_collector = flight_collector  # module-level singleton
         self._market_collector = market_collector  # module-level singleton
@@ -60,6 +63,14 @@ class CollectorOrchestrator:
             await self._firms_collector.start()
         except Exception:
             logger.exception("Failed to start FIRMS collector")
+
+    async def start_notams(self) -> None:
+        """Start the NOTAM airspace restriction poller (no auth needed for free tier)."""
+        logger.info("Starting NOTAM service")
+        try:
+            await notam_service.start_polling()
+        except Exception:
+            logger.exception("Failed to start NOTAM service")
 
     async def start_flights(self) -> None:
         """Start OpenSky flight tracking collector (no auth needed)."""
@@ -100,6 +111,22 @@ class CollectorOrchestrator:
                 await self._reddit_collector.start(sources)
         except Exception:
             logger.exception("Failed to start Reddit collector")
+
+    async def start_youtube(self) -> None:
+        """Start YouTube collector for all enabled YouTube sources (no auth needed)."""
+        logger.info("Querying enabled YouTube sources")
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(Source).where(Source.type == "youtube", Source.enabled.is_(True))
+                )
+                sources = result.scalars().all()
+
+            logger.info("Found %d enabled YouTube sources", len(sources))
+            if sources:
+                await self._youtube_collector.start(sources)
+        except Exception:
+            logger.exception("Failed to start YouTube collector")
 
     async def start_user_collectors(self, user_id: str) -> None:
         """Called on user login — start their X, Shodan, and Discord collectors."""
@@ -345,9 +372,19 @@ class CollectorOrchestrator:
             logger.exception("Error stopping Reddit collector")
 
         try:
+            await self._youtube_collector.stop()
+        except Exception:
+            logger.exception("Error stopping YouTube collector")
+
+        try:
             await self._firms_collector.stop()
         except Exception:
             logger.exception("Error stopping FIRMS collector")
+
+        try:
+            await notam_service.stop()
+        except Exception:
+            logger.exception("Error stopping NOTAM service")
 
         try:
             await self._flight_collector.stop()
@@ -405,6 +442,8 @@ class CollectorOrchestrator:
             "market": "active" if (self._market_collector._task and not self._market_collector._task.done()) else "inactive",
             "cashtag": "active" if self._cashtag_collector._tasks else "inactive",
             "acled": "active" if (acled_collector._task and not acled_collector._task.done()) else "inactive",
+            "notam": "active" if notam_service.is_running else "inactive",
+            "youtube": "active" if (self._youtube_collector._task and not self._youtube_collector._task.done()) else "inactive",
         }
 
 

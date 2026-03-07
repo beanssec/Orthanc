@@ -95,6 +95,26 @@ class GeoExtractor:
             self._nlp = spacy.load("en_core_web_sm")
             log.info("spaCy model loaded.")
 
+    @staticmethod
+    def _is_plausible_location(name: str) -> bool:
+        """Filter out obvious non-locations (random words from non-English NER)."""
+        import re
+        # Must contain at least one Latin letter (skip pure Cyrillic/Arabic/CJK)
+        if not re.search(r'[a-zA-Z]', name):
+            return False
+        # Skip very short tokens
+        if len(name) < 3:
+            return False
+        # Skip common false-positive words spaCy tags as GPE
+        _FALSE_POSITIVES = frozenset({
+            "the", "The", "this", "that", "here", "there", "today", "yesterday",
+            "tomorrow", "now", "just", "more", "most", "many", "some", "all",
+            "first", "last", "next", "new", "old", "one", "two", "three",
+        })
+        if name in _FALSE_POSITIVES:
+            return False
+        return True
+
     def extract_locations(self, text: str) -> list[str]:
         """Extract GPE, LOC, FAC entities from text using spaCy NER."""
         self._load_model()
@@ -103,7 +123,7 @@ class GeoExtractor:
         for ent in doc.ents:
             if ent.label_ in ("GPE", "LOC", "FAC"):
                 name = ent.text.strip()
-                if len(name) > 1 and name not in locations:
+                if len(name) > 1 and name not in locations and self._is_plausible_location(name):
                     locations.append(name)
         return locations
 
@@ -117,16 +137,24 @@ class GeoExtractor:
         if location_name in COUNTRY_NAMES:
             return None  # Caller sets precision='country'
 
+        # Skip non-plausible location names
+        if not self._is_plausible_location(location_name):
+            return None
+
         if location_name in self._geocode_cache:
             return self._geocode_cache[location_name]
 
+        # If cache is very large, skip geocoding to avoid memory bloat
+        if len(self._geocode_cache) > 5000:
+            return None
+
         import asyncio  # noqa: PLC0415
 
-        # Enforce 1-req/sec rate limit
+        # Enforce 1.5-req/sec rate limit (slightly more conservative)
         now = time.monotonic()
         elapsed = now - self._last_geocode_time
-        if elapsed < 1.1:
-            await asyncio.sleep(1.1 - elapsed)
+        if elapsed < 1.5:
+            await asyncio.sleep(1.5 - elapsed)
         self._last_geocode_time = time.monotonic()
 
         import httpx  # noqa: PLC0415

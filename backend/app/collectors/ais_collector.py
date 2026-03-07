@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 try:
     import websockets
@@ -152,6 +153,26 @@ class AISCollector:
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             })
             self._current_ships[mmsi] = ship_data
+
+            # Store track point for maritime intelligence
+            try:
+                from app.services.maritime_intel_service import maritime_intel_service
+                cog = payload.get("Cog")
+                asyncio.create_task(maritime_intel_service.store_track_point(
+                    mmsi=mmsi,
+                    vessel_name=ship_name,
+                    lat=lat,
+                    lng=lng,
+                    speed=speed,
+                    heading=heading,
+                    course=cog,
+                    destination=ship_data.get("destination"),
+                    vessel_type=ship_data.get("ship_type"),
+                    flag=None,
+                    timestamp=datetime.now(timezone.utc),
+                ))
+            except Exception as exc:
+                logger.debug("Maritime track store error: %s", exc)
 
         elif msg_type == "ShipStaticData":
             meta = msg.get("MetaData", {})

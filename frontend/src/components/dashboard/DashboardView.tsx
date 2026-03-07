@@ -89,6 +89,7 @@ const SOURCE_COLORS: Record<string, string> = {
   discord:  '#5865f2',
   shodan:   '#ff6b35',
   webhook:  '#f59e0b',
+  youtube:  '#ff0000',
   firms:    '#ef4444',
   flight:   '#a855f7',
   ais:      '#06b6d4',
@@ -110,7 +111,7 @@ function entityTypeClass(type: string): string {
 function sourceIcon(type: string): string {
   const icons: Record<string, string> = {
     rss: '📡', x: '𝕏', telegram: '✈️', webhook: '🔗',
-    reddit: '🤖', discord: '💬', shodan: '🔍', firms: '🔥',
+    reddit: '🤖', discord: '💬', shodan: '🔍', youtube: '📹', firms: '🔥',
     flight: '✈', ais: '🚢', cashtag: '💰',
   };
   return icons[type?.toLowerCase()] ?? '📰';

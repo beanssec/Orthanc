@@ -1,10 +1,15 @@
 """Entity extraction service — NER via spaCy."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger("orthanc.entity_extractor")
+
+# Dedicated thread pool for CPU-bound spaCy work so we don't block the event loop
+_spacy_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="spacy")
 
 _TITLE_RE = re.compile(
     r"^(Mr|Mrs|Ms|Dr|Prof|President|PM|Sen|Rep|Gen|Adm|Col|Cpt|Lt|Sgt)\.?\s+",
@@ -33,6 +38,10 @@ class EntityExtractor:
         """
         if not text or len(text.strip()) < 2:
             return []
+
+        # Truncate very long texts to avoid CPU-bound spaCy blocking
+        if len(text) > 5000:
+            text = text[:5000]
 
         self._load_model()
         try:
@@ -67,6 +76,11 @@ class EntityExtractor:
             })
 
         return entities
+
+    async def extract_entities_async(self, text: str) -> list[dict]:
+        """Non-blocking wrapper — runs spaCy NER in a thread pool."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(_spacy_executor, self.extract_entities, text)
 
     def canonical_name(self, name: str) -> str:
         """Normalize entity name for deduplication/linking.

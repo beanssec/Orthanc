@@ -24,6 +24,8 @@ def _trigger_collector_restart(source_type: str, user_id: str) -> None:
         asyncio.ensure_future(orchestrator.start_rss())
     elif source_type == "reddit":
         asyncio.ensure_future(orchestrator.start_reddit())
+    elif source_type == "youtube":
+        asyncio.ensure_future(orchestrator.start_youtube())
 
 
 @router.post("/", response_model=SourceResponse, status_code=status.HTTP_201_CREATED)

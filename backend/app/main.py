@@ -20,10 +20,12 @@ from app.routers import sanctions
 from app.routers import fusion
 from app.routers import cases
 from app.routers import oql
+from app.routers import maritime
 from app.collectors.orchestrator import orchestrator
 from app.collectors.satellite_collector import satellite_collector
 from app.services.brief_scheduler import brief_scheduler
 from app.services.fusion_service import fusion_service
+from app.services.maritime_intel_service import maritime_intel_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("orthanc")
@@ -64,9 +66,11 @@ async def lifespan(app: FastAPI):
     logger.info("Orthanc API starting up")
     await orchestrator.start_rss()
     await orchestrator.start_reddit()
+    await orchestrator.start_youtube()
     await orchestrator.start_firms()
     await orchestrator.start_flights()
     await orchestrator.start_market()
+    await orchestrator.start_notams()
     try:
         await satellite_collector.start()
     except Exception as exc:
@@ -88,13 +92,18 @@ async def lifespan(app: FastAPI):
     await fusion_service.start()
     logger.info("Fusion service started")
 
+    # Start maritime intelligence analysis loop (every 15 min)
+    maritime_task = asyncio.create_task(maritime_intel_service.run_loop())
+    logger.info("Maritime intelligence loop started")
+
     yield
 
     logger.info("Orthanc API shutting down")
     velocity_task.cancel()
     silence_task.cancel()
     scheduler_task.cancel()
-    for task in (velocity_task, silence_task, scheduler_task):
+    maritime_task.cancel()
+    for task in (velocity_task, silence_task, scheduler_task, maritime_task):
         try:
             await task
         except asyncio.CancelledError:
@@ -141,6 +150,7 @@ app.include_router(sanctions.router)
 app.include_router(fusion.router)
 app.include_router(cases.router)
 app.include_router(oql.router)
+app.include_router(maritime.router)
 
 
 @app.get("/")

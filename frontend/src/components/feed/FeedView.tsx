@@ -75,6 +75,7 @@ const SOURCE_COLORS: Record<string, string> = {
   discord:  '#5865f2',
   shodan:   '#ff6b35',
   webhook:  '#f59e0b',
+  youtube:  '#ff0000',
   firms:    '#ef4444',
   flight:   '#a855f7',
   ais:      '#06b6d4',

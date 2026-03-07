@@ -8,7 +8,7 @@ import { formatDateTime } from '../../utils/dateFormat';
 
 interface Source {
   id: string;
-  type: 'telegram' | 'x' | 'rss' | 'reddit' | 'discord' | 'shodan' | 'webhook';
+  type: 'telegram' | 'x' | 'rss' | 'reddit' | 'discord' | 'shodan' | 'webhook' | 'youtube';
   handle: string;
   display_name: string;
   enabled: boolean;
@@ -21,6 +21,7 @@ interface Source {
 }
 
 const TYPE_COLORS: Record<string, string> = {
+  youtube: 'var(--youtube-color)',
   telegram: 'var(--telegram-color)',
   x: 'var(--x-color)',
   rss: 'var(--rss-color)',
@@ -31,6 +32,7 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 const TYPE_PLACEHOLDERS: Record<string, string> = {
+  youtube: '@ChannelName or channel URL',
   telegram: '@channelname',
   x: '@username',
   rss: 'https://feeds.example.com/rss',
@@ -106,6 +108,7 @@ function SourceModal({
           <div className="form-group">
             <label className="form-label">Type</label>
             <select className="select" value={type} onChange={(e) => setType(e.target.value)}>
+              <option value="youtube">YouTube</option>
               <option value="telegram">Telegram</option>
               <option value="x">X (Twitter)</option>
               <option value="rss">RSS</option>

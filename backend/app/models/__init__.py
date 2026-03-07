@@ -14,6 +14,7 @@ from .financial import Holding, Quote, EntityTickerMap, Signal
 from .sanctions import SanctionsEntity, EntitySanctionsMatch
 from .fused_event import FusedEvent
 from .query import SavedQuery, QueryHistory
+from .vessel import VesselTrack, VesselWatchlist, MaritimeEvent
 
 __all__ = [
     "Base", "User", "Credential", "Post", "Event", "Source",
@@ -26,4 +27,5 @@ __all__ = [
     "SanctionsEntity", "EntitySanctionsMatch",
     "FusedEvent",
     "SavedQuery", "QueryHistory",
+    "VesselTrack", "VesselWatchlist", "MaritimeEvent",
 ]

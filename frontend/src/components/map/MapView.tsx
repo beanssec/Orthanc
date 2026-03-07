@@ -277,6 +277,35 @@ function createDiamondImage(color: string, size: number = 28): { width: number; 
   return { width: size, height: size, data: ctx.getImageData(0, 0, size, size).data };
 }
 
+function createTriangleImage(color: string, size: number = 28): { width: number; height: number; data: Uint8ClampedArray } {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0, 0, size, size);
+  const margin = 2;
+  // Upward-pointing triangle (warning symbol)
+  ctx.beginPath();
+  ctx.moveTo(size / 2, margin);                   // top center
+  ctx.lineTo(size - margin, size - margin);        // bottom right
+  ctx.lineTo(margin, size - margin);               // bottom left
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.9;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.lineWidth = 1.5;
+  ctx.globalAlpha = 1;
+  ctx.stroke();
+  // Exclamation mark
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
+  ctx.font = `bold ${Math.round(size * 0.45)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('!', size / 2, size * 0.62);
+  return { width: size, height: size, data: ctx.getImageData(0, 0, size, size).data };
+}
+
 // ---------------------------------------------------------------------------
 // Layer constants
 // ---------------------------------------------------------------------------
@@ -318,6 +347,12 @@ const GDELT_GEO_CIRCLES = 'gdelt-geo-circles';
 const FUSION_SOURCE = 'fusion-source';
 const FUSION_LAYER = 'fusion-layer';
 
+const MARITIME_SOURCE = 'maritime-source';
+const MARITIME_LAYER = 'maritime-layer';
+
+const NOTAMS_SOURCE = 'notams-source';
+const NOTAMS_LAYER = 'notams-layer';
+
 // ---------------------------------------------------------------------------
 // Layer state interface
 // ---------------------------------------------------------------------------
@@ -332,6 +367,8 @@ interface LayerState {
   gdelt: boolean;
   acled: boolean;
   fusion: boolean;
+  notams: boolean;
+  maritime: boolean;
 }
 
 interface LayerCounts {
@@ -344,6 +381,8 @@ interface LayerCounts {
   gdelt: number;
   acled: number;
   fusion: number;
+  notams: number;
+  maritime: number;
 }
 
 interface FrontlineSourceInfo {
@@ -392,6 +431,7 @@ export function MapView() {
   });
   const layersStateRef = useRef<LayerState>({
     flights: false, ships: false, firms: false, frontlines: false, satellites: false, sentiment: false,
+    gdelt: false, acled: false, fusion: false, notams: false, maritime: false,
   });
   const fetchFnsRef = useRef<Record<keyof LayerState, () => void>>({} as Record<keyof LayerState, () => void>);
 
@@ -425,6 +465,8 @@ export function MapView() {
     gdelt: false,
     acled: false,
     fusion: false,
+    notams: false,
+    maritime: false,
   });
   const [layerCounts, setLayerCounts] = useState<LayerCounts>({
     flights: 0,
@@ -436,6 +478,8 @@ export function MapView() {
     gdelt: 0,
     acled: 0,
     fusion: 0,
+    notams: 0,
+    maritime: 0,
   });
 
   // GDELT GEO state
@@ -657,6 +701,36 @@ export function MapView() {
     }
   }, []);
 
+  const fetchNotams = useCallback(async () => {
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+    try {
+      const res = await api.get('/layers/notams?active_only=true');
+      const data = res.data as GeoJSON.FeatureCollection;
+      const src = map.getSource(NOTAMS_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      if (src) src.setData(data);
+      setLayerCounts((c) => ({ ...c, notams: data.features?.length ?? 0 }));
+    } catch (err) {
+      console.error('Failed to fetch NOTAM data', err);
+    }
+  }, []);
+
+  const fetchMaritime = useCallback(async () => {
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+    try {
+      const res = await api.get('/layers/maritime-events?hours=72');
+      const data = res.data as GeoJSON.FeatureCollection;
+      const src = map.getSource(MARITIME_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      if (src) src.setData(data);
+      // Count only actual events (not port markers)
+      const eventCount = data.features?.filter((f) => f.properties?.event_type !== 'monitored_port').length ?? 0;
+      setLayerCounts((c) => ({ ...c, maritime: eventCount }));
+    } catch (err) {
+      console.error('Failed to fetch maritime events', err);
+    }
+  }, []);
+
   // Keep refs in sync with React state for use in style.load callback (can't use state directly in closure)
   useEffect(() => { filteredEventsRef.current = filteredEvents; }, [filteredEvents]);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
@@ -666,8 +740,9 @@ export function MapView() {
       flights: fetchFlights, ships: fetchShips, firms: fetchFirms,
       frontlines: fetchFrontlines, satellites: fetchSatellites, sentiment: fetchSentiment,
       gdelt: () => fetchGdelt(), acled: fetchAcled, fusion: fetchFusion,
+      notams: fetchNotams, maritime: fetchMaritime,
     };
-  }, [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment, fetchGdelt, fetchAcled, fetchFusion]);
+  }, [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment, fetchGdelt, fetchAcled, fetchFusion, fetchNotams, fetchMaritime]);
 
   // Switch base map layer
   useEffect(() => {
@@ -690,7 +765,9 @@ export function MapView() {
     gdelt: { fetch: fetchGdelt, interval: 900_000 },
     acled: { fetch: fetchAcled, interval: 3_600_000 },
     fusion: { fetch: fetchFusion, interval: 300_000 },
-  }), [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment, fetchGdelt, fetchAcled, fetchFusion]);
+    notams: { fetch: fetchNotams, interval: 900_000 },
+    maritime: { fetch: fetchMaritime, interval: 900_000 },
+  }), [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment, fetchGdelt, fetchAcled, fetchFusion, fetchNotams, fetchMaritime]);
 
   // Handle layer toggle
   const toggleLayer = useCallback((key: keyof LayerState, enabled: boolean) => {
@@ -712,6 +789,8 @@ export function MapView() {
       gdelt: [GDELT_GEO_HEAT, GDELT_GEO_CIRCLES],
       acled: [ACLED_LAYER],
       fusion: [FUSION_LAYER],
+      notams: [NOTAMS_LAYER],
+      maritime: [MARITIME_LAYER],
     };
 
     for (const [key, enabled] of Object.entries(layers) as [keyof LayerState, boolean][]) {
@@ -1259,6 +1338,94 @@ export function MapView() {
           .addTo(map);
       });
 
+      // ── NOTAM airspace restrictions source + layer ────────────────────────
+      map.addSource(NOTAMS_SOURCE, {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+
+      // Create triangle/warning marker images for NOTAMs
+      const notamAmberImg = createTriangleImage('#fbbf24', 28);
+      const notamRedImg = createTriangleImage('#ef4444', 28);
+      const notamOrangeImg = createTriangleImage('#f97316', 28);
+      if (!map.hasImage('notam-standard')) map.addImage('notam-standard', { width: notamAmberImg.width, height: notamAmberImg.height, data: notamAmberImg.data });
+      if (!map.hasImage('notam-gps_jamming')) map.addImage('notam-gps_jamming', { width: notamRedImg.width, height: notamRedImg.height, data: notamRedImg.data });
+      if (!map.hasImage('notam-military')) map.addImage('notam-military', { width: notamOrangeImg.width, height: notamOrangeImg.height, data: notamOrangeImg.data });
+      if (!map.hasImage('notam-tfr')) map.addImage('notam-tfr', { width: notamAmberImg.width, height: notamAmberImg.height, data: notamAmberImg.data });
+
+      map.addLayer({
+        id: NOTAMS_LAYER,
+        type: 'symbol',
+        source: NOTAMS_SOURCE,
+        layout: {
+          visibility: 'none',
+          'icon-image': ['concat', 'notam-', ['coalesce', ['get', 'type'], 'standard']],
+          'icon-size': ['interpolate', ['linear'], ['zoom'], 3, 0.6, 8, 1.0, 12, 1.3],
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': false,
+        },
+      });
+
+      // NOTAM hover tooltip
+      map.on('mouseenter', NOTAMS_LAYER, (e) => {
+        map.getCanvas().style.cursor = 'pointer';
+        const f = e.features?.[0];
+        if (!f || f.geometry.type !== 'Point') return;
+        const p = f.properties ?? {};
+        const color = p.color || '#fbbf24';
+        const typeLabel = String(p.type || 'standard').replace('_', ' ').toUpperCase();
+        const endTime = p.end_time ? new Date(p.end_time).toLocaleString() : '—';
+        const html = `
+          <div class="map-tooltip">
+            <div class="map-tooltip__title" style="color:${color}">⚠ NOTAM — ${typeLabel}</div>
+            <div class="map-tooltip__row"><span>ID</span><span>${escapeHtml(String(p.notam_id || '—'))}</span></div>
+            <div class="map-tooltip__row"><span>FIR</span><span>${escapeHtml(String(p.fir || '—'))}</span></div>
+            <div class="map-tooltip__row"><span>Valid until</span><span>${endTime}</span></div>
+          </div>`;
+        showTooltip(map, tooltipRef, f.geometry.coordinates as [number, number], html);
+      });
+      map.on('mouseleave', NOTAMS_LAYER, () => {
+        map.getCanvas().style.cursor = '';
+        tooltipRef.current?.remove();
+        tooltipRef.current = null;
+      });
+
+      // NOTAM click popup
+      map.on('click', NOTAMS_LAYER, (e) => {
+        const f = e.features?.[0];
+        if (!f || f.geometry.type !== 'Point') return;
+        const p = f.properties ?? {};
+        const color = p.color || '#fbbf24';
+        const typeLabel = String(p.type || 'standard').replace(/_/g, ' ').toUpperCase();
+        const startTime = p.start_time ? new Date(p.start_time).toLocaleString() : '—';
+        const endTime = p.end_time ? new Date(p.end_time).toLocaleString() : '—';
+        const body = String(p.body || p.title || '').slice(0, 300);
+        const flAlt = (p.lower_fl != null && p.upper_fl != null)
+          ? `FL${p.lower_fl}–FL${p.upper_fl}`
+          : null;
+        const html = `
+          <div class="map-popup">
+            <div class="map-popup__source-badge" style="color:${color}">
+              <span style="display:inline-block;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:9px solid ${color};flex-shrink:0"></span>
+              ⚠ NOTAM — ${typeLabel}
+            </div>
+            <div class="map-popup__author">${escapeHtml(String(p.notam_id || '—'))} &nbsp;|&nbsp; ${escapeHtml(String(p.fir || '—'))}</div>
+            ${p.q_code ? `<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Q-Code: ${escapeHtml(String(p.q_code))}</div>` : ''}
+            <div class="map-popup__place">
+              Valid: ${startTime}<br>
+              Until: ${endTime}
+              ${flAlt ? `<br>Altitude: ${escapeHtml(flAlt)}` : ''}
+              ${p.radius_nm ? `<br>Radius: ${p.radius_nm} NM` : ''}
+            </div>
+            ${body ? `<div class="map-popup__content" style="font-size:11px;margin-top:6px">${escapeHtml(body)}</div>` : ''}
+          </div>`;
+        if (popupRef.current) popupRef.current.remove();
+        popupRef.current = new maplibregl.Popup({ closeButton: true, maxWidth: '320px', offset: 10 })
+          .setLngLat(f.geometry.coordinates as [number, number])
+          .setHTML(html)
+          .addTo(map);
+      });
+
       // ── Fused Intelligence source + layer ────────────────────────────────
       map.addSource(FUSION_SOURCE, {
         type: 'geojson',
@@ -1347,6 +1514,107 @@ export function MapView() {
           .addTo(map);
       });
 
+      // ── Maritime Events source + layer ───────────────────────────────────
+      map.addSource(MARITIME_SOURCE, {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+
+      map.addLayer({
+        id: MARITIME_LAYER,
+        type: 'circle',
+        source: MARITIME_SOURCE,
+        layout: { visibility: 'none' },
+        paint: {
+          'circle-color': ['coalesce', ['get', 'color'], '#f97316'],
+          'circle-radius': [
+            'case',
+            ['==', ['get', 'event_type'], 'dark_ship'], 10,
+            ['==', ['get', 'event_type'], 'sts_transfer'], 9,
+            ['==', ['get', 'event_type'], 'monitored_port'], 5,
+            7,
+          ],
+          'circle-opacity': [
+            'case',
+            ['==', ['get', 'event_type'], 'monitored_port'], 0.4,
+            0.85,
+          ],
+          'circle-stroke-width': [
+            'case',
+            ['==', ['get', 'event_type'], 'monitored_port'], 1,
+            2,
+          ],
+          'circle-stroke-color': [
+            'case',
+            ['==', ['get', 'event_type'], 'monitored_port'], 'rgba(100,116,139,0.5)',
+            'rgba(255,255,255,0.6)',
+          ],
+        },
+      });
+
+      // Maritime hover tooltip
+      map.on('mouseenter', MARITIME_LAYER, (e) => {
+        map.getCanvas().style.cursor = 'pointer';
+        const f = e.features?.[0];
+        if (!f || f.geometry.type !== 'Point') return;
+        const p = f.properties ?? {};
+        if (p.event_type === 'monitored_port') return; // no tooltip for port markers
+        const color = p.color || '#f97316';
+        const label = String(p.label || p.event_type || 'Maritime Event');
+        let detailsObj: Record<string, unknown> = {};
+        try { detailsObj = JSON.parse(p.details || '{}'); } catch { /* */ }
+        const detectedAt = p.detected_at ? new Date(p.detected_at).toLocaleString() : '—';
+        const html = `
+          <div class="map-tooltip">
+            <div class="map-tooltip__title" style="color:${color}">${escapeHtml(p.icon || '🚨')} ${escapeHtml(label)}</div>
+            <div class="map-tooltip__row"><span>Vessel</span><span>${escapeHtml(String(p.vessel_name || p.mmsi || '—'))}</span></div>
+            <div class="map-tooltip__row"><span>MMSI</span><span>${escapeHtml(String(p.mmsi || '—'))}</span></div>
+            <div class="map-tooltip__row"><span>Severity</span><span>${escapeHtml(String(p.severity || '—'))}</span></div>
+            <div class="map-tooltip__row"><span>Detected</span><span>${detectedAt}</span></div>
+          </div>`;
+        showTooltip(map, tooltipRef, f.geometry.coordinates as [number, number], html);
+      });
+      map.on('mouseleave', MARITIME_LAYER, () => {
+        map.getCanvas().style.cursor = '';
+        tooltipRef.current?.remove();
+        tooltipRef.current = null;
+      });
+
+      // Maritime click popup
+      map.on('click', MARITIME_LAYER, (e) => {
+        const f = e.features?.[0];
+        if (!f || f.geometry.type !== 'Point') return;
+        const p = f.properties ?? {};
+        if (p.event_type === 'monitored_port') return;
+        const color = p.color || '#f97316';
+        const label = String(p.label || p.event_type || 'Maritime Event');
+        let detailsObj: Record<string, unknown> = {};
+        try { detailsObj = JSON.parse(p.details || '{}'); } catch { /* */ }
+        const detectedAt = p.detected_at ? new Date(p.detected_at).toLocaleString() : '—';
+        const detailLines = Object.entries(detailsObj)
+          .map(([k, v]) => `<div class="map-popup__content" style="font-size:11px">${escapeHtml(k.replace(/_/g, ' '))}: ${escapeHtml(String(v))}</div>`)
+          .join('');
+        const html = `
+          <div class="map-popup">
+            <div class="map-popup__source-badge" style="color:${color}">
+              <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color};flex-shrink:0"></span>
+              ${escapeHtml(p.icon || '🚨')} ${escapeHtml(label)}
+            </div>
+            <div class="map-popup__author">${escapeHtml(String(p.vessel_name || 'Unknown vessel'))}</div>
+            <div class="map-popup__place">MMSI: ${escapeHtml(String(p.mmsi || '—'))}</div>
+            <div class="map-popup__content">
+              Severity: <strong>${escapeHtml(String(p.severity || '—'))}</strong><br>
+              Detected: ${detectedAt}
+            </div>
+            ${detailLines}
+          </div>`;
+        if (popupRef.current) popupRef.current.remove();
+        popupRef.current = new maplibregl.Popup({ closeButton: true, maxWidth: '320px', offset: 10 })
+          .setLngLat(f.geometry.coordinates as [number, number])
+          .setHTML(html)
+          .addTo(map);
+      });
+
     }; // end setupDataLayers
 
     // Re-add all data layers after a base layer style switch.
@@ -1378,6 +1646,8 @@ export function MapView() {
         gdelt: [GDELT_GEO_HEAT, GDELT_GEO_CIRCLES],
         acled: [ACLED_LAYER],
         fusion: [FUSION_LAYER],
+        notams: [NOTAMS_LAYER],
+        maritime: [MARITIME_LAYER],
       };
       const curLayers = layersStateRef.current;
       for (const [key, enabled] of Object.entries(curLayers) as [keyof LayerState, boolean][]) {
@@ -2140,6 +2410,57 @@ export function MapView() {
                 <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#3b82f6' }} />Strategic Developments</div>
               </div>
             )}
+
+            {/* NOTAM row */}
+            <label className="map-layer-row" style={{ marginTop: 8 }}>
+              <span className="map-layer-row__dot" style={{
+                background: 'transparent',
+                border: '5px solid transparent',
+                borderBottom: '9px solid #fbbf24',
+                width: 0,
+                height: 0,
+                borderRadius: 0,
+                display: 'inline-block',
+                marginRight: 4,
+              }} />
+              <span className="map-layer-row__name">⚠️ NOTAMs</span>
+              {layers.notams && (
+                <span className={`map-layer-row__count${layerCounts.notams === 0 ? ' map-layer-row__count--zero' : ''}`}>{layerCounts.notams || 0}</span>
+              )}
+              <span className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={layers.notams}
+                  onChange={(e) => toggleLayer('notams', e.target.checked)}
+                />
+                <span className="toggle-slider" />
+              </span>
+            </label>
+
+            {layers.notams && layerCounts.notams === 0 && (
+              <div className="map-layer-hint">Polling {22} military FIRs. NOTAMs appear as data is collected.</div>
+            )}
+
+            {layers.notams && layerCounts.notams > 0 && (
+              <div className="sentiment-legend" style={{ marginTop: 6 }}>
+                <div className="sentiment-legend__title">NOTAM Types</div>
+                <div className="sentiment-legend__row">
+                  <span style={{ display: 'inline-block', width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderBottom: '9px solid #f97316', marginRight: 6, verticalAlign: 'middle' }} />
+                  Military/Exercise
+                </div>
+                <div className="sentiment-legend__row">
+                  <span style={{ display: 'inline-block', width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderBottom: '9px solid #ef4444', marginRight: 6, verticalAlign: 'middle' }} />
+                  GPS Jamming
+                </div>
+                <div className="sentiment-legend__row">
+                  <span style={{ display: 'inline-block', width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderBottom: '9px solid #fbbf24', marginRight: 6, verticalAlign: 'middle' }} />
+                  TFR / Standard
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                  22 military FIRs · refreshes every 15 min
+                </div>
+              </div>
+            )}
           </div>
 
           {/* ── Fused Intelligence ── */}
@@ -2174,6 +2495,44 @@ export function MapView() {
                 <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#3b82f6', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8, display: 'inline-block', marginRight: 6 }} />Routine (2 sources)</div>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
                   Auto-detected every 5 min within 50km / 6h windows
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── Maritime Domain Awareness ── */}
+          <div className="map-layers-section">
+            <div className="map-layers-section__label">Maritime Domain Awareness</div>
+
+            <label className="map-layer-row">
+              <span className="map-layer-row__dot" style={{ background: '#f97316' }} />
+              <span className="map-layer-row__name">🚨 Maritime Events</span>
+              {layers.maritime && (
+                <span className={`map-layer-row__count${layerCounts.maritime === 0 ? ' map-layer-row__count--zero' : ''}`}>{layerCounts.maritime || 0}</span>
+              )}
+              <span className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={layers.maritime}
+                  onChange={(e) => toggleLayer('maritime', e.target.checked)}
+                />
+                <span className="toggle-slider" />
+              </span>
+            </label>
+
+            {layers.maritime && layerCounts.maritime === 0 && (
+              <div className="map-layer-hint">No maritime events detected yet. Events appear as AIS data is collected.</div>
+            )}
+
+            {layers.maritime && (
+              <div className="sentiment-legend" style={{ marginTop: 6 }}>
+                <div className="sentiment-legend__title">Event Types</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#ef4444' }} />🚫 Dark Ship (AIS off)</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#f97316' }} />🔄 STS Transfer</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#3b82f6' }} />⚓ Port Call</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#64748b' }} />🏭 Monitored Port</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Analysis runs every 15 min — requires AIS data
                 </div>
               </div>
             )}

@@ -647,6 +647,101 @@ async def get_fusion_layer_alias(
     }
 
 
+# ---------------------------------------------------------------------------
+# NOTAM airspace restrictions layer
+# ---------------------------------------------------------------------------
+
+@router.get("/layers/notams")
+async def get_notam_layer(
+    active_only: bool = Query(default=True, description="Only return currently valid NOTAMs"),
+    fir: str | None = Query(default=None, description="Filter by FIR code (e.g. LLLL)"),
+    notam_type: str | None = Query(default=None, description="Filter by type: military, gps_jamming, tfr, standard"),
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict:
+    """Return active NOTAMs as GeoJSON FeatureCollection for map display."""
+    from app.models.event import Event as GeoEvent
+
+    now = datetime.now(timezone.utc)
+
+    stmt = (
+        select(Post, GeoEvent)
+        .join(GeoEvent, GeoEvent.post_id == Post.id)
+        .where(Post.source_type == "notam")
+        .order_by(Post.timestamp.desc())
+        .limit(2000)
+    )
+
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    features = []
+    for post, geo in rows:
+        meta = post.raw_json or {}
+
+        # Active filter: check end_time from raw_json
+        if active_only:
+            end_time_str = meta.get("end_time")
+            if end_time_str:
+                try:
+                    end_time = datetime.fromisoformat(end_time_str)
+                    if end_time.tzinfo is None:
+                        end_time = end_time.replace(tzinfo=timezone.utc)
+                    if end_time < now:
+                        continue  # Expired NOTAM
+                except (ValueError, TypeError):
+                    pass  # If we can't parse, include it
+
+        # FIR filter
+        notam_fir = meta.get("fir", "")
+        if fir and notam_fir.upper() != fir.upper():
+            continue
+
+        # Type filter
+        t = meta.get("type", "standard")
+        if notam_type and t != notam_type:
+            continue
+
+        # Color by type
+        color = "#fbbf24"  # Default amber
+        if t == "gps_jamming":
+            color = "#ef4444"  # Red for GPS jamming
+        elif t == "military":
+            color = "#f97316"  # Orange for military
+        elif t == "tfr":
+            color = "#eab308"  # Yellow for TFR
+
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [geo.lng, geo.lat]},
+            "properties": {
+                "id": str(post.id),
+                "notam_id": meta.get("notam_id", ""),
+                "fir": notam_fir,
+                "type": t,
+                "title": post.content.split("\n")[0] if post.content else "",
+                "body": meta.get("body", ""),
+                "q_code": meta.get("q_code", ""),
+                "start_time": meta.get("start_time", ""),
+                "end_time": meta.get("end_time", ""),
+                "lower_fl": meta.get("lower_fl"),
+                "upper_fl": meta.get("upper_fl"),
+                "radius_nm": meta.get("radius_nm"),
+                "color": color,
+            },
+        })
+
+    logger.debug("NOTAM layer: active_only=%s → %d features", active_only, len(features))
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "metadata": {
+            "count": len(features),
+            "generated_at": now.isoformat(),
+        },
+    }
+
+
 @router.post("/translate")
 async def translate_text(
     body: TranslateRequest,
