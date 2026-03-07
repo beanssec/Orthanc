@@ -147,7 +147,7 @@ function formatDateTime(ts: string | null | undefined): string {
 
 const SOURCE_COLORS: Record<string, string> = {
   telegram: '#3b82f6', twitter: '#1da1f2', rss: '#f97316',
-  reddit: '#ef4444', mastodon: '#6366f1',
+  reddit: '#ef4444', mastodon: '#6364ff', bluesky: '#0085ff',
 };
 function sourceBadgeStyle(source: string) {
   const color = SOURCE_COLORS[source?.toLowerCase()] ?? '#6b7280';

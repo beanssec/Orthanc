@@ -54,6 +54,8 @@ const SOURCE_COLORS: Record<string, string> = {
   x: '#38bdf8',
   rss: '#10b981',
   shodan: '#e11d48',
+  bluesky: '#0085ff',
+  mastodon: '#6364ff',
 };
 
 function getSourceColor(sourceType: string): string {

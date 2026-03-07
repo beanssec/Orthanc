@@ -21,6 +21,8 @@ from .telegram_collector import TelegramCollector
 from .acled_collector import acled_collector
 from app.services.notam_service import notam_service
 from .youtube_collector import youtube_collector
+from .bluesky_collector import bluesky_collector
+from .mastodon_collector import mastodon_collector
 
 logger = logging.getLogger("orthanc.collectors.orchestrator")
 
@@ -36,6 +38,8 @@ class CollectorOrchestrator:
         self._flight_collector = flight_collector  # module-level singleton
         self._market_collector = market_collector  # module-level singleton
         self._cashtag_collector = cashtag_collector  # module-level singleton
+        self._bluesky_collector = bluesky_collector  # module-level singleton
+        self._mastodon_collector = mastodon_collector  # module-level singleton
         self._x_collectors: dict[str, XCollector] = {}       # user_id -> XCollector
         self._shodan_collectors: dict[str, ShodanCollector] = {}  # user_id -> ShodanCollector
         self._discord_collectors: dict[str, DiscordCollector] = {}  # user_id -> DiscordCollector
@@ -127,6 +131,38 @@ class CollectorOrchestrator:
                 await self._youtube_collector.start(sources)
         except Exception:
             logger.exception("Failed to start YouTube collector")
+
+    async def start_bluesky(self) -> None:
+        """Start Bluesky collector for all enabled Bluesky sources (no auth needed)."""
+        logger.info("Querying enabled Bluesky sources")
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(Source).where(Source.type == "bluesky", Source.enabled.is_(True))
+                )
+                sources = result.scalars().all()
+
+            logger.info("Found %d enabled Bluesky sources", len(sources))
+            if sources:
+                await self._bluesky_collector.start(sources)
+        except Exception:
+            logger.exception("Failed to start Bluesky collector")
+
+    async def start_mastodon(self) -> None:
+        """Start Mastodon collector for all enabled Mastodon sources (no auth needed)."""
+        logger.info("Querying enabled Mastodon sources")
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(Source).where(Source.type == "mastodon", Source.enabled.is_(True))
+                )
+                sources = result.scalars().all()
+
+            logger.info("Found %d enabled Mastodon sources", len(sources))
+            if sources:
+                await self._mastodon_collector.start(sources)
+        except Exception:
+            logger.exception("Failed to start Mastodon collector")
 
     async def start_user_collectors(self, user_id: str) -> None:
         """Called on user login — start their X, Shodan, and Discord collectors."""
@@ -377,6 +413,16 @@ class CollectorOrchestrator:
             logger.exception("Error stopping YouTube collector")
 
         try:
+            await self._bluesky_collector.stop()
+        except Exception:
+            logger.exception("Error stopping Bluesky collector")
+
+        try:
+            await self._mastodon_collector.stop()
+        except Exception:
+            logger.exception("Error stopping Mastodon collector")
+
+        try:
             await self._firms_collector.stop()
         except Exception:
             logger.exception("Error stopping FIRMS collector")
@@ -444,6 +490,8 @@ class CollectorOrchestrator:
             "acled": "active" if (acled_collector._task and not acled_collector._task.done()) else "inactive",
             "notam": "active" if notam_service.is_running else "inactive",
             "youtube": "active" if (self._youtube_collector._task and not self._youtube_collector._task.done()) else "inactive",
+            "bluesky": "active" if (self._bluesky_collector._task and not self._bluesky_collector._task.done()) else "inactive",
+            "mastodon": "active" if (self._mastodon_collector._task and not self._mastodon_collector._task.done()) else "inactive",
         }
 
 

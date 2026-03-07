@@ -67,6 +67,8 @@ async def lifespan(app: FastAPI):
     await orchestrator.start_rss()
     await orchestrator.start_reddit()
     await orchestrator.start_youtube()
+    await orchestrator.start_bluesky()
+    await orchestrator.start_mastodon()
     await orchestrator.start_firms()
     await orchestrator.start_flights()
     await orchestrator.start_market()

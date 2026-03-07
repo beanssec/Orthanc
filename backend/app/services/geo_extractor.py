@@ -1,10 +1,82 @@
 """Geo extraction service: NER via spaCy + geocoding via Nominatim."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
+from collections import deque
 
 log = logging.getLogger("orthanc.geo")
+
+# Global geocode queue — single worker drains it at ≤1 req/sec
+# Prevents hundreds of concurrent asyncio.sleep() calls from starving event loop
+_geocode_queue: asyncio.Queue | None = None
+_geocode_results: dict[str, asyncio.Future] = {}
+_geocode_worker_task: asyncio.Task | None = None
+
+
+def _ensure_geocode_worker():
+    """Lazily start the geocode worker on first use."""
+    global _geocode_queue, _geocode_worker_task
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    if _geocode_queue is None:
+        _geocode_queue = asyncio.Queue(maxsize=200)
+    if _geocode_worker_task is None or _geocode_worker_task.done():
+        _geocode_worker_task = loop.create_task(_geocode_worker_loop())
+
+
+async def _geocode_worker_loop():
+    """Single async worker: drains queue at ≤1 request/second."""
+    global _geocode_queue
+    import httpx  # noqa: PLC0415
+    last_req = 0.0
+    while True:
+        try:
+            location_name, fut = await asyncio.wait_for(_geocode_queue.get(), timeout=60)
+        except asyncio.TimeoutError:
+            continue
+        except asyncio.CancelledError:
+            break
+
+        # Rate limit: 1.2s between requests
+        now = time.monotonic()
+        wait = 1.2 - (now - last_req)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        last_req = time.monotonic()
+
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    "https://nominatim.openstreetmap.org/search",
+                    params={"q": location_name, "format": "json", "limit": 1},
+                    headers={"User-Agent": "Orthanc-OSINT/1.0"},
+                    timeout=10.0,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            if data:
+                precision = _classify_precision_from_nominatim(data[0])
+                result = (
+                    float(data[0]["lat"]),
+                    float(data[0]["lon"]),
+                    data[0].get("display_name", location_name),
+                    precision,
+                )
+                if not fut.done():
+                    fut.set_result(result)
+            else:
+                if not fut.done():
+                    fut.set_result(None)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Geocode failed for %r: %s", location_name, exc)
+            if not fut.done():
+                fut.set_result(None)
+        finally:
+            _geocode_queue.task_done()
 
 # Well-known country names — geocoding to centroid is useless
 COUNTRY_NAMES: frozenset[str] = frozenset({
@@ -85,7 +157,6 @@ class GeoExtractor:
     def __init__(self) -> None:
         self._nlp = None
         self._geocode_cache: dict[str, tuple[float, float, str, str] | None] = {}
-        self._last_geocode_time: float = 0.0
 
     def _load_model(self) -> None:
         """Lazy-load spaCy model on first use to avoid slowing startup."""
@@ -128,62 +199,37 @@ class GeoExtractor:
         return locations
 
     async def geocode(self, location_name: str) -> tuple[float, float, str, str] | None:
-        """Geocode a location name using Nominatim OSM.
+        """Geocode a location name using Nominatim OSM via a global rate-limited queue.
 
         Returns (lat, lng, display_name, precision) or None.
-        Rate-limited to ≤1 request per second as required by Nominatim ToS.
+        Uses a single worker to enforce ≤1 req/sec without blocking the event loop.
         """
-        # If it's just a country name, skip geocoding — we know it's country-level
         if location_name in COUNTRY_NAMES:
-            return None  # Caller sets precision='country'
+            return None
 
-        # Skip non-plausible location names
         if not self._is_plausible_location(location_name):
             return None
 
         if location_name in self._geocode_cache:
             return self._geocode_cache[location_name]
 
-        # If cache is very large, skip geocoding to avoid memory bloat
         if len(self._geocode_cache) > 5000:
             return None
 
-        import asyncio  # noqa: PLC0415
+        _ensure_geocode_worker()
+        if _geocode_queue is None or _geocode_queue.full():
+            # Queue full — skip rather than block
+            return None
 
-        # Enforce 1.5-req/sec rate limit (slightly more conservative)
-        now = time.monotonic()
-        elapsed = now - self._last_geocode_time
-        if elapsed < 1.5:
-            await asyncio.sleep(1.5 - elapsed)
-        self._last_geocode_time = time.monotonic()
-
-        import httpx  # noqa: PLC0415
+        loop = asyncio.get_event_loop()
+        fut: asyncio.Future = loop.create_future()
+        await _geocode_queue.put((location_name, fut))
 
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    "https://nominatim.openstreetmap.org/search",
-                    params={"q": location_name, "format": "json", "limit": 1},
-                    headers={"User-Agent": "Orthanc-OSINT/1.0"},
-                    timeout=10.0,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                if data:
-                    precision = _classify_precision_from_nominatim(data[0])
-                    result: tuple[float, float, str, str] = (
-                        float(data[0]["lat"]),
-                        float(data[0]["lon"]),
-                        data[0].get("display_name", location_name),
-                        precision,
-                    )
-                    self._geocode_cache[location_name] = result
-                    return result
-                else:
-                    self._geocode_cache[location_name] = None
-                    return None
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Geocode failed for %r: %s", location_name, exc)
+            result = await asyncio.wait_for(asyncio.shield(fut), timeout=30.0)
+            self._geocode_cache[location_name] = result
+            return result
+        except asyncio.TimeoutError:
             self._geocode_cache[location_name] = None
             return None
 

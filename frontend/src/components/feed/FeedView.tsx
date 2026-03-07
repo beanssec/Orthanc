@@ -80,6 +80,8 @@ const SOURCE_COLORS: Record<string, string> = {
   flight:   '#a855f7',
   ais:      '#06b6d4',
   cashtag:  '#84cc16',
+  bluesky:  '#0085ff',
+  mastodon: '#6364ff',
 }
 
 function srcColor(type: string): string {

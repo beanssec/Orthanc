@@ -8,7 +8,7 @@ import { formatDateTime } from '../../utils/dateFormat';
 
 interface Source {
   id: string;
-  type: 'telegram' | 'x' | 'rss' | 'reddit' | 'discord' | 'shodan' | 'webhook' | 'youtube';
+  type: 'telegram' | 'x' | 'rss' | 'reddit' | 'discord' | 'shodan' | 'webhook' | 'youtube' | 'bluesky' | 'mastodon';
   handle: string;
   display_name: string;
   enabled: boolean;
@@ -29,6 +29,8 @@ const TYPE_COLORS: Record<string, string> = {
   discord: '#5865f2',
   shodan: '#e11d48',
   webhook: '#8b5cf6',
+  bluesky: 'var(--bluesky-color)',
+  mastodon: 'var(--mastodon-color)',
 };
 
 const TYPE_PLACEHOLDERS: Record<string, string> = {
@@ -40,6 +42,8 @@ const TYPE_PLACEHOLDERS: Record<string, string> = {
   discord: 'channel_id (numeric Discord channel ID)',
   shodan: 'webcam country:US',
   webhook: 'my-webhook-source',
+  bluesky: 'handle.bsky.social',
+  mastodon: 'user@instance.social',
 };
 
 function SourceModal({
@@ -116,6 +120,8 @@ function SourceModal({
               <option value="discord">Discord</option>
               <option value="shodan">Shodan</option>
               <option value="webhook">Webhook</option>
+              <option value="bluesky">Bluesky</option>
+              <option value="mastodon">Mastodon</option>
             </select>
           </div>
         )}

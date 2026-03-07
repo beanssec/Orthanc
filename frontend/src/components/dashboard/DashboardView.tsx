@@ -94,6 +94,8 @@ const SOURCE_COLORS: Record<string, string> = {
   flight:   '#a855f7',
   ais:      '#06b6d4',
   cashtag:  '#84cc16',
+  bluesky:  '#0085ff',
+  mastodon: '#6364ff',
 };
 
 function sourceColor(type: string): string {
@@ -112,7 +114,7 @@ function sourceIcon(type: string): string {
   const icons: Record<string, string> = {
     rss: '📡', x: '𝕏', telegram: '✈️', webhook: '🔗',
     reddit: '🤖', discord: '💬', shodan: '🔍', youtube: '📹', firms: '🔥',
-    flight: '✈', ais: '🚢', cashtag: '💰',
+    flight: '✈', ais: '🚢', cashtag: '💰', bluesky: '🦋', mastodon: '🐘',
   };
   return icons[type?.toLowerCase()] ?? '📰';
 }
