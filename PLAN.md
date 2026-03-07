@@ -693,7 +693,190 @@ Wire everything together across the platform.
 
 ---
 
-## Future Roadmap (Post Sprint 14)
+## Current: Sprint 15 — Source Expansion & New Connectors
+
+### Context
+Source count went from 18 → 68 (25 RSS, 13 X, 6 Telegram, 6 Reddit added).
+This sprint builds new connector types and data pipelines for sources that can't be ingested with existing collectors.
+
+### Phase 1: YouTube Transcript Collector (1 agent — `agent-youtube`)
+
+Ingest press conferences, military briefings, analyst commentary from YouTube channels.
+
+**Architecture:**
+- New collector: `backend/app/collectors/youtube_collector.py`
+- Uses `yt-dlp` to fetch video metadata + auto-generated captions (no download of video files)
+- Configurable YouTube channel IDs or playlist URLs as sources
+- Polls every 30 minutes for new videos
+- Stores transcript as `Post.content`, video URL as `Post.source_id`
+- Source type: `youtube`
+- Add `yt-dlp` to Docker image (`pip install yt-dlp`)
+
+**Key channels to support:**
+| Channel | Focus |
+|---------|-------|
+| CSIS (Center for Strategic & International Studies) | Geopolitical analysis |
+| Brookings Institution | Policy briefings |
+| RUSI (Royal United Services Institute) | UK defence/security |
+| Pentagon Press Briefings | Official US DoD |
+| NATO Channel | Alliance operations |
+| Wilson Center | Policy analysis |
+| Carnegie Endowment | Nuclear/geopolitics |
+
+**Implementation:**
+- `yt-dlp --write-auto-subs --sub-lang en --skip-download --dump-json URL`
+- Parse JSON for title, upload_date, description, auto_subtitles
+- Extract subtitle text from VTT/SRT format
+- Entity extraction on transcript text
+- Store with `source_type='youtube'`, `author=channel_name`
+
+**Files:**
+- `backend/app/collectors/youtube_collector.py` (~200 lines)
+- `backend/app/collectors/orchestrator.py` (wire in)
+- `Dockerfile` (add yt-dlp)
+- Sources page: add 'youtube' to source type dropdown
+
+---
+
+### Phase 2: FAA NOTAMs & Airspace Restrictions (1 agent — `agent-notams`)
+
+Track temporary flight restrictions, military airspace activations, and GPS jamming NOTAMs.
+
+**Architecture:**
+- New service: `backend/app/services/notam_service.py`
+- FAA NOTAM API: `https://notams.aim.faa.gov/notamSearch/` (free, no key)
+- ICAO API alternative: `https://applications.icao.int/dataservices/` (free registration)
+- Poll every 15 minutes
+- Parse NOTAM text for location (lat/lng from Q-line), altitude, time window
+- Create geo events from NOTAM coordinates
+- Source type: `notam`
+- Map layer: NOTAM markers (yellow triangles) with popup showing restriction details
+
+**NOTAM categories to track:**
+- TFRs (Temporary Flight Restrictions) — often indicate military ops
+- Military exercise areas (NOTAM type M)
+- GPS interference/jamming advisories
+- Drone/UAS restrictions
+
+**Files:**
+- `backend/app/services/notam_service.py` (~250 lines)
+- `backend/app/routers/layers.py` (add `/layers/notams` endpoint)
+- `frontend/src/components/map/MapView.tsx` (add NOTAM layer toggle)
+
+---
+
+### Phase 3: Satellite Imagery Change Detection (1 agent — `agent-sentinel`)
+
+Detect changes at key military/infrastructure sites using free Sentinel-2 imagery.
+
+**Architecture:**
+- New service: `backend/app/services/sentinel_service.py`
+- Copernicus Data Space API (free, registration required): `https://dataspace.copernicus.eu/`
+- Define watchlist of coordinates (military bases, ports, nuclear sites)
+- Poll for new Sentinel-2 images (5-day revisit cycle)
+- Compare sequential images using pixel difference (numpy)
+- Flag significant changes (>threshold) as alerts
+- Store change detection thumbnails in media directory
+
+**Watchlist categories:**
+- Russian military bases (Crimea, Kaliningrad, Syria)
+- Iranian nuclear sites (Natanz, Fordow, Isfahan)
+- North Korean launch facilities
+- Key ports (Sevastopol, Tartus, Bandar Abbas)
+- Energy infrastructure (pipelines, refineries)
+
+**Files:**
+- `backend/app/services/sentinel_service.py` (~300 lines)
+- `backend/app/models/watchpoint.py` (lat, lng, name, radius, last_checked)
+- Migration `015_watchpoints.py`
+- `frontend/src/components/map/MapView.tsx` (watchpoint markers)
+- `frontend/src/components/settings/WatchpointsPage.tsx` (CRUD for sites)
+
+---
+
+### Phase 4: EU/UK Sanctions Lists (1 agent — `agent-sanctions-eu`)
+
+Extend sanctions screening beyond OpenSanctions to include direct EU/UK list ingestion.
+
+**Architecture:**
+- EU Consolidated List: `https://webgate.ec.europa.eu/fsd/fsf/public/files/xmlFullSanctionsList_1_1/content`
+- UK OFSI List: `https://ofsistorage.blob.core.windows.net/publishlive/2022format/ConList.csv`
+- Parse XML/CSV, normalize to entity records
+- Cross-reference with existing entity database
+- Flag matches as sanctions hits
+- Add "Sanctions" tab to entity detail page
+
+**Files:**
+- `backend/app/services/eu_sanctions_service.py` (~200 lines)
+- `backend/app/services/uk_sanctions_service.py` (~150 lines)
+- `backend/app/routers/sanctions.py` (extend existing)
+
+---
+
+### Phase 5: Enhanced AIS/Maritime Intelligence (1 agent — `agent-maritime`)
+
+Build maritime domain awareness features on top of existing AIS collector.
+
+**New capabilities:**
+- **Dark ship detection**: Flag vessels that go AIS-dark (stop transmitting) in sensitive areas
+- **Sanctions vessel crosscheck**: Match ship MMSI/IMO against sanctions lists
+- **Port call tracking**: Log when tracked vessels enter/leave key ports
+- **Ship-to-ship transfer detection**: Alert when two vessels are stationary within 500m
+- **Route deviation alerts**: Flag vessels deviating from normal trade routes
+
+**Architecture:**
+- Extend `backend/app/collectors/ais_collector.py` with history tracking
+- New table: `vessel_tracks` (mmsi, timestamp, lat, lng, speed, heading)
+- Migration `016_vessel_tracks.py`
+- Dark ship detection: compare current poll vs last known position; if >6h gap, flag
+- STS transfer: spatial query for vessels within 500m of each other + both speed < 2kt
+
+**Files:**
+- `backend/app/services/maritime_intel_service.py` (~400 lines)
+- `backend/alembic/versions/016_vessel_tracks.py`
+- `backend/app/models/vessel.py`
+- `frontend/src/components/map/MapView.tsx` (vessel track history lines)
+
+---
+
+### Phase 6: Bluesky/Mastodon Firehose (1 agent — `agent-fediverse`)
+
+Ingest posts from decentralized social networks.
+
+**Architecture:**
+- **Bluesky**: AT Protocol firehose via `wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos`
+  - Filter by followed accounts or keyword matching
+  - No API key needed for public firehose
+- **Mastodon**: Streaming API `wss://instance/api/v1/streaming/public`
+  - Instance-specific, configure per instance
+  - No API key for public timeline
+
+**Files:**
+- `backend/app/collectors/bluesky_collector.py` (~200 lines)
+- `backend/app/collectors/mastodon_collector.py` (~150 lines)
+- `backend/app/collectors/orchestrator.py` (wire in)
+- Sources page: add 'bluesky', 'mastodon' types
+
+---
+
+### Agent Delegation Plan
+
+| Order | Agent | Phase | Dependency | Est. Effort |
+|-------|-------|-------|------------|-------------|
+| 1 | `agent-youtube` | 1 | None | Medium |
+| 2 | `agent-notams` | 2 | None | Medium |
+| 3 | `agent-maritime` | 5 | None | Large |
+| 1-3 run in parallel (Wave A) ||||
+| 4 | `agent-sentinel` | 3 | None | Large |
+| 5 | `agent-sanctions-eu` | 4 | None | Medium |
+| 4-5 run in parallel (Wave B) ||||
+| 6 | `agent-fediverse` | 6 | None | Medium |
+
+All phases are independent — max parallelism is 3 agents in Wave A.
+
+---
+
+## Future Roadmap (Post Sprint 15)
 
 - **Cyber OSINT**: VirusTotal, CVE/NVD, WHOIS/DNS — tie Shodan findings to vulnerabilities
 - **SEC EDGAR**: Corporate filings, insider trades — extend financial intelligence
