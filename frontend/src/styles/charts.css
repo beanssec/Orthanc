@@ -1,0 +1,395 @@
+/* ── Charts — Overwatch OQL Visualization ──────────────────────────────── */
+
+/* Container */
+.chart-container {
+  width: 100%;
+  min-height: 200px;
+  position: relative;
+  overflow: visible;
+}
+
+/* Tooltip */
+.chart-tooltip {
+  position: absolute;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  pointer-events: none;
+  z-index: 100;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.chart-tooltip strong {
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+/* Legend */
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 10px;
+  padding: 0 4px;
+}
+
+.chart-legend__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-legend__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+/* SVG global text styles */
+.chart-container svg text {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.chart-axis-label {
+  fill: var(--text-secondary);
+  font-size: 11px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.chart-grid-label {
+  fill: var(--text-muted);
+  font-size: 11px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+/* SVG grid lines */
+.chart-grid-line {
+  stroke: var(--border);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+
+/* Crosshair */
+.chart-crosshair {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  pointer-events: none;
+}
+
+/* Empty state */
+.chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* ── Bar Chart ────────────────────────────────────────────────────────────── */
+
+.bar-chart {
+  max-height: 480px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.bar-row:hover {
+  background: var(--bg-surface-hover);
+}
+
+.bar-label {
+  width: 120px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+.bar-track {
+  flex: 1;
+  height: 20px;
+  background: var(--bg-primary);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+
+.bar-fill.bar-chart__bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.bar-chart__bar:hover {
+  opacity: 0.8;
+}
+
+.bar-value {
+  width: 70px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  text-align: left;
+}
+
+.bar-overflow-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 6px;
+  font-style: italic;
+}
+
+/* ── Donut Chart ──────────────────────────────────────────────────────────── */
+
+.donut-chart {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.donut-svg-wrap {
+  position: relative;
+}
+
+.donut-center-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  pointer-events: none;
+}
+
+.donut-center-value {
+  display: block;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  line-height: 1;
+}
+
+.donut-center-label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+.donut-segment {
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+/* ── Time Series Chart ────────────────────────────────────────────────────── */
+
+.timeseries-chart {
+  position: relative;
+}
+
+.timeseries-chart svg {
+  display: block;
+  cursor: crosshair;
+}
+
+/* ── Stat Card ────────────────────────────────────────────────────────────── */
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  gap: 8px;
+  min-height: 160px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+
+.stat-card__value {
+  font-size: 48px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  line-height: 1;
+  letter-spacing: -1px;
+}
+
+.stat-card__label {
+  font-size: 14px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.stat-card__trend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  margin-top: 4px;
+}
+
+.stat-card__trend--up {
+  color: var(--success);
+}
+
+.stat-card__trend--down {
+  color: var(--danger);
+}
+
+/* ── VizBuilder ───────────────────────────────────────────────────────────── */
+
+.viz-builder {
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.viz-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 10px;
+  flex-wrap: wrap;
+}
+
+.viz-toolbar-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-right: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.viz-type-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.viz-type-btn:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.viz-type-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.viz-save-btn {
+  margin-left: auto;
+  padding: 5px 12px;
+  background: transparent;
+  border: 1px solid var(--success);
+  border-radius: 5px;
+  color: var(--success);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.viz-save-btn:hover {
+  background: var(--success);
+  color: #fff;
+}
+
+.viz-save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.viz-chart-area {
+  padding: 8px;
+}
+
+.viz-save-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.viz-save-dialog {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.viz-save-dialog h3 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.viz-dialog-input {
+  padding: 8px 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.viz-dialog-input:focus {
+  border-color: var(--border-focus);
+}
+
+.viz-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.viz-dialog-error {
+  font-size: 12px;
+  color: var(--danger);
+}

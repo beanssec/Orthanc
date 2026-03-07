@@ -57,6 +57,8 @@ class SaveQueryRequest(BaseModel):
     name: str
     query_text: str
     description: str | None = None
+    is_pinned: bool = False
+    visualization_config: dict | None = None
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────────
@@ -236,6 +238,8 @@ async def save_query(
         name=body.name,
         query_text=body.query_text,
         description=body.description,
+        is_pinned=body.is_pinned,
+        visualization_config=body.visualization_config,
     )
     db.add(entry)
     await db.commit()

@@ -8,8 +8,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
+import { VizBuilder } from './VizBuilder';
 import '../../styles/oql.css';
 import '../../styles/nlquery.css';
+import '../../styles/charts.css';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -404,11 +406,7 @@ function OQLMode() {
                   : ''}
               </span>
 
-              {result.visualization_hint !== 'table' && (
-                <button className="oql-viz-btn" title="Visualization coming in Phase 3">
-                  📊 Visualize as {vizLabel(result.visualization_hint)}
-                </button>
-              )}
+              {/* vizLabel kept for future use */}
 
               <div className="oql-stats-actions">
                 <div className="oql-view-toggle">
@@ -447,6 +445,16 @@ function OQLMode() {
               <div className="oql-json-view">
                 <pre>{JSON.stringify({ columns: result.columns, rows: result.rows }, null, 2)}</pre>
               </div>
+            )}
+
+            {/* Visualization Builder */}
+            {result.rows.length > 0 && (
+              <VizBuilder
+                columns={result.columns}
+                rows={result.rows}
+                visualizationHint={result.visualization_hint}
+                queryText={query}
+              />
             )}
           </div>
         )}
