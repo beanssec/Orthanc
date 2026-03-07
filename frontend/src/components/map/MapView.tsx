@@ -355,6 +355,9 @@ const MARITIME_LAYER = 'maritime-layer';
 const NOTAMS_SOURCE = 'notams-source';
 const NOTAMS_LAYER = 'notams-layer';
 
+const WATCHPOINTS_SOURCE = 'watchpoints-source';
+const WATCHPOINTS_LAYER = 'watchpoints-layer';
+
 // ---------------------------------------------------------------------------
 // Layer state interface
 // ---------------------------------------------------------------------------
@@ -371,6 +374,7 @@ interface LayerState {
   fusion: boolean;
   notams: boolean;
   maritime: boolean;
+  watchpoints: boolean;
 }
 
 interface LayerCounts {
@@ -385,6 +389,7 @@ interface LayerCounts {
   fusion: number;
   notams: number;
   maritime: number;
+  watchpoints: number;
 }
 
 interface FrontlineSourceInfo {
@@ -433,7 +438,7 @@ export function MapView() {
   });
   const layersStateRef = useRef<LayerState>({
     flights: false, ships: false, firms: false, frontlines: false, satellites: false, sentiment: false,
-    gdelt: false, acled: false, fusion: false, notams: false, maritime: false,
+    gdelt: false, acled: false, fusion: false, notams: false, maritime: false, watchpoints: false,
   });
   const fetchFnsRef = useRef<Record<keyof LayerState, () => void>>({} as Record<keyof LayerState, () => void>);
 
@@ -469,6 +474,7 @@ export function MapView() {
     fusion: false,
     notams: false,
     maritime: false,
+    watchpoints: false,
   });
   const [layerCounts, setLayerCounts] = useState<LayerCounts>({
     flights: 0,
@@ -482,6 +488,7 @@ export function MapView() {
     fusion: 0,
     notams: 0,
     maritime: 0,
+    watchpoints: 0,
   });
 
   // GDELT GEO state
@@ -733,6 +740,20 @@ export function MapView() {
     }
   }, []);
 
+  const fetchWatchpoints = useCallback(async () => {
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+    try {
+      const res = await api.get('/layers/watchpoints');
+      const data = res.data as GeoJSON.FeatureCollection;
+      const src = map.getSource(WATCHPOINTS_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      if (src) src.setData(data);
+      setLayerCounts((c) => ({ ...c, watchpoints: data.features?.length ?? 0 }));
+    } catch (err) {
+      console.error('Failed to fetch satellite watchpoints', err);
+    }
+  }, []);
+
   // Keep refs in sync with React state for use in style.load callback (can't use state directly in closure)
   useEffect(() => { filteredEventsRef.current = filteredEvents; }, [filteredEvents]);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
@@ -742,9 +763,9 @@ export function MapView() {
       flights: fetchFlights, ships: fetchShips, firms: fetchFirms,
       frontlines: fetchFrontlines, satellites: fetchSatellites, sentiment: fetchSentiment,
       gdelt: () => fetchGdelt(), acled: fetchAcled, fusion: fetchFusion,
-      notams: fetchNotams, maritime: fetchMaritime,
+      notams: fetchNotams, maritime: fetchMaritime, watchpoints: fetchWatchpoints,
     };
-  }, [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment, fetchGdelt, fetchAcled, fetchFusion, fetchNotams, fetchMaritime]);
+  }, [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment, fetchGdelt, fetchAcled, fetchFusion, fetchNotams, fetchMaritime, fetchWatchpoints]);
 
   // Switch base map layer
   useEffect(() => {
@@ -769,7 +790,8 @@ export function MapView() {
     fusion: { fetch: fetchFusion, interval: 300_000 },
     notams: { fetch: fetchNotams, interval: 900_000 },
     maritime: { fetch: fetchMaritime, interval: 900_000 },
-  }), [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment, fetchGdelt, fetchAcled, fetchFusion, fetchNotams, fetchMaritime]);
+    watchpoints: { fetch: fetchWatchpoints, interval: 1_800_000 },
+  }), [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment, fetchGdelt, fetchAcled, fetchFusion, fetchNotams, fetchMaritime, fetchWatchpoints]);
 
   // Handle layer toggle
   const toggleLayer = useCallback((key: keyof LayerState, enabled: boolean) => {
@@ -793,6 +815,7 @@ export function MapView() {
       fusion: [FUSION_LAYER],
       notams: [NOTAMS_LAYER],
       maritime: [MARITIME_LAYER],
+      watchpoints: [WATCHPOINTS_LAYER],
     };
 
     for (const [key, enabled] of Object.entries(layers) as [keyof LayerState, boolean][]) {
@@ -1617,6 +1640,83 @@ export function MapView() {
           .addTo(map);
       });
 
+
+      // ── Satellite Watchpoints source + layer ──────────────────────────────
+      map.addSource(WATCHPOINTS_SOURCE, {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+
+      map.addLayer({
+        id: WATCHPOINTS_LAYER,
+        type: 'circle',
+        source: WATCHPOINTS_SOURCE,
+        layout: { visibility: 'none' },
+        paint: {
+          'circle-color': [
+            'case',
+            ['==', ['get', 'change_detected'], true], '#ef4444',
+            '#a78bfa',
+          ],
+          'circle-radius': 8,
+          'circle-opacity': 0.85,
+          'circle-stroke-width': 2,
+          'circle-stroke-color': 'rgba(255,255,255,0.6)',
+        },
+      });
+
+      // Watchpoints hover tooltip
+      map.on('mouseenter', WATCHPOINTS_LAYER, (e) => {
+        map.getCanvas().style.cursor = 'pointer';
+        const f = e.features?.[0];
+        if (!f || f.geometry.type !== 'Point') return;
+        const p = f.properties ?? {};
+        const color = p.change_detected ? '#ef4444' : '#a78bfa';
+        const changeScore = typeof p.change_score === 'number' ? p.change_score.toFixed(3) : '—';
+        const html = `
+          <div class="map-tooltip">
+            <div class="map-tooltip__title" style="color:${color}">🛰️ ${escapeHtml(String(p.name || 'Watchpoint'))}</div>
+            <div class="map-tooltip__row"><span>Category</span><span>${escapeHtml(String(p.category || '—'))}</span></div>
+            <div class="map-tooltip__row"><span>Last image</span><span>${escapeHtml(String(p.last_image_date || 'Never'))}</span></div>
+            <div class="map-tooltip__row"><span>Change score</span><span>${changeScore}</span></div>
+            <div class="map-tooltip__row"><span>Alert</span><span>${p.change_detected ? '🔴 CHANGE DETECTED' : '🟣 Clear'}</span></div>
+          </div>`;
+        showTooltip(map, tooltipRef, f.geometry.coordinates as [number, number], html);
+      });
+      map.on('mouseleave', WATCHPOINTS_LAYER, () => {
+        map.getCanvas().style.cursor = '';
+        tooltipRef.current?.remove();
+        tooltipRef.current = null;
+      });
+
+      // Watchpoints click popup
+      map.on('click', WATCHPOINTS_LAYER, (e) => {
+        const f = e.features?.[0];
+        if (!f || f.geometry.type !== 'Point') return;
+        const p = f.properties ?? {};
+        const color = p.change_detected ? '#ef4444' : '#a78bfa';
+        const changeScore = typeof p.change_score === 'number' ? p.change_score.toFixed(3) : '—';
+        const html = `
+          <div class="map-popup">
+            <div class="map-popup__source-badge" style="color:${color}">
+              <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color};flex-shrink:0"></span>
+              🛰️ Satellite Watchpoint
+            </div>
+            <div class="map-popup__author">${escapeHtml(String(p.name || 'Unknown'))}</div>
+            <div class="map-popup__place">${escapeHtml(String(p.category || '—'))} · ${escapeHtml(String(p.radius_km || '—'))} km radius</div>
+            <div class="map-popup__content">
+              Last image: <strong>${escapeHtml(String(p.last_image_date || 'Never'))}</strong><br>
+              Change score: <strong>${changeScore}</strong><br>
+              Status: <strong style="color:${color}">${p.change_detected ? '🔴 CHANGE DETECTED' : '🟣 Clear'}</strong>
+            </div>
+          </div>`;
+        if (popupRef.current) popupRef.current.remove();
+        popupRef.current = new maplibregl.Popup({ closeButton: true, maxWidth: '320px', offset: 10 })
+          .setLngLat(f.geometry.coordinates as [number, number])
+          .setHTML(html)
+          .addTo(map);
+      });
+
     }; // end setupDataLayers
 
     // Re-add all data layers after a base layer style switch.
@@ -1650,6 +1750,7 @@ export function MapView() {
         fusion: [FUSION_LAYER],
         notams: [NOTAMS_LAYER],
         maritime: [MARITIME_LAYER],
+        watchpoints: [WATCHPOINTS_LAYER],
       };
       const curLayers = layersStateRef.current;
       for (const [key, enabled] of Object.entries(curLayers) as [keyof LayerState, boolean][]) {
@@ -2535,6 +2636,42 @@ export function MapView() {
                 <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#64748b' }} />🏭 Monitored Port</div>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
                   Analysis runs every 15 min — requires AIS data
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── Satellite Change Detection ── */}
+          <div className="map-layers-section">
+            <div className="map-layers-section__label">Satellite Imagery</div>
+
+            <label className="map-layer-row">
+              <span className="map-layer-row__dot" style={{ background: '#a78bfa' }} />
+              <span className="map-layer-row__name">🛰️ Watchpoints</span>
+              {layers.watchpoints && (
+                <span className={`map-layer-row__count${layerCounts.watchpoints === 0 ? ' map-layer-row__count--zero' : ''}`}>{layerCounts.watchpoints || 0}</span>
+              )}
+              <span className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={layers.watchpoints}
+                  onChange={(e) => toggleLayer('watchpoints', e.target.checked)}
+                />
+                <span className="toggle-slider" />
+              </span>
+            </label>
+
+            {layers.watchpoints && layerCounts.watchpoints === 0 && (
+              <div className="map-layer-hint">No watchpoints loaded yet. Data appears after first Copernicus check.</div>
+            )}
+
+            {layers.watchpoints && (
+              <div className="sentiment-legend" style={{ marginTop: 6 }}>
+                <div className="sentiment-legend__title">Change Status</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#a78bfa' }} />🟣 No change detected</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#ef4444' }} />🔴 Change detected</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Sentinel-2 via Copernicus · checks every 6h
                 </div>
               </div>
             )}

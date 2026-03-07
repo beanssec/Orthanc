@@ -21,11 +21,13 @@ from app.routers import fusion
 from app.routers import cases
 from app.routers import oql
 from app.routers import maritime
+from app.routers import watchpoints
 from app.collectors.orchestrator import orchestrator
 from app.collectors.satellite_collector import satellite_collector
 from app.services.brief_scheduler import brief_scheduler
 from app.services.fusion_service import fusion_service
 from app.services.maritime_intel_service import maritime_intel_service
+from app.services.sentinel_service import sentinel_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("orthanc")
@@ -98,6 +100,18 @@ async def lifespan(app: FastAPI):
     maritime_task = asyncio.create_task(maritime_intel_service.run_loop())
     logger.info("Maritime intelligence loop started")
 
+    # Start Sentinel-2 satellite change detection service
+    await sentinel_service.start()
+    logger.info("Sentinel-2 change detection started")
+
+    # Seed default source groups (no-op if already seeded)
+    try:
+        from app.services.source_group_seeder import seed_source_groups
+        await seed_source_groups()
+    except Exception as _sg_err:
+        logger.warning("Source group seeding skipped (will retry on next start): %s", _sg_err)
+    logger.info("Source groups seeded")
+
     yield
 
     logger.info("Orthanc API shutting down")
@@ -110,6 +124,7 @@ async def lifespan(app: FastAPI):
             await task
         except asyncio.CancelledError:
             pass
+    await sentinel_service.stop()
     await fusion_service.stop()
     await orchestrator.stop_all()
     try:
@@ -153,6 +168,7 @@ app.include_router(fusion.router)
 app.include_router(cases.router)
 app.include_router(oql.router)
 app.include_router(maritime.router)
+app.include_router(watchpoints.router)
 
 
 @app.get("/")

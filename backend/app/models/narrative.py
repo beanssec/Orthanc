@@ -1,0 +1,201 @@
+import uuid
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .base import Base
+
+
+class Narrative(Base):
+    __tablename__ = "narratives"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, server_default=text("uuid_generate_v4()")
+    )
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'active'"))
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_updated: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    post_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    source_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    divergence_score: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0"))
+    evidence_score: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0"))
+    consensus: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    topic_keywords: Mapped[Optional[list]] = mapped_column(ARRAY(Text), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    # Relationships
+    narrative_posts: Mapped[list["NarrativePost"]] = relationship(
+        back_populates="narrative", cascade="all, delete-orphan"
+    )
+    claims: Mapped[list["Claim"]] = relationship(
+        back_populates="narrative", cascade="all, delete-orphan"
+    )
+
+
+class NarrativePost(Base):
+    __tablename__ = "narrative_posts"
+    __table_args__ = (
+        UniqueConstraint("narrative_id", "post_id", name="uq_narrative_post"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, server_default=text("uuid_generate_v4()")
+    )
+    narrative_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("narratives.id", ondelete="CASCADE"), nullable=False
+    )
+    post_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("posts.id", ondelete="CASCADE"), nullable=False
+    )
+    stance: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    stance_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    stance_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    assigned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    # Relationships
+    narrative: Mapped["Narrative"] = relationship(back_populates="narrative_posts")
+    post: Mapped["Post"] = relationship()  # noqa: F821
+
+
+class Claim(Base):
+    __tablename__ = "claims"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, server_default=text("uuid_generate_v4()")
+    )
+    narrative_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("narratives.id", ondelete="CASCADE"), nullable=False
+    )
+    claim_text: Mapped[str] = mapped_column(Text, nullable=False)
+    claim_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    location_lat: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    location_lng: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    entity_names: Mapped[Optional[list]] = mapped_column(ARRAY(Text), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'unverified'"))
+    evidence_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    first_claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    first_claimed_by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    # Relationships
+    narrative: Mapped["Narrative"] = relationship(back_populates="claims")
+    evidence: Mapped[list["ClaimEvidence"]] = relationship(
+        back_populates="claim", cascade="all, delete-orphan"
+    )
+
+
+class ClaimEvidence(Base):
+    __tablename__ = "claim_evidence"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, server_default=text("uuid_generate_v4()")
+    )
+    claim_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("claims.id", ondelete="CASCADE"), nullable=False
+    )
+    evidence_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    evidence_source: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    evidence_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    supports: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    detected_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    # Relationships
+    claim: Mapped["Claim"] = relationship(back_populates="evidence")
+
+
+class SourceGroup(Base):
+    __tablename__ = "source_groups"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, server_default=text("uuid_generate_v4()")
+    )
+    name: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
+    display_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    color: Mapped[Optional[str]] = mapped_column(String(7), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    # Relationships
+    members: Mapped[list["SourceGroupMember"]] = relationship(
+        back_populates="source_group", cascade="all, delete-orphan"
+    )
+
+
+class SourceGroupMember(Base):
+    __tablename__ = "source_group_members"
+    __table_args__ = (
+        UniqueConstraint("source_group_id", "source_id", name="uq_group_source"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, server_default=text("uuid_generate_v4()")
+    )
+    source_group_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("source_groups.id", ondelete="CASCADE"), nullable=False
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("sources.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # Relationships
+    source_group: Mapped["SourceGroup"] = relationship(back_populates="members")
+    source: Mapped["Source"] = relationship()  # noqa: F821
+
+
+class SourceBiasProfile(Base):
+    __tablename__ = "source_bias_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, server_default=text("uuid_generate_v4()")
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("sources.id", ondelete="CASCADE"), nullable=False
+    )
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    alignment_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    reliability_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    coverage_bias: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    speed_rank: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    stance_distribution: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    total_narratives: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    total_claims: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    # Relationships
+    source: Mapped["Source"] = relationship(back_populates="bias_profiles")  # noqa: F821
+
+
+class PostEmbedding(Base):
+    __tablename__ = "post_embeddings"
+
+    post_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("posts.id", ondelete="CASCADE"), primary_key=True
+    )
+    embedding: Mapped[list] = mapped_column(JSONB, nullable=False)  # list of floats
+    model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    # Relationships
+    post: Mapped["Post"] = relationship()  # noqa: F821

@@ -206,7 +206,7 @@ class ACLEDCollector:
                         from app.services.entity_extractor import entity_extractor
                         from app.models.entity import Entity, EntityMention
                         text_for_ner = content
-                        extracted_ents = entity_extractor.extract_entities(text_for_ner)
+                        extracted_ents = await entity_extractor.extract_entities_async(text_for_ner)
                         for ent in extracted_ents:
                             canonical = entity_extractor.canonical_name(ent["name"])
                             existing_ent = await session.execute(

@@ -208,7 +208,7 @@ class FIRMSCollector:
 
                     # Entity extraction (picks up zone/country names from content)
                     try:
-                        extracted_ents = entity_extractor.extract_entities(content)
+                        extracted_ents = await entity_extractor.extract_entities_async(content)
                         for ent in extracted_ents:
                             from app.models.entity import Entity, EntityMention
                             canonical = entity_extractor.canonical_name(ent["name"])

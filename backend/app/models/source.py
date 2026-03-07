@@ -40,3 +40,6 @@ class Source(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="sources")  # noqa: F821
+    bias_profiles: Mapped[list["SourceBiasProfile"]] = relationship(  # noqa: F821
+        back_populates="source", cascade="all, delete-orphan"
+    )

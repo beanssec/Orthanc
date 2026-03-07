@@ -15,6 +15,8 @@ from .sanctions import SanctionsEntity, EntitySanctionsMatch
 from .fused_event import FusedEvent
 from .query import SavedQuery, QueryHistory
 from .vessel import VesselTrack, VesselWatchlist, MaritimeEvent
+from .watchpoint import SatWatchpoint, SatSnapshot
+from .narrative import Narrative, NarrativePost, Claim, ClaimEvidence, SourceGroup, SourceGroupMember, SourceBiasProfile, PostEmbedding
 
 __all__ = [
     "Base", "User", "Credential", "Post", "Event", "Source",
@@ -28,4 +30,7 @@ __all__ = [
     "FusedEvent",
     "SavedQuery", "QueryHistory",
     "VesselTrack", "VesselWatchlist", "MaritimeEvent",
+    "SatWatchpoint", "SatSnapshot",
+    "Narrative", "NarrativePost", "Claim", "ClaimEvidence",
+    "SourceGroup", "SourceGroupMember", "SourceBiasProfile", "PostEmbedding",
 ]

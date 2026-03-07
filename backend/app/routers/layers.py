@@ -742,6 +742,50 @@ async def get_notam_layer(
     }
 
 
+@router.get("/layers/watchpoints")
+async def get_watchpoint_layer(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Return satellite watchpoints as a GeoJSON FeatureCollection."""
+    from app.models.watchpoint import SatSnapshot, SatWatchpoint
+
+    result = await db.execute(
+        select(SatWatchpoint).where(SatWatchpoint.enabled == True)  # noqa: E712
+    )
+    watchpoints = result.scalars().all()
+
+    features = []
+    for wp in watchpoints:
+        # Get the most recent snapshot to surface change status
+        snap_result = await db.execute(
+            select(SatSnapshot)
+            .where(SatSnapshot.watchpoint_id == wp.id)
+            .order_by(SatSnapshot.image_date.desc())
+            .limit(1)
+        )
+        snap = snap_result.scalars().first()
+
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [wp.lng, wp.lat]},
+                "properties": {
+                    "id": str(wp.id),
+                    "name": wp.name,
+                    "category": wp.category or "custom",
+                    "radius_km": wp.radius_km,
+                    "last_checked": wp.last_checked.isoformat() if wp.last_checked else None,
+                    "last_image_date": wp.last_image_date,
+                    "change_detected": snap.change_detected if snap else False,
+                    "change_score": snap.change_score if snap else 0.0,
+                },
+            }
+        )
+
+    return {"type": "FeatureCollection", "features": features}
+
+
 @router.post("/translate")
 async def translate_text(
     body: TranslateRequest,

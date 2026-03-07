@@ -207,7 +207,7 @@ class ShodanCollector:
 
                 # Entity extraction
                 try:
-                    extracted_ents = entity_extractor.extract_entities(content or "")
+                    extracted_ents = await entity_extractor.extract_entities_async(content or "")
                     for ent in extracted_ents:
                         canonical = entity_extractor.canonical_name(ent["name"])
                         existing_ent = await session.execute(

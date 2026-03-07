@@ -78,7 +78,11 @@ class EntityExtractor:
         return entities
 
     async def extract_entities_async(self, text: str) -> list[dict]:
-        """Non-blocking wrapper — runs spaCy NER in a thread pool."""
+        """Non-blocking wrapper — runs spaCy NER in a thread pool.
+        
+        Always use this from async code (collectors, routers) to avoid
+        blocking the event loop during CPU-bound NLP processing.
+        """
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(_spacy_executor, self.extract_entities, text)
 

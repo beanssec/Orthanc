@@ -262,7 +262,7 @@ class MastodonCollector:
 
             # Entity extraction
             try:
-                extracted_ents = entity_extractor.extract_entities(text)
+                extracted_ents = await entity_extractor.extract_entities_async(text)
                 if extracted_ents:
                     async with AsyncSessionLocal() as session:
                         for ent in extracted_ents:
