@@ -17,15 +17,53 @@ THUMBNAIL_DIR = "/app/data/media/thumbnails"
 THUMBNAIL_WIDTH = 400
 
 
+HASH_INDEX_PATH = os.path.join(MEDIA_DIR, ".hash_index.json")
+
+
 class MediaService:
     """Handles media storage, thumbnailing, and metadata extraction."""
 
     def __init__(self) -> None:
         os.makedirs(MEDIA_DIR, exist_ok=True)
         os.makedirs(THUMBNAIL_DIR, exist_ok=True)
+        self._hash_index: dict[str, str] = {}  # sha256 -> relative_path
+        self._load_hash_index()
+
+    def _load_hash_index(self) -> None:
+        """Load the content-hash → path index from disk."""
+        if os.path.exists(HASH_INDEX_PATH):
+            try:
+                with open(HASH_INDEX_PATH, "r") as f:
+                    self._hash_index = json.load(f)
+                logger.info("Loaded media hash index: %d entries", len(self._hash_index))
+            except Exception as exc:
+                logger.warning("Failed to load hash index: %s", exc)
+                self._hash_index = {}
+
+    def _save_hash_index(self) -> None:
+        """Persist the hash index to disk."""
+        try:
+            with open(HASH_INDEX_PATH, "w") as f:
+                json.dump(self._hash_index, f)
+        except Exception as exc:
+            logger.warning("Failed to save hash index: %s", exc)
 
     def save_media(self, data: bytes, channel_id: str, message_id: int, extension: str) -> str:
-        """Save media bytes to disk. Returns relative path (relative to MEDIA_DIR)."""
+        """Save media bytes to disk with content-hash dedup.
+        
+        If an identical file (by sha256) already exists, returns the
+        existing path instead of writing a duplicate.
+        Returns relative path (relative to MEDIA_DIR).
+        """
+        content_hash = hashlib.sha256(data).hexdigest()
+
+        # Check if we already have this exact content
+        existing = self._hash_index.get(content_hash)
+        if existing and os.path.exists(os.path.join(MEDIA_DIR, existing)):
+            logger.debug("Dedup hit: %s already stored at %s", content_hash[:12], existing)
+            return existing
+
+        # New content — write to disk
         subdir = str(channel_id)
         abs_subdir = os.path.join(MEDIA_DIR, subdir)
         os.makedirs(abs_subdir, exist_ok=True)
@@ -34,7 +72,12 @@ class MediaService:
         abs_path = os.path.join(MEDIA_DIR, relative_path)
         with open(abs_path, "wb") as f:
             f.write(data)
-        logger.debug("Saved media: %s (%d bytes)", relative_path, len(data))
+
+        # Update index
+        self._hash_index[content_hash] = relative_path
+        self._save_hash_index()
+
+        logger.debug("Saved media: %s (%d bytes, hash %s)", relative_path, len(data), content_hash[:12])
         return relative_path
 
     def abs_path(self, relative_path: str) -> str:

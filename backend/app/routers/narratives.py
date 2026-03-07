@@ -342,9 +342,8 @@ async def narrative_timeline(
 
     # Get posts with source info
     result = await db.execute(
-        select(Post.timestamp, Post.source_type, Source.id.label("source_id"))
+        select(Post.timestamp, Post.source_type, Post.source_id)
         .join(NarrativePost, NarrativePost.post_id == Post.id)
-        .outerjoin(Source, Source.id == Post.source_id)
         .where(NarrativePost.narrative_id == uuid.UUID(narrative_id))
         .order_by(Post.timestamp)
     )
@@ -442,28 +441,37 @@ def _serialize_narrative(n: Narrative) -> dict:
 
 async def _get_stance_by_group(db: AsyncSession, narrative_id) -> dict:
     """Get stance distribution grouped by source group."""
+    # Build source_id → (group_name, color) map
+    group_result = await db.execute(
+        select(SourceGroupMember.source_id, SourceGroup.name, SourceGroup.color)
+        .join(SourceGroup, SourceGroup.id == SourceGroupMember.source_group_id)
+    )
+    source_group_map: dict = {}
+    for src_id, gname, gcolor in group_result.all():
+        source_group_map[str(src_id)] = (gname, gcolor)
+
+    # Get posts with stances
     result = await db.execute(
-        select(
-            SourceGroup.name,
-            SourceGroup.color,
-            NarrativePost.stance,
-            func.count().label("count"),
-        )
+        select(Post.source_id, NarrativePost.stance)
         .join(Post, Post.id == NarrativePost.post_id)
-        .outerjoin(Source, Source.id == Post.source_id)
-        .outerjoin(SourceGroupMember, SourceGroupMember.source_id == Source.id)
-        .outerjoin(SourceGroup, SourceGroup.id == SourceGroupMember.source_group_id)
         .where(NarrativePost.narrative_id == narrative_id)
-        .group_by(SourceGroup.name, SourceGroup.color, NarrativePost.stance)
     )
     rows = result.all()
 
+    # Match posts to groups by checking if post.source_id is in the group map
+    # source_id may be a UUID string or a name — try both
     groups: dict = {}
-    for group_name, color, stance, count in rows:
-        gname = group_name or "unassigned"
+    for source_id, stance in rows:
+        group_name, color = source_group_map.get(source_id, (None, None))
+        if not group_name:
+            # Try matching by source name in members table
+            group_name = "unassigned"
+            color = "#9ca3af"
+        gname = group_name
         if gname not in groups:
             groups[gname] = {"color": color or "#9ca3af", "stances": {}}
-        groups[gname]["stances"][stance or "unclassified"] = count
+        groups[gname]["stances"][stance or "unclassified"] = \
+            groups[gname]["stances"].get(stance or "unclassified", 0) + 1
 
     return groups
 
