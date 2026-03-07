@@ -711,6 +711,13 @@ const FeedDetail: React.FC<FeedDetailProps> = ({ post }) => {
           </div>
         )}
       </div>
+
+      {/* Narrative Intelligence footer link */}
+      <div className="feed-detail-footer">
+        <a href="/narratives" className="feed-narrative-link">
+          📖 View Narrative Intelligence
+        </a>
+      </div>
     </div>
   )
 }

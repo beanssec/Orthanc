@@ -239,7 +239,7 @@ class FlightCollector:
                                 Post.source_id == icao24,
                             )
                         )
-                        existing_post = existing.scalar_one_or_none()
+                        existing_post = existing.scalars().first()
 
                         if existing_post:
                             # Update existing flight record

@@ -138,6 +138,53 @@
   grid-template-columns: 1fr 1fr;
 }
 
+.dashboard-row--3col {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+/* ── Trending Narratives widget ─────────────────────────── */
+.dashboard-narrative-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border-primary);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.dashboard-narrative-item:hover {
+  background: rgba(59, 130, 246, 0.05);
+}
+.narrative-divergence-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.narrative-divergence-dot.low {
+  background: var(--success-primary);
+}
+.narrative-divergence-dot.medium {
+  background: #f59e0b;
+}
+.narrative-divergence-dot.high {
+  background: var(--alert-primary);
+}
+.narrative-title-truncated {
+  flex: 1;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.narrative-post-count {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
 /* ── Section card ───────────────────────────────────────── */
 .dash-card {
   background: var(--bg-surface);
@@ -786,7 +833,8 @@
 
   .dashboard-row--6040,
   .dashboard-row--4060,
-  .dashboard-row--5050 {
+  .dashboard-row--5050,
+  .dashboard-row--3col {
     grid-template-columns: 1fr;
   }
 }

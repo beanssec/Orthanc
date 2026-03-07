@@ -215,7 +215,7 @@ class ACLEDCollector:
                                     Entity.type == ent["type"],
                                 )
                             )
-                            entity = existing_ent.scalar_one_or_none()
+                            entity = existing_ent.scalars().first()
                             if entity:
                                 entity.mention_count += 1
                                 entity.last_seen = datetime.now(tz=timezone.utc)

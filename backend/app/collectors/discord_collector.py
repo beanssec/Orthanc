@@ -230,7 +230,7 @@ class DiscordCollector:
                         Post.source_id == source_id,
                     )
                 )
-                if existing.scalar_one_or_none():
+                if existing.scalars().first():
                     return
 
                 post = Post(

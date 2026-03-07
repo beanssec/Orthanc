@@ -132,7 +132,7 @@ class RSSCollector:
                         Post.source_id == guid,
                     )
                 )
-                if existing.scalar_one_or_none():
+                if existing.scalars().first():
                     continue
 
                 title = entry.get("title", "")
@@ -191,7 +191,7 @@ class RSSCollector:
                                 Entity.type == ent["type"],
                             )
                         )
-                        entity = existing_ent.scalar_one_or_none()
+                        entity = existing_ent.scalars().first()
                         if entity:
                             entity.mention_count += 1
                             entity.last_seen = datetime.now(tz=timezone.utc)
@@ -219,7 +219,7 @@ class RSSCollector:
             source_result = await session.execute(
                 select(Source).where(Source.id == source_id)
             )
-            source = source_result.scalar_one_or_none()
+            source = source_result.scalars().first()
             if source:
                 source.last_polled = datetime.now(tz=timezone.utc)
 

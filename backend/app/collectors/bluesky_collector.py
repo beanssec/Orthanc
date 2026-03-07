@@ -107,7 +107,7 @@ class BlueskyCollector:
                 existing = await session.execute(
                     select(Post).where(Post.external_id == external_id)
                 )
-                if existing.scalar_one_or_none():
+                if existing.scalars().first():
                     continue
 
             # Parse text
@@ -167,7 +167,7 @@ class BlueskyCollector:
 
                 # Update source.last_polled
                 src_result = await session.execute(select(Source).where(Source.id == source.id))
-                src_obj = src_result.scalar_one_or_none()
+                src_obj = src_result.scalars().first()
                 if src_obj:
                     src_obj.last_polled = datetime.now(timezone.utc)
 
@@ -216,7 +216,7 @@ class BlueskyCollector:
                                     Entity.type == ent["type"],
                                 )
                             )
-                            entity = existing_ent.scalar_one_or_none()
+                            entity = existing_ent.scalars().first()
                             if entity:
                                 entity.mention_count += 1
                                 entity.last_seen = datetime.now(timezone.utc)

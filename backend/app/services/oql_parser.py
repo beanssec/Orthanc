@@ -22,6 +22,7 @@ from sqlalchemy.orm import DeclarativeBase
 
 from app.models.entity import Entity
 from app.models.event import Event
+from app.models.narrative import Narrative
 from app.models.post import Post
 
 
@@ -58,18 +59,32 @@ FIELD_MAP: dict[str, dict[str, Any]] = {
         "confidence": Event.confidence,
         "precision": Event.precision,
     },
+    "narratives": {
+        "id": Narrative.id,
+        "title": Narrative.title,
+        "status": Narrative.status,
+        "post_count": Narrative.post_count,
+        "source_count": Narrative.source_count,
+        "divergence_score": Narrative.divergence_score,
+        "evidence_score": Narrative.evidence_score,
+        "consensus": Narrative.consensus,
+        "first_seen": Narrative.first_seen,
+        "last_updated": Narrative.last_updated,
+    },
 }
 
 TABLE_MODEL: dict[str, Any] = {
     "posts": Post,
     "entities": Entity,
     "events": Event,
+    "narratives": Narrative,
 }
 
 # Timestamp column per table (for timechart)
 TABLE_TIMESTAMP = {
     "posts": Post.timestamp,
     "entities": Entity.first_seen,
+    "narratives": Narrative.first_seen,
 }
 
 # Human-readable field types (for /oql/schema)
@@ -103,6 +118,18 @@ FIELD_TYPES: dict[str, dict[str, dict]] = {
         "place_name": {"type": "string", "description": "Place name extracted"},
         "confidence": {"type": "float", "description": "Extraction confidence 0.0–1.0"},
         "precision": {"type": "string", "description": "Geo precision: exact/city/region/country/continent"},
+    },
+    "narratives": {
+        "id": {"type": "uuid", "description": "Unique narrative identifier"},
+        "title": {"type": "string", "description": "Narrative title"},
+        "status": {"type": "string", "description": "Narrative status: active, archived, merged"},
+        "post_count": {"type": "integer", "description": "Number of posts in this narrative"},
+        "source_count": {"type": "integer", "description": "Number of distinct sources"},
+        "divergence_score": {"type": "float", "description": "Source divergence score 0.0–1.0"},
+        "evidence_score": {"type": "float", "description": "Evidence strength score 0.0–1.0"},
+        "consensus": {"type": "string", "description": "Consensus: confirmed, disputed, denied, unverified"},
+        "first_seen": {"type": "datetime", "description": "When narrative was first detected"},
+        "last_updated": {"type": "datetime", "description": "When narrative was last updated"},
     },
 }
 

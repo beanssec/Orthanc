@@ -143,7 +143,7 @@ class XCollector:
                         Post.source_id == tweet_id,
                     )
                 )
-                if existing.scalar_one_or_none():
+                if existing.scalars().first():
                     continue
 
                 author = tweet.get("author", handle)
@@ -199,7 +199,7 @@ class XCollector:
                                 Entity.type == ent["type"],
                             )
                         )
-                        entity_obj = existing_ent.scalar_one_or_none()
+                        entity_obj = existing_ent.scalars().first()
                         if entity_obj:
                             entity_obj.mention_count += 1
                             entity_obj.last_seen = datetime.now(tz=timezone.utc)
@@ -227,7 +227,7 @@ class XCollector:
             source_result = await session.execute(
                 select(Source).where(Source.id == source_id)
             )
-            source = source_result.scalar_one_or_none()
+            source = source_result.scalars().first()
             if source:
                 source.last_polled = datetime.now(tz=timezone.utc)
 

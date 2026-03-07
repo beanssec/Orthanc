@@ -139,7 +139,7 @@ class CashtagCollector:
                             Post.source_id == source_id,
                         )
                     )
-                    if existing.scalar_one_or_none():
+                    if existing.scalars().first():
                         continue
 
                     # Enrich raw_json with cashtags and sentiment

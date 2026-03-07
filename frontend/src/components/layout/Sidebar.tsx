@@ -16,6 +16,7 @@ const NAV_LINKS = [
 const ANALYSIS_LINKS = [
   { to: '/cases', icon: '🕵️', label: 'Cases' },
   { to: '/documents', icon: '📄', label: 'Documents' },
+  { to: '/narratives', icon: '📖', label: 'Narratives' },
   { to: '/query', icon: '🧠', label: 'Ask AI' },
 ];
 

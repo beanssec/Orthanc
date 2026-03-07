@@ -358,6 +358,9 @@ const NOTAMS_LAYER = 'notams-layer';
 const WATCHPOINTS_SOURCE = 'watchpoints-source';
 const WATCHPOINTS_LAYER = 'watchpoints-layer';
 
+const NARRATIVES_SOURCE = 'narratives-source';
+const NARRATIVES_LAYER = 'narratives-layer';
+
 // ---------------------------------------------------------------------------
 // Layer state interface
 // ---------------------------------------------------------------------------
@@ -375,6 +378,7 @@ interface LayerState {
   notams: boolean;
   maritime: boolean;
   watchpoints: boolean;
+  narratives: boolean;
 }
 
 interface LayerCounts {
@@ -390,6 +394,7 @@ interface LayerCounts {
   notams: number;
   maritime: number;
   watchpoints: number;
+  narratives: number;
 }
 
 interface FrontlineSourceInfo {
@@ -439,6 +444,7 @@ export function MapView() {
   const layersStateRef = useRef<LayerState>({
     flights: false, ships: false, firms: false, frontlines: false, satellites: false, sentiment: false,
     gdelt: false, acled: false, fusion: false, notams: false, maritime: false, watchpoints: false,
+    narratives: false,
   });
   const fetchFnsRef = useRef<Record<keyof LayerState, () => void>>({} as Record<keyof LayerState, () => void>);
 
@@ -475,6 +481,7 @@ export function MapView() {
     notams: false,
     maritime: false,
     watchpoints: false,
+    narratives: false,
   });
   const [layerCounts, setLayerCounts] = useState<LayerCounts>({
     flights: 0,
@@ -489,6 +496,7 @@ export function MapView() {
     notams: 0,
     maritime: 0,
     watchpoints: 0,
+    narratives: 0,
   });
 
   // GDELT GEO state
@@ -754,6 +762,20 @@ export function MapView() {
     }
   }, []);
 
+  const fetchNarratives = useCallback(async () => {
+    const map = mapRef.current;
+    if (!map || !mapReadyRef.current) return;
+    try {
+      const res = await api.get('/layers/narratives');
+      const data = res.data as GeoJSON.FeatureCollection;
+      const src = map.getSource(NARRATIVES_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      if (src) src.setData(data);
+      setLayerCounts((c) => ({ ...c, narratives: data.features?.length ?? 0 }));
+    } catch (err) {
+      console.error('Failed to fetch narrative clusters', err);
+    }
+  }, []);
+
   // Keep refs in sync with React state for use in style.load callback (can't use state directly in closure)
   useEffect(() => { filteredEventsRef.current = filteredEvents; }, [filteredEvents]);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
@@ -764,8 +786,9 @@ export function MapView() {
       frontlines: fetchFrontlines, satellites: fetchSatellites, sentiment: fetchSentiment,
       gdelt: () => fetchGdelt(), acled: fetchAcled, fusion: fetchFusion,
       notams: fetchNotams, maritime: fetchMaritime, watchpoints: fetchWatchpoints,
+      narratives: fetchNarratives,
     };
-  }, [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment, fetchGdelt, fetchAcled, fetchFusion, fetchNotams, fetchMaritime, fetchWatchpoints]);
+  }, [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment, fetchGdelt, fetchAcled, fetchFusion, fetchNotams, fetchMaritime, fetchWatchpoints, fetchNarratives]);
 
   // Switch base map layer
   useEffect(() => {
@@ -791,7 +814,8 @@ export function MapView() {
     notams: { fetch: fetchNotams, interval: 900_000 },
     maritime: { fetch: fetchMaritime, interval: 900_000 },
     watchpoints: { fetch: fetchWatchpoints, interval: 1_800_000 },
-  }), [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment, fetchGdelt, fetchAcled, fetchFusion, fetchNotams, fetchMaritime, fetchWatchpoints]);
+    narratives: { fetch: fetchNarratives, interval: 300_000 },
+  }), [fetchFlights, fetchShips, fetchFirms, fetchFrontlines, fetchSatellites, fetchSentiment, fetchGdelt, fetchAcled, fetchFusion, fetchNotams, fetchMaritime, fetchWatchpoints, fetchNarratives]);
 
   // Handle layer toggle
   const toggleLayer = useCallback((key: keyof LayerState, enabled: boolean) => {
@@ -816,6 +840,7 @@ export function MapView() {
       notams: [NOTAMS_LAYER],
       maritime: [MARITIME_LAYER],
       watchpoints: [WATCHPOINTS_LAYER],
+      narratives: [NARRATIVES_LAYER],
     };
 
     for (const [key, enabled] of Object.entries(layers) as [keyof LayerState, boolean][]) {
@@ -1717,6 +1742,95 @@ export function MapView() {
           .addTo(map);
       });
 
+      // ── Narrative Clusters source + layer ────────────────────────────────
+      map.addSource(NARRATIVES_SOURCE, {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+
+      // Create diamond images for narrative consensus states
+      const narrativeDiamondGreen = createDiamondImage('#22c55e', 24);
+      const narrativeDiamondYellow = createDiamondImage('#f59e0b', 24);
+      const narrativeDiamondRed = createDiamondImage('#ef4444', 24);
+      const narrativeDiamondGray = createDiamondImage('#9ca3af', 24);
+      if (!map.hasImage('narrative-confirmed')) map.addImage('narrative-confirmed', { width: narrativeDiamondGreen.width, height: narrativeDiamondGreen.height, data: narrativeDiamondGreen.data });
+      if (!map.hasImage('narrative-disputed')) map.addImage('narrative-disputed', { width: narrativeDiamondYellow.width, height: narrativeDiamondYellow.height, data: narrativeDiamondYellow.data });
+      if (!map.hasImage('narrative-denied')) map.addImage('narrative-denied', { width: narrativeDiamondRed.width, height: narrativeDiamondRed.height, data: narrativeDiamondRed.data });
+      if (!map.hasImage('narrative-unverified')) map.addImage('narrative-unverified', { width: narrativeDiamondGray.width, height: narrativeDiamondGray.height, data: narrativeDiamondGray.data });
+
+      map.addLayer({
+        id: NARRATIVES_LAYER,
+        type: 'symbol',
+        source: NARRATIVES_SOURCE,
+        layout: {
+          visibility: 'none',
+          'icon-image': ['concat', 'narrative-', ['coalesce', ['get', 'consensus'], 'unverified']],
+          'icon-size': ['interpolate', ['linear'], ['zoom'], 3, 0.7, 8, 1.0, 12, 1.3],
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': false,
+        },
+      });
+
+      // Narratives hover tooltip
+      map.on('mouseenter', NARRATIVES_LAYER, (e) => {
+        map.getCanvas().style.cursor = 'pointer';
+        const f = e.features?.[0];
+        if (!f || f.geometry.type !== 'Point') return;
+        const p = f.properties ?? {};
+        const consensusColors: Record<string, string> = {
+          confirmed: '#22c55e', disputed: '#f59e0b', denied: '#ef4444', unverified: '#9ca3af',
+        };
+        const color = consensusColors[p.consensus || 'unverified'] ?? '#9ca3af';
+        const claimPreview = (String(p.claim_text || '')).slice(0, 100);
+        const html = `
+          <div class="map-tooltip">
+            <div class="map-tooltip__title" style="color:${color}">📖 ${escapeHtml(String(p.narrative_title || 'Narrative'))}</div>
+            ${claimPreview ? `<div class="map-tooltip__row"><span>Claim</span><span>${escapeHtml(claimPreview)}</span></div>` : ''}
+            <div class="map-tooltip__row"><span>Status</span><span style="color:${color}">${escapeHtml(String(p.claim_status || '—'))}</span></div>
+            <div class="map-tooltip__row"><span>Consensus</span><span style="color:${color}">${escapeHtml(String(p.consensus || 'unverified'))}</span></div>
+            <div class="map-tooltip__row"><span>Posts</span><span>${p.post_count || 0}</span></div>
+          </div>`;
+        showTooltip(map, tooltipRef, f.geometry.coordinates as [number, number], html);
+      });
+      map.on('mouseleave', NARRATIVES_LAYER, () => {
+        map.getCanvas().style.cursor = '';
+        tooltipRef.current?.remove();
+        tooltipRef.current = null;
+      });
+
+      // Narratives click popup
+      map.on('click', NARRATIVES_LAYER, (e) => {
+        const f = e.features?.[0];
+        if (!f || f.geometry.type !== 'Point') return;
+        const p = f.properties ?? {};
+        const consensusColors: Record<string, string> = {
+          confirmed: '#22c55e', disputed: '#f59e0b', denied: '#ef4444', unverified: '#9ca3af',
+        };
+        const color = consensusColors[p.consensus || 'unverified'] ?? '#9ca3af';
+        const html = `
+          <div class="map-popup">
+            <div class="map-popup__source-badge" style="color:${color}">
+              <span style="display:inline-block;width:6px;height:6px;transform:rotate(45deg);background:${color};flex-shrink:0"></span>
+              📖 NARRATIVE CLAIM
+            </div>
+            <div class="map-popup__author">${escapeHtml(String(p.narrative_title || 'Unknown Narrative'))}</div>
+            <div class="map-popup__content">
+              ${p.claim_text ? escapeHtml(String(p.claim_text).slice(0, 200)) : '<em>No claim text</em>'}<br><br>
+              Status: <strong style="color:${color}">${escapeHtml(String(p.claim_status || '—'))}</strong><br>
+              Consensus: <strong style="color:${color}">${escapeHtml(String(p.consensus || 'unverified'))}</strong><br>
+              Posts: <strong>${p.post_count || 0}</strong>
+            </div>
+            <div class="map-popup__footer">
+              <a class="map-popup__link" data-navigate="/narratives" href="#">View Narratives →</a>
+            </div>
+          </div>`;
+        if (popupRef.current) popupRef.current.remove();
+        popupRef.current = new maplibregl.Popup({ closeButton: true, maxWidth: '320px', offset: 10 })
+          .setLngLat(f.geometry.coordinates as [number, number])
+          .setHTML(html)
+          .addTo(map);
+      });
+
     }; // end setupDataLayers
 
     // Re-add all data layers after a base layer style switch.
@@ -1751,6 +1865,7 @@ export function MapView() {
         notams: [NOTAMS_LAYER],
         maritime: [MARITIME_LAYER],
         watchpoints: [WATCHPOINTS_LAYER],
+        narratives: [NARRATIVES_LAYER],
       };
       const curLayers = layersStateRef.current;
       for (const [key, enabled] of Object.entries(curLayers) as [keyof LayerState, boolean][]) {
@@ -2672,6 +2787,44 @@ export function MapView() {
                 <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#ef4444' }} />🔴 Change detected</div>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
                   Sentinel-2 via Copernicus · checks every 6h
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── Narrative Intelligence ── */}
+          <div className="map-layers-section">
+            <div className="map-layers-section__label">Narrative Intelligence</div>
+
+            <label className="map-layer-row">
+              <span className="map-layer-row__dot" style={{ background: 'transparent', border: '2px solid #6366f1', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8 }} />
+              <span className="map-layer-row__name">📖 Narratives</span>
+              {layers.narratives && (
+                <span className={`map-layer-row__count${layerCounts.narratives === 0 ? ' map-layer-row__count--zero' : ''}`}>{layerCounts.narratives || 0}</span>
+              )}
+              <span className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={layers.narratives}
+                  onChange={(e) => toggleLayer('narratives', e.target.checked)}
+                />
+                <span className="toggle-slider" />
+              </span>
+            </label>
+
+            {layers.narratives && layerCounts.narratives === 0 && (
+              <div className="map-layer-hint">No geo-located narrative claims yet. Claims with locations appear here as narratives are processed.</div>
+            )}
+
+            {layers.narratives && layerCounts.narratives > 0 && (
+              <div className="sentiment-legend" style={{ marginTop: 6 }}>
+                <div className="sentiment-legend__title">Claim Consensus</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#22c55e', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8, display: 'inline-block', marginRight: 6 }} />Confirmed</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#f59e0b', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8, display: 'inline-block', marginRight: 6 }} />Disputed</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#ef4444', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8, display: 'inline-block', marginRight: 6 }} />Denied</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#9ca3af', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8, display: 'inline-block', marginRight: 6 }} />Unverified</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Diamond markers · refreshes every 5 min
                 </div>
               </div>
             )}

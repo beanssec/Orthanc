@@ -786,6 +786,52 @@ async def get_watchpoint_layer(
     return {"type": "FeatureCollection", "features": features}
 
 
+@router.get("/layers/narratives")
+async def get_narrative_layer(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Return narrative claims with locations as GeoJSON."""
+    from app.models.narrative import Claim, Narrative
+
+    result = await db.execute(
+        select(Claim, Narrative.title, Narrative.consensus, Narrative.post_count)
+        .join(Narrative, Narrative.id == Claim.narrative_id)
+        .where(
+            Claim.location_lat.isnot(None),
+            Claim.location_lng.isnot(None),
+            Narrative.status == "active",
+        )
+    )
+    rows = result.all()
+
+    features = []
+    for claim, narr_title, consensus, post_count in rows:
+        # Color by consensus
+        consensus_colors = {
+            "confirmed": "#22c55e",
+            "disputed": "#f59e0b",
+            "denied": "#ef4444",
+        }
+        color = consensus_colors.get(consensus or "", "#9ca3af")
+
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [claim.location_lng, claim.location_lat]},
+            "properties": {
+                "narrative_title": narr_title,
+                "claim_text": claim.claim_text,
+                "claim_status": claim.status,
+                "consensus": consensus or "unverified",
+                "post_count": post_count,
+                "color": color,
+            },
+        })
+
+    logger.debug("Narrative layer: %d features", len(features))
+    return {"type": "FeatureCollection", "features": features}
+
+
 @router.post("/translate")
 async def translate_text(
     body: TranslateRequest,

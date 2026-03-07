@@ -147,7 +147,7 @@ class ShodanCollector:
                         Post.source_id == source_id_key,
                     )
                 )
-                if existing.scalar_one_or_none():
+                if existing.scalars().first():
                     continue
 
                 # Build content

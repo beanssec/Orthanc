@@ -22,11 +22,14 @@ from app.routers import cases
 from app.routers import oql
 from app.routers import maritime
 from app.routers import watchpoints
+from app.routers import narratives as narratives_router_module
 from app.collectors.orchestrator import orchestrator
 from app.collectors.satellite_collector import satellite_collector
 from app.services.brief_scheduler import brief_scheduler
 from app.services.fusion_service import fusion_service
 from app.services.maritime_intel_service import maritime_intel_service
+from app.services.narrative_engine import narrative_engine
+from app.services.narrative_analyzer import narrative_analyzer
 from app.services.sentinel_service import sentinel_service
 
 logging.basicConfig(level=logging.INFO)
@@ -112,6 +115,57 @@ async def lifespan(app: FastAPI):
         logger.warning("Source group seeding skipped (will retry on next start): %s", _sg_err)
     logger.info("Source groups seeded")
 
+    # Try to load the OpenRouter API key for high-quality embeddings.
+    # Credential decryption requires a user to have logged in (key material
+    # lives in memory), so we attempt it and silently fall back to the
+    # deterministic hash-based embeddings when it fails.
+    try:
+        from app.services.embedding_service import embedding_service
+        from app.services.crypto import crypto_service
+        from app.models.credential import Credential
+        from app.db import AsyncSessionLocal as _ASL
+        from sqlalchemy import select as _select
+
+        async with _ASL() as _session:
+            _cred_result = await _session.execute(
+                _select(Credential).where(Credential.provider == "openrouter")
+            )
+            _cred = _cred_result.scalars().first()
+            if _cred and getattr(_cred, "encrypted_data", None):
+                import json as _json
+                _decrypted = crypto_service.decrypt(_cred.encrypted_data)
+                _cred_data = _json.loads(_decrypted)
+                _api_key = _cred_data.get("api_key", "")
+                if _api_key:
+                    embedding_service.set_api_key(_api_key)
+                    logger.info("Embedding service: OpenRouter API key loaded")
+                else:
+                    logger.info("Embedding service: OpenRouter credential present but empty — using hash-based fallback")
+            else:
+                logger.info("Embedding service: no OpenRouter credential found — using hash-based fallback")
+    except Exception as _emb_err:
+        logger.info("Embedding service: using hash-based fallback (%s)", _emb_err)
+
+    # Start narrative clustering engine (embeds posts + clusters into narratives every 10 min)
+    await narrative_engine.start()
+    logger.info("Narrative clustering engine started")
+
+    # Load OpenRouter key into stance classifier (uses same key as embedding service)
+    try:
+        from app.services.embedding_service import embedding_service as _emb_svc
+        from app.services.stance_classifier import stance_classifier
+        if _emb_svc._openrouter_key:
+            stance_classifier._api_key = _emb_svc._openrouter_key
+            logger.info("Stance classifier: AI mode (OpenRouter)")
+        else:
+            logger.info("Stance classifier: keyword fallback mode")
+    except Exception as _sc_err:
+        logger.warning("Stance classifier init error: %s", _sc_err)
+
+    # Start narrative analysis loop (stance classification + evidence correlation every 15 min)
+    asyncio.create_task(narrative_analyzer.start())
+    logger.info("Narrative analyzer started")
+
     yield
 
     logger.info("Orthanc API shutting down")
@@ -124,6 +178,8 @@ async def lifespan(app: FastAPI):
             await task
         except asyncio.CancelledError:
             pass
+    await narrative_engine.stop()
+    await narrative_analyzer.stop()
     await sentinel_service.stop()
     await fusion_service.stop()
     await orchestrator.stop_all()
@@ -169,6 +225,7 @@ app.include_router(cases.router)
 app.include_router(oql.router)
 app.include_router(maritime.router)
 app.include_router(watchpoints.router)
+app.include_router(narratives_router_module.router)
 
 
 @app.get("/")

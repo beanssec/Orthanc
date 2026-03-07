@@ -1345,3 +1345,22 @@
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* ── Feed Narrative Footer ─────────────────────────────── */
+.feed-detail-footer {
+  padding: 0.75rem;
+  border-top: 1px solid var(--border-primary);
+}
+
+.feed-narrative-link {
+  font-size: 0.8rem;
+  color: var(--accent-primary);
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.feed-narrative-link:hover {
+  text-decoration: underline;
+}

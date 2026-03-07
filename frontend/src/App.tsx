@@ -24,6 +24,7 @@ import { BookmarksView } from './components/bookmarks/BookmarksView';
 import { QueryView } from './components/query/QueryView';
 import { CasesView } from './components/cases/CasesView';
 import { CaseDetail } from './components/cases/CaseDetail';
+import { NarrativesView } from './components/narratives/NarrativesView';
 import api from './services/api';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -137,6 +138,7 @@ export default function App() {
         <Route path="query" element={<QueryView />} />
         <Route path="cases" element={<CasesView />} />
         <Route path="cases/:id" element={<CaseDetail />} />
+        <Route path="narratives" element={<NarrativesView />} />
         <Route path="finance/portfolio" element={<PortfolioView />} />
         <Route path="finance/markets" element={<MarketsView />} />
         <Route path="finance/signals" element={<SignalsView />} />

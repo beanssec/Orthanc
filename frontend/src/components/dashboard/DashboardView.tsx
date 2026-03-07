@@ -58,6 +58,15 @@ interface GeoHotspot {
   count: number;
 }
 
+interface TrendingNarrative {
+  id: string;
+  title: string;
+  post_count: number;
+  divergence_score: number;
+  consensus: string | null;
+  status: string;
+}
+
 interface AlertEvent {
   id: number | string;
   severity?: string;
@@ -403,6 +412,7 @@ export function DashboardView() {
   const [velocity, setVelocity] = useState<VelocityBucket[]>([]);
   const [sourceHealth, setSourceHealth] = useState<SourceHealthRow[]>([]);
   const [trendingEntities, setTrendingEntities] = useState<TrendingEntity[]>([]);
+  const [trendingNarratives, setTrendingNarratives] = useState<TrendingNarrative[]>([]);
   const [geoHotspots, setGeoHotspots] = useState<GeoHotspot[]>([]);
   const [alerts, setAlerts] = useState<AlertEvent[]>([]);
   const [fusedEvents, setFusedEvents] = useState<FusedIntelEvent[]>([]);
@@ -440,6 +450,14 @@ export function DashboardView() {
         setFusedEvents(fusionRes.data ?? []);
       } catch {
         // fusion endpoint may have no data yet
+      }
+
+      // Trending narratives — best-effort
+      try {
+        const narrativesRes = await api.get('/narratives/trending?hours=6&limit=5');
+        setTrendingNarratives(narrativesRes.data ?? []);
+      } catch {
+        // narratives endpoint may not have data yet
       }
 
       setLastRefresh(new Date());
@@ -542,8 +560,8 @@ export function DashboardView() {
         </div>
       </div>
 
-      {/* ── Row 4: Trending Entities + Geographic Hotspots */}
-      <div className="dashboard-row dashboard-row--5050">
+      {/* ── Row 4: Trending Entities + Trending Narratives + Geographic Hotspots */}
+      <div className="dashboard-row dashboard-row--3col">
 
         {/* Trending Entities */}
         <div className="dash-card">
@@ -583,6 +601,42 @@ export function DashboardView() {
                     <span className="entity-bar-row__count">{ent.mentions}</span>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Trending Narratives */}
+        <div className="dash-card">
+          <div className="dash-card__header">
+            <span className="dash-card__title">Trending Narratives</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => navigate('/narratives')}>
+              View all →
+            </button>
+          </div>
+          <div className="dash-card__body">
+            {trendingNarratives.length === 0 ? (
+              <div className="dash-empty" style={{ fontSize: '0.75rem', lineHeight: 1.5 }}>
+                No active narratives — narratives will appear as the clustering engine processes posts
+              </div>
+            ) : (
+              <div>
+                {trendingNarratives.map((narr) => {
+                  const divergenceLevel =
+                    narr.divergence_score >= 0.7 ? 'high' :
+                    narr.divergence_score >= 0.4 ? 'medium' : 'low';
+                  return (
+                    <div
+                      key={narr.id}
+                      className="dashboard-narrative-item"
+                      onClick={() => navigate(`/narratives?id=${narr.id}`)}
+                    >
+                      <span className={`narrative-divergence-dot ${divergenceLevel}`} />
+                      <span className="narrative-title-truncated">{narr.title}</span>
+                      <span className="narrative-post-count">{narr.post_count} posts</span>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

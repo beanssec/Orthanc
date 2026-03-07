@@ -137,7 +137,7 @@ class FIRMSCollector:
                             Post.source_id == source_id,
                         )
                     )
-                    if existing.scalar_one_or_none():
+                    if existing.scalars().first():
                         continue
 
                     content = (
@@ -218,7 +218,7 @@ class FIRMSCollector:
                                     Entity.type == ent["type"],
                                 )
                             )
-                            entity = existing_ent.scalar_one_or_none()
+                            entity = existing_ent.scalars().first()
                             if entity:
                                 entity.mention_count += 1
                                 entity.last_seen = datetime.now(tz=timezone.utc)

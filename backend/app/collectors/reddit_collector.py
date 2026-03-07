@@ -120,7 +120,7 @@ class RedditCollector:
                         Post.source_id == source_id_key,
                     )
                 )
-                if existing.scalar_one_or_none():
+                if existing.scalars().first():
                     continue
 
                 title = post_data.get("title", "")

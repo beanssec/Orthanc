@@ -220,7 +220,7 @@ class AISCollector:
                         Post.source_id == mmsi,
                     )
                 )
-                existing_post = existing.scalar_one_or_none()
+                existing_post = existing.scalars().first()
                 if existing_post:
                     existing_post.content = content
                     existing_post.raw_json = data
