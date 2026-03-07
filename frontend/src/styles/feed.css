@@ -553,7 +553,7 @@
   min-width: 0;
   overflow-wrap: break-word;
   word-break: break-word;
-  padding-right: 0;
+  padding-right: 4px;
 }
 
 .feed-detail__empty {
@@ -696,12 +696,16 @@
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   color: var(--text-muted);
+  word-break: break-all;
+  overflow-wrap: break-word;
 }
 
 .feed-detail__meta-value--time {
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   color: var(--text-secondary);
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 /* ---- Location section ---- */
@@ -1317,4 +1321,27 @@
   color: var(--text-muted);
   margin-top: 4px;
   font-style: italic;
+}
+
+/* ── Open as Query button ─────────────────────────────────────────────────── */
+
+.feed-filters__open-as-query {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.15s, color 0.15s;
+  box-sizing: border-box;
+}
+
+.feed-filters__open-as-query:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }

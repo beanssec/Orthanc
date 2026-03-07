@@ -52,20 +52,36 @@ const TYPE_LABELS: Record<VizType, string> = {
   stat: 'Stat',
 };
 
-const NUM_COL_TYPES = new Set(['int', 'integer', 'float', 'numeric', 'mixed', 'count', 'number']);
+const NUM_COL_TYPES = new Set(['int', 'integer', 'float', 'numeric', 'count', 'number']);
+
+// Column names that are always labels, never values
+const LABEL_COL_NAMES = new Set([
+  'source_type', 'author', 'name', 'type', 'canonical_name',
+  'place_name', 'precision', 'media_type', 'external_id',
+  'source_id', 'id',
+]);
 
 function isNumericColumn(col: OQLColumn): boolean {
+  // If column name is a known label, never treat as numeric
+  if (LABEL_COL_NAMES.has(col.name)) return false;
   return (
     NUM_COL_TYPES.has(col.type.toLowerCase()) ||
     col.name === 'count' ||
     col.name.startsWith('count') ||
     col.name.endsWith('_count') ||
     col.name === 'value' ||
-    col.name === 'total'
+    col.name === 'total' ||
+    col.name.startsWith('avg_') ||
+    col.name.startsWith('sum_') ||
+    col.name.startsWith('min_') ||
+    col.name.startsWith('max_') ||
+    col.name.startsWith('dc_') ||
+    col.name === 'mention_count'
   );
 }
 
 function isStringColumn(col: OQLColumn): boolean {
+  if (LABEL_COL_NAMES.has(col.name)) return true;
   return !isNumericColumn(col) && col.name !== 'bucket';
 }
 
@@ -125,13 +141,47 @@ function buildTimeSeriesData(
     return { data, series: seriesCols.map((c) => c.name) };
   }
 
-  const seriesCols = columns.filter((c) => c.name !== 'bucket' && isNumericColumn(c));
+  const numCols = columns.filter((c) => c.name !== 'bucket' && isNumericColumn(c));
+  const strCols = columns.filter((c) => c.name !== 'bucket' && isStringColumn(c));
+
+  // Long format: bucket + category_col + value_col → pivot to wide format
+  // e.g. [bucket, source_type, count] → one column per unique source_type value
+  if (strCols.length === 1 && numCols.length === 1) {
+    const catCol = strCols[0].name;
+    const valCol = numCols[0].name;
+
+    // Collect unique series names
+    const seriesSet = new Set<string>();
+    for (const row of rows) seriesSet.add(String(row[catCol] ?? ''));
+    const seriesNames = Array.from(seriesSet);
+
+    // Group by bucket
+    const bucketMap = new Map<string, Record<string, string | number>>();
+    for (const row of rows) {
+      const b = String(row[bucketCol.name] ?? '');
+      if (!bucketMap.has(b)) {
+        const entry: Record<string, string | number> = { bucket: b };
+        for (const s of seriesNames) entry[s] = 0;
+        bucketMap.set(b, entry);
+      }
+      const entry = bucketMap.get(b)!;
+      entry[String(row[catCol] ?? '')] = Number(row[valCol]) || 0;
+    }
+
+    // Sort by bucket chronologically
+    const data = Array.from(bucketMap.values()).sort(
+      (a, b) => new Date(a.bucket as string).getTime() - new Date(b.bucket as string).getTime()
+    );
+    return { data, series: seriesNames };
+  }
+
+  // Wide format: bucket + multiple numeric cols
   const data = rows.map((row) => {
     const entry: Record<string, string | number> = { bucket: String(row[bucketCol.name] ?? '') };
-    for (const s of seriesCols) entry[s.name] = Number(row[s.name]) || 0;
+    for (const s of numCols) entry[s.name] = Number(row[s.name]) || 0;
     return entry;
-  });
-  return { data, series: seriesCols.map((c) => c.name) };
+  }).sort((a, b) => new Date(a.bucket as string).getTime() - new Date(b.bucket as string).getTime());
+  return { data, series: numCols.map((c) => c.name) };
 }
 
 /** Build StatCard props from first row + first numeric col */

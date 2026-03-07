@@ -802,14 +802,14 @@ export function MapView() {
       const satRed = createSatelliteImage('#ef4444');
       const satGray = createSatelliteImage('#9ca3af');
 
-      map.addImage('plane-icon', { width: planeBlue.width, height: planeBlue.height, data: planeBlue.data });
-      map.addImage('plane-icon-military', { width: planeRed.width, height: planeRed.height, data: planeRed.data });
-      map.addImage('ship-icon', { width: shipCyan.width, height: shipCyan.height, data: shipCyan.data });
-      map.addImage('ship-icon-military', { width: shipOrange.width, height: shipOrange.height, data: shipOrange.data });
-      map.addImage('sat-icon-stations', { width: satGreen.width, height: satGreen.height, data: satGreen.data });
-      map.addImage('sat-icon-military', { width: satRed.width, height: satRed.height, data: satRed.data });
-      map.addImage('sat-icon-weather', { width: satGray.width, height: satGray.height, data: satGray.data });
-      map.addImage('sat-icon-unknown', { width: satGray.width, height: satGray.height, data: satGray.data });
+      if (!map.hasImage('plane-icon')) map.addImage('plane-icon', { width: planeBlue.width, height: planeBlue.height, data: planeBlue.data });
+      if (!map.hasImage('plane-icon-military')) map.addImage('plane-icon-military', { width: planeRed.width, height: planeRed.height, data: planeRed.data });
+      if (!map.hasImage('ship-icon')) map.addImage('ship-icon', { width: shipCyan.width, height: shipCyan.height, data: shipCyan.data });
+      if (!map.hasImage('ship-icon-military')) map.addImage('ship-icon-military', { width: shipOrange.width, height: shipOrange.height, data: shipOrange.data });
+      if (!map.hasImage('sat-icon-stations')) map.addImage('sat-icon-stations', { width: satGreen.width, height: satGreen.height, data: satGreen.data });
+      if (!map.hasImage('sat-icon-military')) map.addImage('sat-icon-military', { width: satRed.width, height: satRed.height, data: satRed.data });
+      if (!map.hasImage('sat-icon-weather')) map.addImage('sat-icon-weather', { width: satGray.width, height: satGray.height, data: satGray.data });
+      if (!map.hasImage('sat-icon-unknown')) map.addImage('sat-icon-unknown', { width: satGray.width, height: satGray.height, data: satGray.data });
 
       // ── Events source (clustered) ─────────────────────────────────────────
       map.addSource(SOURCE_ID, {
@@ -2111,7 +2111,7 @@ export function MapView() {
 
             <label className="map-layer-row">
               <span className="map-layer-row__dot" style={{ background: '#ef4444' }} />
-              <span className="map-layer-row__name">⚔️ Conflict Events (ACLED)</span>
+              <span className="map-layer-row__name">⚔️ Conflict Events</span>
               {layers.acled && (
                 <span className={`map-layer-row__count${layerCounts.acled === 0 ? ' map-layer-row__count--zero' : ''}`}>{layerCounts.acled || 0}</span>
               )}

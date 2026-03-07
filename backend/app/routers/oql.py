@@ -98,7 +98,15 @@ async def execute_oql(
             raw_rows = result.fetchall()
             rows = [dict(zip(col_names, row)) for row in raw_rows]
             total = len(rows)
-            columns = [{"name": c, "type": "mixed"} for c in col_names]
+            def _agg_col_type(name: str) -> str:
+                if name in ("count",) or name.startswith("count_") or name.startswith("dc_"):
+                    return "int"
+                if name.startswith(("avg_", "sum_", "min_", "max_")):
+                    return "float"
+                if name == "bucket":
+                    return "datetime"
+                return "str"
+            columns = [{"name": c, "type": _agg_col_type(c)} for c in col_names]
         else:
             # Count total
             if compiled.count_stmt is not None:

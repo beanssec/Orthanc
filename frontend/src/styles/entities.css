@@ -683,10 +683,13 @@
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   background: var(--bg-primary);
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.entity-detail__tabs::-webkit-scrollbar { display: none; }
 
 .entity-detail__tab {
-  padding: 7px 16px;
+  padding: 7px 12px;
   font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
@@ -697,6 +700,8 @@
   transition: color 0.1s, border-color 0.1s;
   letter-spacing: 0.02em;
   margin-bottom: -1px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .entity-detail__tab:hover {

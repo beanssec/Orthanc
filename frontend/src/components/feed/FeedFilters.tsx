@@ -1,7 +1,29 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useFeedStore } from '../../stores/feedStore'
-import type { Post, Facets } from '../../stores/feedStore'
+import type { Post, Facets, FeedFilters as FeedFiltersType } from '../../stores/feedStore'
 import api from '../../services/api'
+
+function filtersToOQL(filters: FeedFiltersType): string {
+  const terms: string[] = []
+
+  if (filters.source_types.length === 1) {
+    terms.push(`source_type=${filters.source_types[0]}`)
+  } else if (filters.source_types.length > 1) {
+    terms.push(`source_type IN (${filters.source_types.join(', ')})`)
+  }
+
+  if (filters.keyword) terms.push(`content="*${filters.keyword}*"`)
+  if (filters.author) terms.push(`author="${filters.author}"`)
+
+  // Only add time filter if non-default (not exactly 24h)
+  if (filters.date_from) {
+    const hrs = Math.round((Date.now() - new Date(filters.date_from).getTime()) / 3600000)
+    if (hrs !== 24) terms.push(`| where timestamp > now() - ${hrs}h`)
+  }
+
+  return terms.join(' ') || '| head 50'
+}
 
 const SOURCE_TYPES: Array<{ key: Post['source_type']; label: string }> = [
   { key: 'rss',      label: 'RSS' },
@@ -37,6 +59,7 @@ function buildFacetParams(filters: ReturnType<typeof useFeedStore.getState>['fil
 }
 
 const FeedFilters: React.FC<FeedFiltersProps> = () => {
+  const navigate   = useNavigate()
   const filters    = useFeedStore((s) => s.filters)
   const setFilters = useFeedStore((s) => s.setFilters)
   const setFacets  = useFeedStore((s) => s.setFacets)
@@ -416,6 +439,20 @@ const FeedFilters: React.FC<FeedFiltersProps> = () => {
           </button>
         </div>
       )}
+
+      {/* ── Open as Query ── */}
+      <div style={{ padding: '0 12px 12px' }}>
+        <button
+          className="feed-filters__open-as-query"
+          onClick={() => {
+            const oql = filtersToOQL(filters)
+            navigate(`/query?oql=${encodeURIComponent(oql)}`)
+          }}
+          title="Open current filters as an OQL query"
+        >
+          ⌨ Open as Query
+        </button>
+      </div>
     </div>
   )
 }

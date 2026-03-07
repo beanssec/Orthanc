@@ -241,11 +241,24 @@ function SaveDialog({
   );
 }
 
+// ── Example Queries ────────────────────────────────────────────────────────────
+
+const EXAMPLE_QUERIES = [
+  { label: 'Posts by source',   query: '| stats count by source_type | sort -count' },
+  { label: 'Telegram authors',  query: 'source_type=telegram | stats count by author | sort -count' },
+  { label: 'Post volume (24h)', query: '| timechart span=1h count' },
+  { label: 'Top entities',      query: 'entities: | top 10 name' },
+  { label: 'Recent media',      query: 'has_media=true | head 20 | table author, timestamp, media_type' },
+  { label: 'Top locations',     query: 'events: | top 15 place_name' },
+  { label: 'Iran mentions',     query: 'content="*Iran*" | stats count by source_type' },
+  { label: 'Org entities',      query: 'entities: type=ORG | sort -mention_count | head 20 | table name, mention_count' },
+];
+
 // ── OQL Mode ─────────────────────────────────────────────────────────────────
 
-function OQLMode() {
+function OQLMode({ initialQuery }: { initialQuery?: string }) {
   const navigate = useNavigate();
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(initialQuery ?? '');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<OQLResponse | null>(null);
   const [error, setError] = useState<{ error: string; position: number } | null>(null);
@@ -274,6 +287,13 @@ function OQLMode() {
     loadHistory();
     loadSaved();
   }, [loadHistory, loadSaved]);
+
+  // Auto-execute if launched with an initial query (e.g. from Feed "Open as Query")
+  useEffect(() => {
+    if (initialQuery) {
+      setTimeout(() => execute(initialQuery), 300);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-resize textarea
   useEffect(() => {
@@ -385,6 +405,25 @@ function OQLMode() {
             <span className="oql-bar-hint">Ctrl+Enter to execute · ↑↓ navigate history</span>
           </div>
         </div>
+
+        {/* Example queries — shown when query is empty and no results yet */}
+        {!query.trim() && !result && !loading && (
+          <div className="oql-examples">
+            <div className="oql-examples__title">Example Queries</div>
+            <div className="oql-examples__grid">
+              {EXAMPLE_QUERIES.map((ex) => (
+                <button
+                  key={ex.label}
+                  className="oql-example-card"
+                  onClick={() => setQuery(ex.query)}
+                >
+                  <span className="oql-example-card__label">{ex.label}</span>
+                  <code className="oql-example-card__query">{ex.query}</code>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Results */}
         {loading && (
@@ -623,7 +662,9 @@ function NLMode() {
 // ── Root Component ────────────────────────────────────────────────────────────
 
 export function QueryView() {
+  const [searchParams] = useSearchParams();
   const [mode, setMode] = useState<QueryMode>('oql');
+  const initialOQL = searchParams.get('oql') ?? undefined;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -661,7 +702,7 @@ export function QueryView() {
 
       {/* Mode content */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        {mode === 'oql' ? <OQLMode /> : <NLMode />}
+        {mode === 'oql' ? <OQLMode initialQuery={initialOQL} /> : <NLMode />}
       </div>
     </div>
   );

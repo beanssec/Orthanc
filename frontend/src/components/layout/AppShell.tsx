@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link, Outlet } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, Outlet, useNavigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { AlertToastContainer } from '../common/AlertToast';
 import { GlobalSearch } from '../search/GlobalSearch';
@@ -42,10 +42,26 @@ function GlobalTopBar() {
 }
 
 export function AppShell() {
+  const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem('orthanc_sidebar_collapsed') === '1'; } catch { return false; }
   });
+
+  // Global Ctrl+/ shortcut → navigate to /query
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === '/' && (e.ctrlKey || e.metaKey)) {
+        // Don't intercept if user is typing in an input/textarea
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+        e.preventDefault();
+        navigate('/query');
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [navigate]);
 
   const toggleCollapsed = () => {
     setSidebarCollapsed(prev => {
