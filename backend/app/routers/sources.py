@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import uuid
+from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,6 +73,39 @@ async def list_sources(
         q = q.where(Source.type == type)
     result = await db.execute(q)
     return result.scalars().all()
+
+
+@router.get("/health")
+async def source_health(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Per-source health status: last_polled, error_count, status."""
+    result = await db.execute(
+        select(Source).where(Source.user_id == current_user.id).order_by(Source.handle)
+    )
+    sources = result.scalars().all()
+
+    health = []
+    for s in sources:
+        status_str = "active"
+        if not s.enabled:
+            status_str = "disabled"
+        elif s.last_polled is None:
+            status_str = "never_polled"
+        elif (datetime.utcnow() - s.last_polled.replace(tzinfo=None)).total_seconds() > 3600:
+            status_str = "stale"
+
+        health.append({
+            "id": str(s.id),
+            "name": s.display_name or s.handle,
+            "type": s.type,
+            "enabled": s.enabled,
+            "status": status_str,
+            "last_polled": s.last_polled.isoformat() if s.last_polled else None,
+        })
+
+    return {"sources": health, "total": len(health)}
 
 
 @router.get("/{source_id}", response_model=SourceResponse)

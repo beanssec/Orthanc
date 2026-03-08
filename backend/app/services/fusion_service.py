@@ -147,13 +147,14 @@ class FusionService:
 
                 # Check if any post in this cluster is already part of a fused event.
                 # Use raw SQL for the array overlap (&&) operator to avoid SA type issues.
+                # Pass post_ids as a proper Python list (asyncpg requires a list, not a string).
                 existing_check = await session.execute(
                     text("""
                         SELECT id FROM fused_events
-                        WHERE component_post_ids && CAST(:ids AS uuid[])
+                        WHERE component_post_ids && :ids::uuid[]
                         LIMIT 1
                     """),
-                    {"ids": "{" + ",".join(str(pid) for pid in post_ids) + "}"},
+                    {"ids": list(post_ids)},
                 )
                 if existing_check.fetchone():
                     continue  # Already fused

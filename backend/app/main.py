@@ -164,17 +164,18 @@ async def lifespan(app: FastAPI):
         logger.warning("Stance classifier init error: %s", _sc_err)
 
     # Start narrative analysis loop (stance classification + evidence correlation every 15 min)
-    asyncio.create_task(narrative_analyzer.start())
+    narrative_analyzer_task = asyncio.create_task(narrative_analyzer.start())
     logger.info("Narrative analyzer started")
 
     yield
 
-    logger.info("Orthanc API shutting down")
+    logger.info("Orthanc API shutting down — cancelling background tasks...")
     velocity_task.cancel()
     silence_task.cancel()
     scheduler_task.cancel()
     maritime_task.cancel()
-    for task in (velocity_task, silence_task, scheduler_task, maritime_task):
+    narrative_analyzer_task.cancel()
+    for task in (velocity_task, silence_task, scheduler_task, maritime_task, narrative_analyzer_task):
         try:
             await task
         except asyncio.CancelledError:
@@ -188,9 +189,17 @@ async def lifespan(app: FastAPI):
         await satellite_collector.stop()
     except Exception:
         pass
+    logger.info("Shutdown complete")
 
 
 app = FastAPI(title="Orthanc API", lifespan=lifespan)
+
+
+@app.get("/health")
+async def health_check() -> dict:
+    """Simple health probe — no auth required. Used by Docker healthcheck."""
+    return {"status": "ok"}
+
 
 app.add_middleware(
     CORSMiddleware,

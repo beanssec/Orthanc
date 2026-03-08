@@ -14,6 +14,7 @@ from sqlalchemy import select
 from app.db import AsyncSessionLocal
 from app.models.event import Event
 from app.models.post import Post
+from app.models.source import Source
 from app.routers.feed import broadcast_post
 from app.services.entity_extractor import entity_extractor
 from app.services.geo_extractor import geo_extractor
@@ -247,5 +248,15 @@ class FIRMSCollector:
                     continue
 
             await session.commit()
+
+        # Update last_polled for any configured FIRMS sources
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(select(Source).where(Source.type == "firms"))
+                for src in result.scalars().all():
+                    src.last_polled = datetime.now(tz=timezone.utc)
+                await session.commit()
+        except Exception as exc:
+            logger.warning("Failed to update FIRMS source last_polled: %s", exc)
 
         logger.info("FIRMS poll complete: %d new thermal detections stored", new_count)

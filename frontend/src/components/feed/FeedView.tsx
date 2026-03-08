@@ -196,12 +196,21 @@ export function FeedView() {
   const filters = useFeedStore((s) => s.filters)
   const totalCount = useFeedStore((s) => s.totalCount)
 
-  // Apply URL param: ?source=telegram → pre-filter by source type
+  // Apply URL params on mount
   useEffect(() => {
+    const updates: Record<string, unknown> = {}
     const sourceParam = searchParams.get('source')
     if (sourceParam) {
-      const sources = sourceParam.split(',').filter(Boolean) as Post['source_type'][]
-      useFeedStore.getState().setFilters({ source_types: sources })
+      updates.source_types = sourceParam.split(',').filter(Boolean) as Post['source_type'][]
+    }
+    const dateFrom = searchParams.get('date_from')
+    if (dateFrom) updates.date_from = dateFrom
+    const dateTo = searchParams.get('date_to')
+    if (dateTo) updates.date_to = dateTo
+    const search = searchParams.get('search') || searchParams.get('keyword')
+    if (search) updates.keyword = search
+    if (Object.keys(updates).length > 0) {
+      useFeedStore.getState().setFilters(updates as Parameters<typeof useFeedStore.getState().setFilters>[0])
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 

@@ -13,6 +13,7 @@ from app.db import AsyncSessionLocal
 from app.models.entity import Entity, EntityMention
 from app.models.event import Event
 from app.models.post import Post
+from app.models.source import Source
 from app.routers.feed import broadcast_post
 from app.services.collector_manager import collector_manager
 from app.services.entity_extractor import entity_extractor
@@ -239,6 +240,12 @@ class ShodanCollector:
                     logger.warning("Entity extraction failed for shodan post %s: %s", post.id, ent_exc)
 
                 new_count += 1
+
+            # Update last_polled for this source
+            src_result = await session.execute(select(Source).where(Source.id == source_id))
+            src = src_result.scalars().first()
+            if src:
+                src.last_polled = datetime.now(tz=timezone.utc)
 
             await session.commit()
 

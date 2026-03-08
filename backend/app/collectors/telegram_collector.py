@@ -27,6 +27,7 @@ from app.db import AsyncSessionLocal
 from app.models.entity import Entity, EntityMention
 from app.models.event import Event
 from app.models.post import Post
+from app.models.source import Source
 from app.routers.feed import broadcast_post
 from app.services.collector_manager import collector_manager
 from app.services.entity_extractor import entity_extractor
@@ -124,6 +125,7 @@ class TelegramCollector:
                     "download_videos": getattr(source, "download_videos", False),
                     "max_image_size_mb": getattr(source, "max_image_size_mb", 10.0),
                     "max_video_size_mb": getattr(source, "max_video_size_mb", 100.0),
+                    "source_id": str(source.id),
                 }
                 logger.info(
                     "Resolved Telegram entity: %s → %s (images=%s videos=%s)",
@@ -424,18 +426,6 @@ class TelegramCollector:
                 except Exception as exc:
                     logger.debug("Entity extraction failed for backfill post: %s", exc)
 
-                # Update last_polled on the source
-                try:
-                    from app.models.source import Source
-                    source_result = await session.execute(
-                        select(Source).where(Source.handle == entity.username if hasattr(entity, 'username') else Source.id == None)
-                    )
-                    src = source_result.scalars().first()
-                    if src:
-                        src.last_polled = datetime.now(timezone.utc)
-                except Exception:
-                    pass
-
                 await session.commit()
                 await session.refresh(post)
 
@@ -462,6 +452,21 @@ class TelegramCollector:
             ingested += 1
 
         logger.info("Backfilled %d new messages from %s", ingested, channel_name)
+
+        # Update last_polled for this channel's source
+        db_source_id = self._source_configs.get(str(entity.id), {}).get("source_id")
+        if db_source_id:
+            try:
+                async with AsyncSessionLocal() as session:
+                    src_result = await session.execute(
+                        select(Source).where(Source.id == db_source_id)
+                    )
+                    src = src_result.scalars().first()
+                    if src:
+                        src.last_polled = datetime.now(timezone.utc)
+                    await session.commit()
+            except Exception as exc:
+                logger.warning("Failed to update last_polled for telegram source %s: %s", db_source_id, exc)
 
     async def _handle_message(self, event: events.NewMessage.Event) -> None:
         """Persist an incoming Telegram message to the DB and broadcast it."""

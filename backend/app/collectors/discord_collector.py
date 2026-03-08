@@ -14,6 +14,7 @@ from app.db import AsyncSessionLocal
 from app.models.entity import Entity, EntityMention
 from app.models.event import Event
 from app.models.post import Post
+from app.models.source import Source
 from app.routers.feed import broadcast_post
 from app.services.collector_manager import collector_manager
 from app.services.entity_extractor import entity_extractor
@@ -45,6 +46,7 @@ class DiscordCollector:
         self._sequence: Optional[int] = None
         self._task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
+        self._channel_source_map: dict[str, str] = {}  # channel_id -> source.id (str)
 
     async def start(self, user_id: str, sources: list) -> None:
         """Start listening to Discord channels from sources."""
@@ -67,12 +69,14 @@ class DiscordCollector:
 
         # Extract channel IDs from sources (handle = channel_id or channel_id:guild_id)
         self._channel_ids = set()
+        self._channel_source_map = {}
         for source in sources:
             handle = source.handle if hasattr(source, "handle") else str(source)
             # Handle "channel_id:guild_id" format or just channel_id
             channel_id = handle.split(":")[0].strip()
             if channel_id:
                 self._channel_ids.add(channel_id)
+                self._channel_source_map[channel_id] = str(source.id)
 
         if not self._channel_ids:
             logger.warning("No Discord channel IDs configured for user %s", user_id)
@@ -291,6 +295,16 @@ class DiscordCollector:
                         session.add(mention)
                 except Exception as ent_exc:
                     logger.warning("Entity extraction failed for discord post %s: %s", post.id, ent_exc)
+
+                # Update last_polled for this channel's source
+                db_source_id = self._channel_source_map.get(channel_id)
+                if db_source_id:
+                    src_result = await session.execute(
+                        select(Source).where(Source.id == db_source_id)
+                    )
+                    src = src_result.scalars().first()
+                    if src:
+                        src.last_polled = datetime.now(tz=timezone.utc)
 
                 await session.commit()
 

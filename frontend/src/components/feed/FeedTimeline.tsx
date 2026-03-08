@@ -215,13 +215,9 @@ const FeedTimeline: React.FC<FeedTimelineProps> = ({ selectedPost, onSelectPost,
       )}
 
       {/* Infinite scroll sentinel */}
-      <div ref={bottomRef} />
-
-      {loading && (
-        <div className="feed-timeline__loader">
-          <span>Loading…</span>
-        </div>
-      )}
+      <div ref={bottomRef} className="feed-sentinel">
+        {loading && <div className="feed-loading">Loading more…</div>}
+      </div>
     </div>
   )
 }

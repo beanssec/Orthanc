@@ -13,6 +13,7 @@ from sqlalchemy import select
 from app.db import AsyncSessionLocal
 from app.models.event import Event
 from app.models.post import Post
+from app.models.source import Source
 from app.routers.feed import broadcast_post
 
 logger = logging.getLogger("orthanc.collectors.flight")
@@ -293,6 +294,16 @@ class FlightCollector:
         logger.info(
             "Flight poll complete: %d aircraft in monitoring zones", len(all_interesting)
         )
+
+        # Update last_polled for any configured flight sources
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(select(Source).where(Source.type == "flight"))
+                for src in result.scalars().all():
+                    src.last_polled = datetime.now(timezone.utc)
+                await session.commit()
+        except Exception as exc:
+            logger.warning("Failed to update flight source last_polled: %s", exc)
 
 
 # Module-level singleton accessed by the layers router

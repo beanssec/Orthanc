@@ -73,6 +73,8 @@ interface AlertEvent {
   title?: string;
   summary?: string;
   message?: string;
+  keyword?: string;
+  pattern?: string;
   created_at?: string;
   fired_at?: string;
   acknowledged?: boolean;
@@ -290,7 +292,10 @@ function VelocityChart({ buckets }: { buckets: VelocityBucket[] }) {
                     bucket,
                   });
                 }}
-                onClick={() => navigate('/feed')}
+                onClick={() => {
+                  const nextHour = new Date(new Date(bucket.hour).getTime() + 3600000).toISOString();
+                  navigate(`/feed?date_from=${encodeURIComponent(bucket.hour)}&date_to=${encodeURIComponent(nextHour)}`);
+                }}
               />
               {segments}
               {showLabel && (
@@ -701,7 +706,14 @@ export function DashboardView() {
                   <div
                     key={alert.id ?? i}
                     className="alert-row alert-row--clickable"
-                    onClick={() => navigate(`/settings/alerts?highlight=${alert.id}`)}
+                    onClick={() => {
+                      const searchTerm = alert.keyword || alert.pattern || alert.title || alert.message;
+                      if (searchTerm) {
+                        navigate(`/feed?search=${encodeURIComponent(searchTerm)}`);
+                      } else {
+                        navigate(`/settings/alerts?highlight=${alert.id}`);
+                      }
+                    }}
                   >
                     <span className="alert-row__sev">
                       {severityEmoji(alert.severity)}
