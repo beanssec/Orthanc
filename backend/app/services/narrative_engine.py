@@ -174,11 +174,7 @@ class NarrativeEngine:
             logger.error("Embedding batch failed: %s", exc)
             return 0
 
-        model_name = (
-            "text-embedding-3-small"
-            if embedding_service._openrouter_key
-            else "hash-128"
-        )
+        model_name = "text-embedding-3-small"
 
         async with AsyncSessionLocal() as session:
             for post_id, emb in zip(post_ids, embeddings):

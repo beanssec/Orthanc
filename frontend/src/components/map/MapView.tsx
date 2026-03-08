@@ -6,6 +6,7 @@ import api from '../../services/api';
 import { MapSidebar, SOURCE_TYPES } from './MapSidebar';
 import type { SidebarFilters, TimeRange } from './MapSidebar';
 import { MapControls } from './MapControls';
+import { FrontlineSlider } from './FrontlineSlider';
 
 // CartoDB dark-matter — no token needed
 const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
@@ -2336,6 +2337,17 @@ export function MapView() {
             </a>
           </div>
         </div>
+      )}
+
+      {/* ── Frontline History Slider ────────────────────────────────────── */}
+      {layers.frontlines && (
+        <FrontlineSlider
+          source={frontlineSource}
+          onDateChange={(geojson) => {
+            const src = mapRef.current?.getSource(FRONTLINES_SOURCE) as maplibregl.GeoJSONSource | undefined;
+            if (src) src.setData(geojson);
+          }}
+        />
       )}
 
       {/* ── Layers Panel (right side) ─────────────────────────────────────── */}

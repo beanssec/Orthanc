@@ -2,12 +2,17 @@
 Multi-source frontline data service.
 Fetches Ukraine war frontline data from multiple mapping sources.
 Each source is cached independently with configurable TTL.
+Also handles daily snapshot storage for historical playback.
 """
 
 import asyncio
+import hashlib
+import json
 import logging
 import re
 import time
+from datetime import date, datetime, timedelta, timezone
+from typing import Any
 from xml.etree import ElementTree
 
 import httpx
@@ -484,6 +489,163 @@ class FrontlineService:
             resp.raise_for_status()
 
         return _kml_to_geojson(resp.text, source_name)
+
+    # -------------------------------------------------------------------------
+    # Snapshot / history methods
+    # -------------------------------------------------------------------------
+
+    async def start(self) -> None:
+        """Start the 6-hour snapshot background loop."""
+        asyncio.create_task(self._snapshot_loop())
+        logger.info("Frontline snapshot scheduler started (interval: 6h)")
+
+    async def _snapshot_loop(self) -> None:
+        """Poll every 6 hours and store a snapshot if the frontline changed."""
+        while True:
+            try:
+                await self.take_snapshot()
+            except Exception as exc:
+                logger.error("Frontline snapshot loop error: %s", exc)
+            await asyncio.sleep(6 * 3600)
+
+    async def take_snapshot(self, source_id: str = "deepstate") -> dict:
+        """
+        Fetch current DeepState frontlines and persist a snapshot for today.
+        Deduplicates by SHA-256 hash — skips write if hash unchanged.
+        Returns a status dict.
+        """
+        from app.db import AsyncSessionLocal
+        from app.models.frontline import FrontlineSnapshot
+        from sqlalchemy import select, and_
+
+        try:
+            geojson = await self.get_frontlines(source_id)
+        except Exception as exc:
+            logger.error("take_snapshot: failed to fetch frontlines: %s", exc)
+            return {"status": "error", "detail": str(exc)}
+
+        # Deterministic hash of the GeoJSON content
+        canonical = json.dumps(geojson, sort_keys=True, ensure_ascii=False)
+        geo_hash = hashlib.sha256(canonical.encode()).hexdigest()
+
+        today = date.today()
+
+        async with AsyncSessionLocal() as db:
+            # Check if today's snapshot already exists with the same hash
+            result = await db.execute(
+                select(FrontlineSnapshot).where(
+                    and_(
+                        FrontlineSnapshot.date == today,
+                        FrontlineSnapshot.source == source_id,
+                    )
+                )
+            )
+            existing = result.scalars().first()
+
+            if existing is not None:
+                if existing.geometry_hash == geo_hash:
+                    logger.debug("Frontline snapshot unchanged for %s/%s — skipping", today, source_id)
+                    return {"status": "unchanged", "date": str(today)}
+                # Different hash — update
+                existing.geojson = geojson
+                existing.geometry_hash = geo_hash
+                existing.snapshot_metadata = {"updated_at": datetime.now(timezone.utc).isoformat()}
+                await db.commit()
+                logger.info("Frontline snapshot updated for %s/%s", today, source_id)
+                return {"status": "updated", "date": str(today)}
+
+            # New snapshot
+            snap = FrontlineSnapshot(
+                date=today,
+                source=source_id,
+                geojson=geojson,
+                geometry_hash=geo_hash,
+                snapshot_metadata={"feature_count": len(geojson.get("features", []))},
+            )
+            db.add(snap)
+            await db.commit()
+            logger.info(
+                "Frontline snapshot stored for %s/%s (%d features)",
+                today,
+                source_id,
+                len(geojson.get("features", [])),
+            )
+            return {"status": "stored", "date": str(today)}
+
+    async def get_snapshots(self, days: int = 90) -> list[dict]:
+        """Return available snapshot dates (most recent first, last `days` days)."""
+        from app.db import AsyncSessionLocal
+        from app.models.frontline import FrontlineSnapshot
+        from sqlalchemy import select, desc
+
+        cutoff = date.today() - timedelta(days=days)
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(
+                    FrontlineSnapshot.date,
+                    FrontlineSnapshot.source,
+                    FrontlineSnapshot.created_at,
+                )
+                .where(FrontlineSnapshot.date >= cutoff)
+                .order_by(desc(FrontlineSnapshot.date))
+            )
+            rows = result.all()
+
+        return [
+            {
+                "date": str(row.date),
+                "source": row.source,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in rows
+        ]
+
+    async def get_snapshot(self, snapshot_date: str, source_id: str = "deepstate") -> dict | None:
+        """Return GeoJSON for a specific date, or None if not found."""
+        from app.db import AsyncSessionLocal
+        from app.models.frontline import FrontlineSnapshot
+        from sqlalchemy import select, and_
+
+        try:
+            parsed_date = date.fromisoformat(snapshot_date)
+        except ValueError:
+            return None
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(FrontlineSnapshot).where(
+                    and_(
+                        FrontlineSnapshot.date == parsed_date,
+                        FrontlineSnapshot.source == source_id,
+                    )
+                )
+            )
+            snap = result.scalars().first()
+
+        return snap.geojson if snap else None
+
+    async def get_date_range(self, source_id: str = "deepstate") -> dict:
+        """Return the earliest and latest available snapshot dates."""
+        from app.db import AsyncSessionLocal
+        from app.models.frontline import FrontlineSnapshot
+        from sqlalchemy import select, func, and_
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(
+                    func.min(FrontlineSnapshot.date).label("earliest"),
+                    func.max(FrontlineSnapshot.date).label("latest"),
+                    func.count(FrontlineSnapshot.id).label("count"),
+                ).where(FrontlineSnapshot.source == source_id)
+            )
+            row = result.one()
+
+        return {
+            "earliest": str(row.earliest) if row.earliest else None,
+            "latest": str(row.latest) if row.latest else None,
+            "count": row.count or 0,
+        }
 
     async def _fetch_playfra(self, source: dict) -> dict:
         """Fetch Playfra GeoJSON files and merge into one FeatureCollection."""

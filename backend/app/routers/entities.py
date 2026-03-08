@@ -16,7 +16,7 @@ from app.db import get_db
 from app.middleware.auth import get_current_user
 from app.models import Post, User
 from app.models.entity import Entity, EntityMention
-from app.models.entity_relationship import EntityRelationship, EntityProperty
+from app.models.entity_relationship import EntityRelationship
 from app.schemas.entities import EntityConnectionItem, EntityDetailSchema, EntitySchema
 
 logger = logging.getLogger("orthanc.routers.entities")
@@ -49,9 +49,7 @@ class RelationshipCreate(BaseModel):
     evidence_post_ids: Optional[list[uuid.UUID]] = None
 
 
-class PropertyCreate(BaseModel):
-    key: str
-    value: str
+
 
 
 @router.get("/", response_model=list[EntitySchema])
@@ -273,77 +271,30 @@ async def find_entity_path(
     }
 
 
-@router.get("/relationship-types")
-async def get_relationship_types(
-    _: User = Depends(get_current_user),
-) -> list[dict]:
-    """Return all valid relationship types."""
-    return RELATIONSHIP_TYPES
 
 
-@router.get("/relationships/{rel_id}")
-async def get_relationship(
-    rel_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
-) -> dict:
-    result = await db.execute(select(EntityRelationship).where(EntityRelationship.id == rel_id))
-    rel = result.scalar_one_or_none()
-    if not rel:
-        raise HTTPException(status_code=404, detail="Relationship not found")
-    return _rel_dict(rel)
 
 
-@router.delete("/relationships/{rel_id}", status_code=204)
-async def delete_relationship(
-    rel_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
-) -> None:
-    result = await db.execute(select(EntityRelationship).where(EntityRelationship.id == rel_id))
-    rel = result.scalar_one_or_none()
-    if not rel:
-        raise HTTPException(status_code=404, detail="Relationship not found")
-    await db.delete(rel)
-    await db.commit()
-
-
-@router.delete("/properties/{prop_id}", status_code=204)
-async def delete_property(
-    prop_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
-) -> None:
-    result = await db.execute(select(EntityProperty).where(EntityProperty.id == prop_id))
-    prop = result.scalar_one_or_none()
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
-    await db.delete(prop)
-    await db.commit()
 
 
 def _rel_dict(rel: EntityRelationship) -> dict:
     return {
         "id": str(rel.id),
-        "source_entity_id": str(rel.source_entity_id),
-        "target_entity_id": str(rel.target_entity_id),
-        "relationship_type": rel.relationship_type,
-        "confidence": rel.confidence,
-        "notes": rel.notes,
-        "evidence_post_ids": [str(pid) for pid in (rel.evidence_post_ids or [])],
-        "created_by": str(rel.created_by) if rel.created_by else None,
-        "created_at": rel.created_at.isoformat(),
-        "updated_at": rel.updated_at.isoformat(),
-        "source_entity": {
-            "id": str(rel.source_entity.id),
-            "name": rel.source_entity.name,
-            "type": rel.source_entity.type,
-        } if rel.source_entity else None,
-        "target_entity": {
-            "id": str(rel.target_entity.id),
-            "name": rel.target_entity.name,
-            "type": rel.target_entity.type,
-        } if rel.target_entity else None,
+        "entity_a_id": str(rel.entity_a_id),
+        "entity_b_id": str(rel.entity_b_id),
+        "weight": rel.weight,
+        "first_seen": rel.first_seen.isoformat(),
+        "last_seen": rel.last_seen.isoformat(),
+        "entity_a": {
+            "id": str(rel.entity_a.id),
+            "name": rel.entity_a.name,
+            "type": rel.entity_a.type,
+        } if rel.entity_a else None,
+        "entity_b": {
+            "id": str(rel.entity_b.id),
+            "name": rel.entity_b.name,
+            "type": rel.entity_b.type,
+        } if rel.entity_b else None,
     }
 
 
@@ -370,147 +321,27 @@ async def get_entity_relationships(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> list[dict]:
-    entity_result = await db.execute(select(Entity).where(Entity.id == entity_id))
-    if not entity_result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Entity not found")
-
+    """Get co-occurrence relationships for an entity."""
+    from sqlalchemy import or_
     result = await db.execute(
         select(EntityRelationship)
         .where(
-            (EntityRelationship.source_entity_id == entity_id) |
-            (EntityRelationship.target_entity_id == entity_id)
+            or_(
+                EntityRelationship.entity_a_id == entity_id,
+                EntityRelationship.entity_b_id == entity_id,
+            )
         )
         .options(
-            selectinload(EntityRelationship.source_entity),
-            selectinload(EntityRelationship.target_entity),
+            selectinload(EntityRelationship.entity_a),
+            selectinload(EntityRelationship.entity_b),
         )
-        .order_by(EntityRelationship.created_at.desc())
+        .order_by(EntityRelationship.weight.desc())
+        .limit(50)
     )
     return [_rel_dict(r) for r in result.scalars().all()]
 
 
-@router.post("/{entity_id}/relationships", status_code=201)
-async def create_entity_relationship(
-    entity_id: uuid.UUID,
-    body: RelationshipCreate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> dict:
-    if body.relationship_type not in VALID_REL_TYPES:
-        raise HTTPException(status_code=400, detail=f"Invalid relationship_type. Valid: {sorted(VALID_REL_TYPES)}")
 
-    entity_result = await db.execute(select(Entity).where(Entity.id == entity_id))
-    if not entity_result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Source entity not found")
-
-    target_result = await db.execute(select(Entity).where(Entity.id == body.target_entity_id))
-    if not target_result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Target entity not found")
-
-    # Check for duplicate
-    existing = await db.execute(
-        select(EntityRelationship).where(
-            EntityRelationship.source_entity_id == entity_id,
-            EntityRelationship.target_entity_id == body.target_entity_id,
-            EntityRelationship.relationship_type == body.relationship_type,
-        )
-    )
-    if existing.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="This relationship already exists")
-
-    rel = EntityRelationship(
-        source_entity_id=entity_id,
-        target_entity_id=body.target_entity_id,
-        relationship_type=body.relationship_type,
-        confidence=max(0.0, min(1.0, body.confidence)),
-        notes=body.notes,
-        evidence_post_ids=body.evidence_post_ids or [],
-        created_by=current_user.id,
-    )
-    db.add(rel)
-    await db.flush()
-
-    # Reload with relationships
-    result = await db.execute(
-        select(EntityRelationship)
-        .where(EntityRelationship.id == rel.id)
-        .options(
-            selectinload(EntityRelationship.source_entity),
-            selectinload(EntityRelationship.target_entity),
-        )
-    )
-    rel = result.scalar_one()
-    await db.commit()
-    return _rel_dict(rel)
-
-
-@router.get("/{entity_id}/properties")
-async def get_entity_properties(
-    entity_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
-) -> list[dict]:
-    entity_result = await db.execute(select(Entity).where(Entity.id == entity_id))
-    if not entity_result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Entity not found")
-
-    result = await db.execute(
-        select(EntityProperty)
-        .where(EntityProperty.entity_id == entity_id)
-        .order_by(EntityProperty.key)
-    )
-    return [
-        {
-            "id": str(p.id),
-            "entity_id": str(p.entity_id),
-            "key": p.key,
-            "value": p.value,
-            "created_by": str(p.created_by) if p.created_by else None,
-            "created_at": p.created_at.isoformat(),
-        }
-        for p in result.scalars().all()
-    ]
-
-
-@router.post("/{entity_id}/properties", status_code=201)
-async def create_entity_property(
-    entity_id: uuid.UUID,
-    body: PropertyCreate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> dict:
-    entity_result = await db.execute(select(Entity).where(Entity.id == entity_id))
-    if not entity_result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Entity not found")
-
-    existing = await db.execute(
-        select(EntityProperty).where(
-            EntityProperty.entity_id == entity_id,
-            EntityProperty.key == body.key,
-        )
-    )
-    existing_prop = existing.scalar_one_or_none()
-    if existing_prop:
-        existing_prop.value = body.value
-        prop = existing_prop
-    else:
-        prop = EntityProperty(
-            entity_id=entity_id,
-            key=body.key,
-            value=body.value,
-            created_by=current_user.id,
-        )
-        db.add(prop)
-    await db.commit()
-    await db.refresh(prop)
-    return {
-        "id": str(prop.id),
-        "entity_id": str(prop.entity_id),
-        "key": prop.key,
-        "value": prop.value,
-        "created_by": str(prop.created_by) if prop.created_by else None,
-        "created_at": prop.created_at.isoformat(),
-    }
 
 
 @router.get("/{entity_id}/connections", response_model=list[EntityConnectionItem])

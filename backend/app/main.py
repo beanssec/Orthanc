@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import auth, credentials, sources, feed, alerts, events, media
+from app.routers.frontlines import router as frontlines_router
 from app.routers import telegram_auth
 from app.routers import entities, dashboard, briefs, webhook
 from app.routers import layers
@@ -24,6 +25,7 @@ from app.routers import maritime
 from app.routers import watchpoints
 from app.routers import narratives as narratives_router_module
 from app.routers.models import router as models_router
+from app.routers import graph as graph_router_module
 from app.collectors.orchestrator import orchestrator
 from app.collectors.satellite_collector import satellite_collector
 from app.services.brief_scheduler import brief_scheduler
@@ -32,6 +34,7 @@ from app.services.maritime_intel_service import maritime_intel_service
 from app.services.narrative_engine import narrative_engine
 from app.services.narrative_analyzer import narrative_analyzer
 from app.services.sentinel_service import sentinel_service
+from app.services.cooccurrence_service import cooccurrence_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("orthanc")
@@ -151,6 +154,11 @@ async def lifespan(app: FastAPI):
     await narrative_engine.start()
     logger.info("Narrative clustering engine started")
 
+    # Start frontline snapshot scheduler (polls every 6h, stores if changed)
+    from app.services.frontline_service import frontline_service
+    await frontline_service.start()
+    logger.info("Frontline snapshot scheduler started")
+
     # Load OpenRouter key into stance classifier (uses same key as embedding service)
     try:
         from app.services.embedding_service import embedding_service as _emb_svc
@@ -167,6 +175,10 @@ async def lifespan(app: FastAPI):
     narrative_analyzer_task = asyncio.create_task(narrative_analyzer.start())
     logger.info("Narrative analyzer started")
 
+    # Start entity co-occurrence service (builds relationship graph every 30 min)
+    await cooccurrence_service.start()
+    logger.info("Entity co-occurrence service started")
+
     yield
 
     logger.info("Orthanc API shutting down — cancelling background tasks...")
@@ -182,6 +194,7 @@ async def lifespan(app: FastAPI):
             pass
     await narrative_engine.stop()
     await narrative_analyzer.stop()
+    await cooccurrence_service.stop()
     await sentinel_service.stop()
     await fusion_service.stop()
     await orchestrator.stop_all()
@@ -237,6 +250,8 @@ app.include_router(maritime.router)
 app.include_router(watchpoints.router)
 app.include_router(narratives_router_module.router)
 app.include_router(models_router)
+app.include_router(graph_router_module.router)
+app.include_router(frontlines_router)
 
 
 @app.get("/")

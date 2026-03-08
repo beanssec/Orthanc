@@ -6,6 +6,7 @@ Runs as a background task, polling every 5 minutes.
 import asyncio
 import logging
 import math
+import uuid as _uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -142,21 +143,28 @@ class FusionService:
 
         async with AsyncSessionLocal() as session:
             for cluster in clusters:
-                post_ids = [r.id for r in cluster]
+                post_ids = [_uuid.UUID(str(r.id)) if not isinstance(r.id, _uuid.UUID) else r.id for r in cluster]
                 source_types = list(set(r.source_type for r in cluster))
 
-                # Check if any post in this cluster is already part of a fused event.
-                # Use raw SQL for the array overlap (&&) operator to avoid SA type issues.
-                # Pass post_ids as a proper Python list (asyncpg requires a list, not a string).
+                # Check if any existing fused event shares posts with this cluster.
+                from app.models.fused_event import FusedEvent
                 existing_check = await session.execute(
-                    text("""
-                        SELECT id FROM fused_events
-                        WHERE component_post_ids && :ids::uuid[]
-                        LIMIT 1
-                    """),
-                    {"ids": list(post_ids)},
+                    select(FusedEvent.id).limit(1)
                 )
-                if existing_check.fetchone():
+                # Skip overlap check if table is empty (common case)
+                has_existing = existing_check.scalars().first()
+                skip = False
+                if has_existing:
+                    # Check overlap one post at a time
+                    for pid in post_ids[:5]:
+                        chk = await session.execute(
+                            text("SELECT 1 FROM fused_events WHERE :pid = ANY(component_post_ids) LIMIT 1"),
+                            {"pid": pid},
+                        )
+                        if chk.fetchone():
+                            skip = True
+                            break
+                if skip:
                     continue  # Already fused
 
                 # Calculate centroid

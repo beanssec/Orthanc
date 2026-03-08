@@ -27,6 +27,7 @@ import { QueryView } from './components/query/QueryView';
 import { CasesView } from './components/cases/CasesView';
 import { CaseDetail } from './components/cases/CaseDetail';
 import { NarrativesView } from './components/narratives/NarrativesView';
+import { EntityGraph } from './components/entities/EntityGraph';
 import api from './services/api';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -142,6 +143,7 @@ export default function App() {
         <Route path="cases" element={<CasesView />} />
         <Route path="cases/:id" element={<CaseDetail />} />
         <Route path="narratives" element={<NarrativesView />} />
+        <Route path="graph" element={<EntityGraph />} />
         <Route path="finance/portfolio" element={<PortfolioView />} />
         <Route path="finance/markets" element={<MarketsView />} />
         <Route path="finance/signals" element={<SignalsView />} />
