@@ -1,0 +1,336 @@
+/* ── Models / LLM Settings ──────────────────────────────── */
+
+.models-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* ── Section ────────────────────────────────────────────── */
+.models-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.models-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+
+/* ── Table card ─────────────────────────────────────────── */
+.models-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.models-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.models-table thead {
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--border);
+}
+
+.models-table th {
+  padding: 10px 16px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.models-table td {
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(31, 41, 55, 0.6);
+  vertical-align: middle;
+  color: var(--text-secondary);
+}
+
+.models-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.models-table tbody tr:hover {
+  background: var(--bg-surface-hover);
+}
+
+/* ── Provider status cell ───────────────────────────────── */
+.models-provider-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.models-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.models-status-dot--connected {
+  background: var(--success);
+  box-shadow: 0 0 6px var(--success);
+}
+
+.models-status-dot--disconnected {
+  background: var(--danger);
+}
+
+.models-status-dot--not_configured {
+  background: var(--text-muted);
+  opacity: 0.5;
+}
+
+.models-status-label {
+  font-size: 11px;
+}
+
+.models-status-label--connected {
+  color: var(--success);
+}
+
+.models-status-label--disconnected {
+  color: var(--danger);
+}
+
+.models-status-label--not_configured {
+  color: var(--text-muted);
+}
+
+.models-count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ── Buttons ────────────────────────────────────────────── */
+.models-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.models-btn:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--accent);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.models-btn--primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.models-btn--primary:hover {
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.models-btn--success {
+  border-color: var(--success);
+  color: var(--success);
+  cursor: default;
+}
+
+.models-btn--error {
+  border-color: var(--danger);
+  color: var(--danger);
+  cursor: default;
+}
+
+.models-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Task model select ──────────────────────────────────── */
+.models-select {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 4px 8px;
+  cursor: pointer;
+  min-width: 160px;
+  max-width: 260px;
+  transition: border-color 0.15s;
+}
+
+.models-select:hover,
+.models-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.models-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.models-provider-badge {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+}
+
+.models-save-indicator {
+  font-size: 11px;
+  margin-left: 6px;
+}
+
+.models-save-indicator--saving {
+  color: var(--text-muted);
+}
+
+.models-save-indicator--saved {
+  color: var(--success);
+}
+
+.models-save-indicator--error {
+  color: var(--danger);
+}
+
+/* ── Usage stats ────────────────────────────────────────── */
+.models-usage-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.models-usage-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.models-usage-stat-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.models-usage-stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-primary);
+}
+
+.models-usage-stat-value--cost {
+  color: var(--success);
+}
+
+/* ── Bar chart ──────────────────────────────────────────── */
+.models-usage-bars {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.models-usage-bars-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.models-bar-row {
+  display: grid;
+  grid-template-columns: 160px 1fr 80px;
+  align-items: center;
+  gap: 12px;
+}
+
+.models-bar-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.models-bar-track {
+  height: 10px;
+  background: rgba(31, 41, 55, 0.8);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.models-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+  min-width: 2px;
+}
+
+.models-bar-count {
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ── Loading / error / empty states ────────────────────── */
+.models-loading {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.models-error {
+  padding: 12px 16px;
+  font-size: 12px;
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.07);
+  border-radius: 6px;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.models-empty {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}

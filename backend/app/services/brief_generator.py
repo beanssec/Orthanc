@@ -5,13 +5,11 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-import httpx
-
 from app.db import AsyncSessionLocal
 from app.models.post import Post
 from app.models.brief import Brief
-from app.services.collector_manager import collector_manager
 from app.services.ai_models import get_model, AI_MODELS
+from app.services.model_router import model_router
 from sqlalchemy import select
 
 logger = logging.getLogger("orthanc.brief_generator")
@@ -53,20 +51,6 @@ class BriefGenerator:
         model_config = get_model(model_id)
         if not model_config:
             return {"error": f"Unknown model: {model_id}. Available: {[m['id'] for m in AI_MODELS]}"}
-
-        # Get the API key for this model's provider
-        cred_provider = model_config["credential_provider"]
-        key_field = model_config["key_field"]
-        keys = await collector_manager.get_keys(user_id, cred_provider)
-        if not keys:
-            return {
-                "error": f"No API key configured for '{cred_provider}'. "
-                f"Add your {cred_provider} credentials in Settings → Credentials."
-            }
-
-        api_key: str = keys.get(key_field, "")
-        if not api_key:
-            return {"error": f"Credentials for '{cred_provider}' missing '{key_field}' field."}
 
         # Fetch recent posts with optional filters
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
@@ -129,37 +113,17 @@ class BriefGenerator:
             user_id, model_id, len(posts), hours, topic, source_types,
         )
 
-        endpoint = model_config["endpoint"]
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-        # OpenRouter requires HTTP-Referer
-        if model_config["provider"] == "openrouter":
-            headers["HTTP-Referer"] = "https://orthanc.local"
-            headers["X-Title"] = "Orthanc OSINT"
-
         try:
-            async with httpx.AsyncClient(timeout=90.0) as client:
-                resp = await client.post(
-                    endpoint,
-                    json={
-                        "model": model_id,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_message},
-                        ],
-                        "temperature": 0.3,
-                    },
-                    headers=headers,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                brief_text = data["choices"][0]["message"]["content"]
-        except httpx.HTTPStatusError as e:
-            body = e.response.text[:500] if e.response else ""
-            logger.error("API error generating brief (%s): %s — %s", model_id, e, body)
-            return {"error": f"API error ({model_id}): {e.response.status_code} — {body[:200]}"}
+            result = await model_router.chat(
+                task="brief",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                model=model_id,
+                temperature=0.3,
+            )
+            brief_text = result["content"]
         except Exception as e:
             logger.error("Failed to generate brief (%s): %s", model_id, e)
             return {"error": f"Brief generation failed: {str(e)}"}

@@ -5,6 +5,7 @@ const TABS = [
   { to: '/settings/credentials', label: 'Credentials' },
   { to: '/settings/alerts', label: 'Alerts' },
   { to: '/settings/telegram', label: 'Telegram' },
+  { to: '/settings/models', label: 'Models' },
 ];
 
 export function SettingsLayout() {

@@ -13,8 +13,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-import httpx
 from sqlalchemy import select
+from app.services.model_router import model_router
 
 from app.db import AsyncSessionLocal
 from app.models.narrative import (
@@ -178,12 +178,10 @@ class StanceClassifier:
         source_group: str,
     ) -> dict:
         """Classify a single post's stance. Returns classification dict."""
-        if self._api_key:
-            return await self._classify_ai(
-                narrative_title, narrative_summary,
-                post_content, source_name, source_group,
-            )
-        return self._classify_keywords(post_content)
+        return await self._classify_ai(
+            narrative_title, narrative_summary,
+            post_content, source_name, source_group,
+        )
 
     # ──────────────────────────────────────────────
     # Internal helpers
@@ -222,10 +220,9 @@ class StanceClassifier:
                 np_row.stance_summary = classification.get("summary", "")
                 session.add(np_row)
 
-            # Extract claims (AI-only)
-            if self._api_key:
-                claims_data = classification.get("claims", [])
-                for claim_dict in claims_data:
+            # Extract claims (populated by AI classification, empty on keyword fallback)
+            claims_data = classification.get("claims", [])
+            for claim_dict in claims_data:
                     if not claim_dict.get("text"):
                         continue
                     claim = Claim(
@@ -294,28 +291,14 @@ class StanceClassifier:
             # Enforce rate limits
             await self._minute_window.acquire()
             async with self._rate_limiter:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    resp = await client.post(
-                        "https://openrouter.ai/api/v1/chat/completions",
-                        headers={
-                            "Authorization": f"Bearer {self._api_key}",
-                            "HTTP-Referer": "https://orthanc.app",
-                            "X-Title": "Orthanc OSINT",
-                        },
-                        json={
-                            "model": "x-ai/grok-3-mini",
-                            "messages": [{"role": "user", "content": prompt}],
-                            "temperature": 0.1,
-                            "response_format": {"type": "json_object"},
-                        },
-                    )
+                api_result = await model_router.chat(
+                    task="stance_classification",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1,
+                    response_format={"type": "json_object"},
+                )
 
-            if resp.status_code != 200:
-                logger.warning("OpenRouter API error %s — falling back to keywords", resp.status_code)
-                return self._classify_keywords(content)
-
-            data = resp.json()
-            text = data["choices"][0]["message"]["content"]
+            text = api_result["content"]
             result = json.loads(text)
 
             # Sanitise

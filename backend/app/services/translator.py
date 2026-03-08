@@ -5,9 +5,7 @@ import logging
 import re
 import unicodedata
 
-import httpx
-
-from app.services.collector_manager import collector_manager
+from app.services.model_router import model_router
 
 logger = logging.getLogger("orthanc.services.translator")
 
@@ -108,105 +106,35 @@ class Translator:
             "Preserve proper nouns, place names, and military terminology as appropriate."
         )
 
-        # Try xAI first
-        x_keys = await collector_manager.get_keys(user_id, "x")
-        if x_keys and x_keys.get("api_key"):
-            result = await self._call_xai(
-                api_key=x_keys["api_key"],
-                system_prompt=system_prompt,
-                text=text,
-            )
-            if result:
-                return {
-                    "original": text,
-                    "translated": result,
-                    "source_lang": source_lang,
-                    "target_lang": target_lang,
-                    "model_used": "grok-3-mini",
-                }
-
-        # Fall back to OpenRouter
-        or_keys = await collector_manager.get_keys(user_id, "openrouter")
-        if or_keys and or_keys.get("api_key"):
-            result = await self._call_openrouter(
-                api_key=or_keys["api_key"],
-                system_prompt=system_prompt,
-                text=text,
-            )
-            if result:
-                return {
-                    "original": text,
-                    "translated": result,
-                    "source_lang": source_lang,
-                    "target_lang": target_lang,
-                    "model_used": "openrouter",
-                }
-
-        return {
-            "original": text,
-            "translated": None,
-            "source_lang": source_lang,
-            "target_lang": target_lang,
-            "error": "No AI credentials configured. Add xAI or OpenRouter credentials to use translation.",
-        }
-
-    async def _call_xai(
-        self, api_key: str, system_prompt: str, text: str
-    ) -> str | None:
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(
-                    "https://api.x.ai/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": "grok-3-mini",
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": text},
-                        ],
-                        "temperature": 0.1,
-                        "max_tokens": 2000,
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                return data["choices"][0]["message"]["content"].strip()
+            api_result = await model_router.chat(
+                task="translation",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": text},
+                ],
+                temperature=0.1,
+                max_tokens=2000,
+            )
+            translated = api_result["content"].strip()
+            return {
+                "original": text,
+                "translated": translated,
+                "source_lang": source_lang,
+                "target_lang": target_lang,
+                "model_used": api_result.get("model", "unknown"),
+            }
         except Exception as exc:
-            logger.warning("xAI translation failed: %s", exc)
-            return None
+            logger.warning("Translation via model_router failed: %s", exc)
+            return {
+                "original": text,
+                "translated": None,
+                "source_lang": source_lang,
+                "target_lang": target_lang,
+                "error": "No AI credentials configured. Add xAI or OpenRouter credentials to use translation.",
+            }
 
-    async def _call_openrouter(
-        self, api_key: str, system_prompt: str, text: str
-    ) -> str | None:
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": "https://orthanc.local",
-                        "X-Title": "Orthanc OSINT",
-                    },
-                    json={
-                        "model": "meta-llama/llama-3.3-70b-instruct",  # free tier
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": text},
-                        ],
-                        "temperature": 0.1,
-                        "max_tokens": 2000,
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                return data["choices"][0]["message"]["content"].strip()
-        except Exception as exc:
-            logger.warning("OpenRouter translation failed: %s", exc)
-            return None
+
 
 
 # Module-level singleton

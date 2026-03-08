@@ -3,73 +3,32 @@ import hashlib
 import logging
 import math
 import struct
-from typing import Optional
 
-import httpx
+from app.services.model_router import model_router
 
 logger = logging.getLogger("orthanc.embedding")
 
 
 class EmbeddingService:
     def __init__(self):
-        self._openrouter_key: Optional[str] = None
-
-    def set_api_key(self, key: str):
-        """Set OpenRouter API key for embedding API."""
-        self._openrouter_key = key
+        pass
 
     async def embed_text(self, text: str) -> list[float]:
-        """Get embedding vector for text. Tries OpenRouter first, falls back to hash-based."""
-        if self._openrouter_key:
-            return await self._embed_openrouter(text)
+        """Get embedding vector for text. Tries model_router first, falls back to hash-based."""
+        try:
+            vector = await model_router.embed(text)
+            if vector:
+                return vector
+        except Exception as e:
+            logger.warning("model_router embed failed, falling back to hash-based: %s", e)
         return self._embed_hash(text)
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Batch embed multiple texts."""
-        if self._openrouter_key:
-            return await self._embed_openrouter_batch(texts)
-        return [self._embed_hash(t) for t in texts]
-
-    async def _embed_openrouter(self, text: str) -> list[float]:
-        """Embed via OpenRouter API."""
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                "https://openrouter.ai/api/v1/embeddings",
-                headers={"Authorization": f"Bearer {self._openrouter_key}"},
-                json={"model": "openai/text-embedding-3-small", "input": text[:8000]},
-            )
-            if resp.status_code != 200:
-                logger.warning(
-                    "OpenRouter embedding failed (%d), falling back to hash-based",
-                    resp.status_code,
-                )
-                return self._embed_hash(text)
-            data = resp.json()
-            return data["data"][0]["embedding"]
-
-    async def _embed_openrouter_batch(self, texts: list[str]) -> list[list[float]]:
-        """Batch embed via OpenRouter."""
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(
-                    "https://openrouter.ai/api/v1/embeddings",
-                    headers={"Authorization": f"Bearer {self._openrouter_key}"},
-                    json={
-                        "model": "openai/text-embedding-3-small",
-                        "input": [t[:8000] for t in texts],
-                    },
-                )
-                if resp.status_code != 200:
-                    logger.warning(
-                        "OpenRouter batch embedding failed (%d), falling back to hash-based",
-                        resp.status_code,
-                    )
-                    return [self._embed_hash(t) for t in texts]
-                data = resp.json()
-                return [d["embedding"] for d in data["data"]]
-        except Exception as e:
-            logger.warning("Batch embedding failed: %s, using hash-based fallback", e)
-            return [self._embed_hash(t) for t in texts]
+        results = []
+        for text in texts:
+            results.append(await self.embed_text(text))
+        return results
 
     def _embed_hash(self, text: str) -> list[float]:
         """

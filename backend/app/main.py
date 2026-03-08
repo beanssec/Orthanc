@@ -23,6 +23,7 @@ from app.routers import oql
 from app.routers import maritime
 from app.routers import watchpoints
 from app.routers import narratives as narratives_router_module
+from app.routers.models import router as models_router
 from app.collectors.orchestrator import orchestrator
 from app.collectors.satellite_collector import satellite_collector
 from app.services.brief_scheduler import brief_scheduler
@@ -226,6 +227,7 @@ app.include_router(oql.router)
 app.include_router(maritime.router)
 app.include_router(watchpoints.router)
 app.include_router(narratives_router_module.router)
+app.include_router(models_router)
 
 
 @app.get("/")

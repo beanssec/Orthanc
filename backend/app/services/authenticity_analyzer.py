@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Optional
 
-import httpx
+from app.services.model_router import model_router
 
 logger = logging.getLogger("orthanc.services.authenticity")
 
@@ -90,59 +90,31 @@ class AuthenticityAnalyzer:
         }
         mime = mime_map.get(ext, "image/jpeg")
 
-        # xAI only supports vision on specific tier keys — use openrouter/gpt-4o if available
-        if provider == "openrouter":
-            url = "https://openrouter.ai/api/v1/chat/completions"
-            model = "openai/gpt-4o"
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://orthanc.local",
-                "X-Title": "Orthanc OSINT",
-            }
-        else:  # xai
-            url = "https://api.x.ai/v1/chat/completions"
-            model = "grok-2-vision-1212"  # legacy alias, most widely available
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            }
-
-        payload = {
-            "model": model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime};base64,{image_data}"
-                            },
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mime};base64,{image_data}"
                         },
-                    ],
-                }
-            ],
-            "max_tokens": 600,
-            "temperature": 0.1,
-        }
+                    },
+                ],
+            }
+        ]
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(url, json=payload, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
-
-            content: str = data["choices"][0]["message"]["content"]
+            result = await model_router.chat(
+                task="image_analysis",
+                messages=messages,
+                max_tokens=600,
+                temperature=0.1,
+            )
+            content: str = result["content"]
             return _parse_json_response(content)
 
-        except httpx.HTTPStatusError as exc:
-            logger.error(
-                "Authenticity API error (%s %s): %s",
-                provider, exc.response.status_code, exc.response.text[:200]
-            )
-            return None
         except Exception as exc:
             logger.error("Authenticity analysis failed (%s): %s", relative_path, exc)
             return None

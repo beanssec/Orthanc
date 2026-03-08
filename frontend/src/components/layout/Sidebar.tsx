@@ -11,6 +11,7 @@ const NAV_LINKS = [
   { to: '/briefs', icon: '📋', label: 'Briefs' },
   { to: '/bookmarks', icon: '⭐', label: 'Bookmarks' },
   { to: '/settings/sources', icon: '⚙️', label: 'Settings' },
+  { to: '/settings/models', icon: '🤖', label: 'Models' },
 ];
 
 const ANALYSIS_LINKS = [
