@@ -120,6 +120,15 @@ async def get_brief_schedule(
     return {"schedule": schedule}
 
 
+@router.get("/schedules")
+async def get_brief_schedules_legacy(
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Legacy compatibility alias for clients expecting /briefs/schedules."""
+    schedule = brief_scheduler.get_schedule(str(current_user.id))
+    return {"schedules": [schedule] if schedule else []}
+
+
 @router.post("/schedule")
 async def set_brief_schedule(
     body: BriefScheduleRequest,
@@ -166,6 +175,16 @@ async def list_briefs(
         )
         briefs = result.scalars().all()
     return [brief_to_dict(b) for b in briefs]
+
+
+@router.get("/history")
+async def list_briefs_history_legacy(
+    current_user: User = Depends(get_current_user),
+    limit: int = 20,
+    offset: int = 0,
+) -> list[dict]:
+    """Legacy compatibility alias for clients expecting /briefs/history."""
+    return await list_briefs(current_user=current_user, limit=limit, offset=offset)
 
 
 @router.get("/{brief_id}/pdf")

@@ -119,6 +119,7 @@ async def _get_case_or_404(db: AsyncSession, case_id: str, user_id: uuid.UUID) -
 # ── Case CRUD ──────────────────────────────────────────────
 
 @router.post("/", status_code=201)
+@router.post("", status_code=201)
 async def create_case(
     body: CaseCreate,
     db: AsyncSession = Depends(get_db),
@@ -145,6 +146,7 @@ async def create_case(
 
 
 @router.get("/")
+@router.get("")
 async def list_cases(
     status_filter: Optional[str] = Query(None, alias="status"),
     db: AsyncSession = Depends(get_db),

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useFeedStore } from '../../stores/feedStore'
-import type { Post } from '../../stores/feedStore'
+import type { Post, FeedFilters as StoreFeedFilters } from '../../stores/feedStore'
 import { useWebSocket } from '../../hooks/useWebSocket'
 import FeedTimeline from './FeedTimeline'
 import FeedDetail from './FeedDetail'
@@ -191,6 +191,7 @@ export function FeedView() {
   const [newPostIds, setNewPostIds] = useState<Set<string>>(new Set())
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false)
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false)
+  const deepLinkFetchAttemptedRef = useRef<Set<string>>(new Set())
   const { connected, reconnecting } = useWebSocket()
   const posts = useFeedStore((s) => s.posts)
   const filters = useFeedStore((s) => s.filters)
@@ -207,23 +208,59 @@ export function FeedView() {
     if (dateFrom) updates.date_from = dateFrom
     const dateTo = searchParams.get('date_to')
     if (dateTo) updates.date_to = dateTo
-    const search = searchParams.get('search') || searchParams.get('keyword')
+    const search = searchParams.get('search') || searchParams.get('keyword') || searchParams.get('q')
     if (search) updates.keyword = search
+    const location = searchParams.get('location')
+    if (location) updates.location = location
+    const hasGeo = searchParams.get('has_geo')
+    if (hasGeo === 'true') updates.has_geo = true
+    if (hasGeo === 'false') updates.has_geo = false
     if (Object.keys(updates).length > 0) {
-      useFeedStore.getState().setFilters(updates as Parameters<typeof useFeedStore.getState().setFilters>[0])
+      useFeedStore.getState().setFilters(updates as Partial<StoreFeedFilters>)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Apply URL param: ?post=uuid → auto-select that post
+  // Apply URL param: ?post=uuid → auto-select that post.
+  // If the post is outside current filters/page, fetch it directly.
+  // Prevent repeated fetch storms for invalid IDs.
   useEffect(() => {
-    const postParam = searchParams.get('post')
-    if (!postParam || posts.length === 0) return
+    const postParam = searchParams.get('post')?.trim()
+    if (!postParam) return
+
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(postParam)
+    if (!isUuid) return
+
     const match = posts.find((p) => String(p.id) === String(postParam))
-    if (match && selectedPost?.id !== match.id) {
-      setSelectedPost(match)
-      setMobileDetailOpen(true)
+    if (match) {
+      if (selectedPost?.id !== match.id) {
+        setSelectedPost(match)
+        setMobileDetailOpen(true)
+      }
+      return
     }
-  }, [posts, searchParams]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    if (deepLinkFetchAttemptedRef.current.has(postParam)) {
+      return
+    }
+    deepLinkFetchAttemptedRef.current.add(postParam)
+
+    let cancelled = false
+    api.get<Post>(`/feed/${postParam}`)
+      .then((res) => {
+        if (cancelled) return
+        useFeedStore.getState().addPost(res.data)
+        setSelectedPost(res.data)
+        setMobileDetailOpen(true)
+      })
+      .catch(() => {
+        // Silent: invalid/missing post id should not break feed page.
+        // Keep attempted marker to avoid retry flood on each feed update.
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [posts, searchParams, selectedPost?.id])
 
   // When a post is selected on mobile, open the detail overlay
   const handleSelectPost = (post: Post | null) => {

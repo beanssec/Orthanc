@@ -113,6 +113,17 @@ class BriefGenerator:
             user_id, model_id, len(posts), hours, topic, source_types,
         )
 
+        # If no model providers are registered for this session, fail fast with
+        # a clear user-facing message instead of raising noisy internal errors.
+        if not model_router._providers:
+            return {
+                "error": "No AI provider configured for this session. Add credentials in Settings -> Credentials and log in again.",
+                "post_count": len(posts),
+                "time_range_hours": hours,
+                "model": model_id,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            }
+
         try:
             result = await model_router.chat(
                 task="brief",

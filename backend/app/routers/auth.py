@@ -1,11 +1,12 @@
 from __future__ import annotations
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import uuid
 
-from app.db import get_db
-from app.models import User, Credential
+from app.db import get_db, AsyncSessionLocal
+from app.models import User, Credential, Source
 from app.schemas.auth import UserCreate, UserLogin, Token, UserResponse
 from app.middleware.auth import create_access_token, create_refresh_token, get_current_user
 from app.services.collector_manager import collector_manager
@@ -49,46 +50,66 @@ async def login(body: UserLogin, db: AsyncSession = Depends(get_db)) -> Token:
 
     user_id = str(user.id)
 
-    # Decrypt stored credentials into memory
-    creds_result = await db.execute(select(Credential).where(Credential.user_id == user.id))
-    credentials = creds_result.scalars().all()
-    for cred in credentials:
-        try:
-            keys = decrypt_credentials(cred.encrypted_blob, cred.nonce, body.password)
-            await collector_manager.unlock(user_id, cred.provider, keys)
-        except Exception:
-            pass  # Credential decryption failure is non-fatal at login
-
-    # Start background collectors for this user (non-fatal)
-    try:
-        await orchestrator.start_user_collectors(user_id)
-    except Exception:
-        pass
-
-    # Register LLM providers with model_router based on decrypted credentials
-    try:
-        or_keys = await collector_manager.get_keys(user_id, "openrouter")
-        if or_keys and or_keys.get("api_key"):
-            model_router.register_provider("openrouter", OpenRouterProvider(or_keys["api_key"]))
-
-        x_keys = await collector_manager.get_keys(user_id, "x")
-        if x_keys and x_keys.get("api_key"):
-            model_router.register_provider("xai", XAIProvider(x_keys["api_key"]))
-
-        ollama_keys = await collector_manager.get_keys(user_id, "ollama")
-        if ollama_keys:
-            base_url = ollama_keys.get("api_key", "http://localhost:11434")
-            model_router.register_provider("ollama", OllamaProvider(base_url))
-
-        compat_keys = await collector_manager.get_keys(user_id, "openai_compatible")
-        if compat_keys:
-            model_router.register_provider("openai_compatible", OpenAICompatibleProvider(
-                base_url=compat_keys.get("base_url", compat_keys.get("api_key", "")),
-                api_key=compat_keys.get("api_secret", ""),
-            ))
-    except Exception as e:
+    # Post-login initialization runs in background so /auth/login remains fast.
+    async def _post_login_init(uid: str, user_uuid: uuid.UUID, plaintext_password: str) -> None:
         import logging as _logging
-        _logging.getLogger("orthanc.auth").warning("Failed to register LLM providers: %s", e)
+        _log = _logging.getLogger("orthanc.auth")
+        try:
+            async with AsyncSessionLocal() as session:
+                creds_result = await session.execute(select(Credential).where(Credential.user_id == user_uuid))
+                credentials = creds_result.scalars().all()
+
+                src_result = await session.execute(
+                    select(Source.type).where(Source.user_id == user_uuid, Source.enabled.is_(True))
+                )
+                enabled_source_types = {row[0] for row in src_result.fetchall()}
+
+            needed_providers = set(enabled_source_types)
+            needed_providers.update({"openrouter", "x", "ollama", "openai_compatible"})
+
+            for cred in credentials:
+                if cred.provider not in needed_providers:
+                    continue
+                try:
+                    keys = decrypt_credentials(cred.encrypted_blob, cred.nonce, plaintext_password)
+                    await collector_manager.unlock(uid, cred.provider, keys)
+                except Exception:
+                    pass
+
+            try:
+                or_keys = await collector_manager.get_keys(uid, "openrouter")
+                if or_keys and or_keys.get("api_key"):
+                    model_router.register_provider("openrouter", OpenRouterProvider(or_keys["api_key"]))
+
+                x_keys = await collector_manager.get_keys(uid, "x")
+                if x_keys and x_keys.get("api_key"):
+                    model_router.register_provider("xai", XAIProvider(x_keys["api_key"]))
+
+                ollama_keys = await collector_manager.get_keys(uid, "ollama")
+                if ollama_keys:
+                    base_url = ollama_keys.get("api_key", "http://localhost:11434")
+                    model_router.register_provider("ollama", OllamaProvider(base_url))
+
+                compat_keys = await collector_manager.get_keys(uid, "openai_compatible")
+                if compat_keys:
+                    model_router.register_provider(
+                        "openai_compatible",
+                        OpenAICompatibleProvider(
+                            base_url=compat_keys.get("base_url", compat_keys.get("api_key", "")),
+                            api_key=compat_keys.get("api_key_secret", ""),
+                        ),
+                    )
+            except Exception as e:
+                _log.warning("Failed to register LLM providers: %s", e)
+
+            try:
+                await orchestrator.start_user_collectors(uid)
+            except Exception:
+                _log.warning("Background collector start failed for user %s", uid, exc_info=True)
+        except Exception:
+            _log.warning("Post-login initialization failed for user %s", uid, exc_info=True)
+
+    asyncio.create_task(_post_login_init(user_id, user.id, body.password))
 
     access_token = create_access_token({"sub": user_id, "username": user.username})
     refresh_token = create_refresh_token({"sub": user_id})

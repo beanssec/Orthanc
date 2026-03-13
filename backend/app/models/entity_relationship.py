@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, UniqueConstraint, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -26,6 +26,13 @@ class EntityRelationship(Base):
         ForeignKey("entities.id", ondelete="CASCADE"), nullable=False, index=True
     )
     weight: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    # Manual analyst relationship metadata (UI CRUD)
+    relationship_type: Mapped[str] = mapped_column(String, nullable=False, default="associated", server_default="associated")
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.5, server_default="0.5")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
     first_seen: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )

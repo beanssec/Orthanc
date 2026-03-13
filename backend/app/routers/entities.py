@@ -40,6 +40,12 @@ RELATIONSHIP_TYPES = [
 VALID_REL_TYPES = {r["id"] for r in RELATIONSHIP_TYPES}
 
 
+@router.get("/relationship-types")
+async def get_relationship_types(_: User = Depends(get_current_user)) -> list[dict[str, Any]]:
+    """Return supported relationship types for the UI."""
+    return RELATIONSHIP_TYPES
+
+
 # ── Pydantic schemas ───────────────────────────────────────
 class RelationshipCreate(BaseModel):
     target_entity_id: uuid.UUID
@@ -278,19 +284,30 @@ async def find_entity_path(
 
 
 def _rel_dict(rel: EntityRelationship) -> dict:
+    """Render relationship payload in the shape expected by EntityDetail UI."""
+    fallback_confidence = min(1.0, max(0.05, (rel.weight or 1) / 10.0))
+    confidence = rel.confidence if getattr(rel, "confidence", None) is not None else fallback_confidence
+    evidence_post_ids = [str(pid) for pid in (rel.sample_post_ids or []) if isinstance(pid, str)]
+    created_by = str(rel.created_by) if getattr(rel, "created_by", None) else None
+    created_at = rel.created_at.isoformat() if getattr(rel, "created_at", None) else (
+        rel.first_seen.isoformat() if rel.first_seen else datetime.utcnow().isoformat()
+    )
     return {
         "id": str(rel.id),
-        "entity_a_id": str(rel.entity_a_id),
-        "entity_b_id": str(rel.entity_b_id),
-        "weight": rel.weight,
-        "first_seen": rel.first_seen.isoformat(),
-        "last_seen": rel.last_seen.isoformat(),
-        "entity_a": {
+        "source_entity_id": str(rel.entity_a_id),
+        "target_entity_id": str(rel.entity_b_id),
+        "relationship_type": getattr(rel, "relationship_type", None) or "associated",
+        "confidence": confidence,
+        "notes": getattr(rel, "notes", None),
+        "evidence_post_ids": evidence_post_ids,
+        "created_by": created_by,
+        "created_at": created_at,
+        "source_entity": {
             "id": str(rel.entity_a.id),
             "name": rel.entity_a.name,
             "type": rel.entity_a.type,
         } if rel.entity_a else None,
-        "entity_b": {
+        "target_entity": {
             "id": str(rel.entity_b.id),
             "name": rel.entity_b.name,
             "type": rel.entity_b.type,
@@ -321,7 +338,7 @@ async def get_entity_relationships(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> list[dict]:
-    """Get co-occurrence relationships for an entity."""
+    """Get relationships for an entity."""
     from sqlalchemy import or_
     result = await db.execute(
         select(EntityRelationship)
@@ -336,12 +353,101 @@ async def get_entity_relationships(
             selectinload(EntityRelationship.entity_b),
         )
         .order_by(EntityRelationship.weight.desc())
-        .limit(50)
+        .limit(100)
     )
     return [_rel_dict(r) for r in result.scalars().all()]
 
 
+@router.post("/{entity_id}/relationships")
+async def create_entity_relationship(
+    entity_id: uuid.UUID,
+    body: RelationshipCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Create or update a relationship between two entities (UI compatibility endpoint)."""
+    if body.relationship_type not in VALID_REL_TYPES:
+        raise HTTPException(status_code=400, detail=f"Invalid relationship_type '{body.relationship_type}'")
+    if entity_id == body.target_entity_id:
+        raise HTTPException(status_code=400, detail="source and target entity must be different")
 
+    src = await db.execute(select(Entity).where(Entity.id == entity_id))
+    if not src.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Source entity not found")
+    tgt = await db.execute(select(Entity).where(Entity.id == body.target_entity_id))
+    if not tgt.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Target entity not found")
+
+    now = datetime.utcnow()
+    rel_result = await db.execute(
+        select(EntityRelationship).where(
+            EntityRelationship.entity_a_id == entity_id,
+            EntityRelationship.entity_b_id == body.target_entity_id,
+        )
+    )
+    rel = rel_result.scalar_one_or_none()
+
+    evidence_ids = [str(pid) for pid in (body.evidence_post_ids or [])]
+    weight = max(1, int(round((body.confidence or 0.5) * 10)))
+
+    if rel:
+        rel.weight = max(rel.weight or 1, weight)
+        rel.relationship_type = body.relationship_type
+        rel.confidence = max(0.0, min(1.0, body.confidence))
+        rel.notes = body.notes
+        rel.created_by = current_user.id
+        rel.last_seen = now
+        existing = rel.sample_post_ids or []
+        merged = []
+        for pid in existing + evidence_ids:
+            if isinstance(pid, str) and pid not in merged:
+                merged.append(pid)
+        rel.sample_post_ids = merged[:50]
+    else:
+        rel = EntityRelationship(
+            entity_a_id=entity_id,
+            entity_b_id=body.target_entity_id,
+            weight=weight,
+            relationship_type=body.relationship_type,
+            confidence=max(0.0, min(1.0, body.confidence)),
+            notes=body.notes,
+            created_by=current_user.id,
+            created_at=now,
+            first_seen=now,
+            last_seen=now,
+            sample_post_ids=evidence_ids[:50],
+        )
+        db.add(rel)
+
+    await db.commit()
+
+    rel_loaded = await db.execute(
+        select(EntityRelationship)
+        .where(EntityRelationship.id == rel.id)
+        .options(
+            selectinload(EntityRelationship.entity_a),
+            selectinload(EntityRelationship.entity_b),
+        )
+    )
+    rel_obj = rel_loaded.scalar_one()
+    payload = _rel_dict(rel_obj)
+    payload["evidence_post_ids"] = [str(pid) for pid in (rel_obj.sample_post_ids or [])]
+    return payload
+
+
+@router.delete("/relationships/{rel_id}", status_code=204)
+async def delete_entity_relationship(
+    rel_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> None:
+    """Delete an entity relationship (UI compatibility endpoint)."""
+    rel_result = await db.execute(select(EntityRelationship).where(EntityRelationship.id == rel_id))
+    rel = rel_result.scalar_one_or_none()
+    if not rel:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+    await db.delete(rel)
+    await db.commit()
 
 
 @router.get("/{entity_id}/connections", response_model=list[EntityConnectionItem])
@@ -423,35 +529,52 @@ async def get_entity_timeline(
     )
     total = count_result.scalar() or 0
 
-    # Fetch timeline: one row per post, include first geo event if available
+    # Fetch timeline with pagination first, then enrich rows.
+    # This avoids expensive DISTINCT+LATERAL over the full match set.
     rows_result = await db.execute(
         text("""
-            WITH ranked AS (
-                SELECT DISTINCT ON (p.id)
-                    p.id        AS post_id,
-                    p.content,
-                    p.source_type,
-                    p.author,
-                    p.timestamp,
-                    em.context_snippet,
-                    ev.lat,
-                    ev.lng,
-                    ev.place_name
+            WITH matched_posts AS (
+                SELECT DISTINCT p.id, p.content, p.source_type, p.author, p.timestamp
                 FROM entity_mentions em
                 JOIN posts p ON p.id = em.post_id
-                LEFT JOIN LATERAL (
-                    SELECT lat, lng, place_name
-                    FROM events
-                    WHERE post_id = p.id
-                    LIMIT 1
-                ) ev ON true
                 WHERE em.entity_id = :eid
                   AND (p.timestamp >= :since OR p.timestamp IS NULL)
-                ORDER BY p.id, p.timestamp DESC
+                ORDER BY p.timestamp DESC NULLS LAST
+                LIMIT :lim OFFSET :off
+            ),
+            snippets AS (
+                SELECT DISTINCT ON (em.post_id)
+                    em.post_id,
+                    em.context_snippet
+                FROM entity_mentions em
+                JOIN matched_posts mp ON mp.id = em.post_id
+                WHERE em.entity_id = :eid
+                ORDER BY em.post_id
+            ),
+            first_events AS (
+                SELECT DISTINCT ON (e.post_id)
+                    e.post_id,
+                    e.lat,
+                    e.lng,
+                    e.place_name
+                FROM events e
+                JOIN matched_posts mp ON mp.id = e.post_id
+                ORDER BY e.post_id
             )
-            SELECT * FROM ranked
-            ORDER BY timestamp DESC NULLS LAST
-            LIMIT :lim OFFSET :off
+            SELECT
+                mp.id AS post_id,
+                mp.content,
+                mp.source_type,
+                mp.author,
+                mp.timestamp,
+                sn.context_snippet,
+                fe.lat,
+                fe.lng,
+                fe.place_name
+            FROM matched_posts mp
+            LEFT JOIN snippets sn ON sn.post_id = mp.id
+            LEFT JOIN first_events fe ON fe.post_id = mp.id
+            ORDER BY mp.timestamp DESC NULLS LAST
         """),
         {"eid": entity_id, "since": since, "lim": page_size, "off": offset},
     )

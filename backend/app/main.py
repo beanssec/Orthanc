@@ -1,8 +1,9 @@
 from __future__ import annotations
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import auth, credentials, sources, feed, alerts, events, media
@@ -26,6 +27,8 @@ from app.routers import watchpoints
 from app.routers import narratives as narratives_router_module
 from app.routers.models import router as models_router
 from app.routers import graph as graph_router_module
+from app.routers import health as health_router_module
+from app.middleware.rate_limit import rate_limit_middleware
 from app.collectors.orchestrator import orchestrator
 from app.collectors.satellite_collector import satellite_collector
 from app.services.brief_scheduler import brief_scheduler
@@ -119,36 +122,10 @@ async def lifespan(app: FastAPI):
         logger.warning("Source group seeding skipped (will retry on next start): %s", _sg_err)
     logger.info("Source groups seeded")
 
-    # Try to load the OpenRouter API key for high-quality embeddings.
-    # Credential decryption requires a user to have logged in (key material
-    # lives in memory), so we attempt it and silently fall back to the
-    # deterministic hash-based embeddings when it fails.
-    try:
-        from app.services.embedding_service import embedding_service
-        from app.services.crypto import crypto_service
-        from app.models.credential import Credential
-        from app.db import AsyncSessionLocal as _ASL
-        from sqlalchemy import select as _select
-
-        async with _ASL() as _session:
-            _cred_result = await _session.execute(
-                _select(Credential).where(Credential.provider == "openrouter")
-            )
-            _cred = _cred_result.scalars().first()
-            if _cred and getattr(_cred, "encrypted_data", None):
-                import json as _json
-                _decrypted = crypto_service.decrypt(_cred.encrypted_data)
-                _cred_data = _json.loads(_decrypted)
-                _api_key = _cred_data.get("api_key", "")
-                if _api_key:
-                    embedding_service.set_api_key(_api_key)
-                    logger.info("Embedding service: OpenRouter API key loaded")
-                else:
-                    logger.info("Embedding service: OpenRouter credential present but empty — using hash-based fallback")
-            else:
-                logger.info("Embedding service: no OpenRouter credential found — using hash-based fallback")
-    except Exception as _emb_err:
-        logger.info("Embedding service: using hash-based fallback (%s)", _emb_err)
+    # OpenRouter credentials are decrypted on user login and providers are
+    # registered in auth.login. At startup there is no user password/key
+    # material available, so embedding falls back until a user logs in.
+    logger.info("Embedding service: waiting for user login to load provider credentials")
 
     # Start narrative clustering engine (embeds posts + clusters into narratives every 10 min)
     await narrative_engine.start()
@@ -159,17 +136,17 @@ async def lifespan(app: FastAPI):
     await frontline_service.start()
     logger.info("Frontline snapshot scheduler started")
 
-    # Load OpenRouter key into stance classifier (uses same key as embedding service)
+    # Stance classifier uses model_router directly; if OpenRouter/xAI are
+    # registered after login it will use AI mode automatically, otherwise
+    # it keeps keyword fallback behavior.
     try:
-        from app.services.embedding_service import embedding_service as _emb_svc
-        from app.services.stance_classifier import stance_classifier
-        if _emb_svc._openrouter_key:
-            stance_classifier._api_key = _emb_svc._openrouter_key
-            logger.info("Stance classifier: AI mode (OpenRouter)")
+        from app.services.model_router import model_router as _mr
+        if _mr._providers:
+            logger.info("Stance classifier: AI-capable providers registered (%s)", ", ".join(sorted(_mr._providers.keys())))
         else:
-            logger.info("Stance classifier: keyword fallback mode")
+            logger.info("Stance classifier: keyword fallback mode (no providers registered yet)")
     except Exception as _sc_err:
-        logger.warning("Stance classifier init error: %s", _sc_err)
+        logger.warning("Stance classifier init status check error: %s", _sc_err)
 
     # Start narrative analysis loop (stance classification + evidence correlation every 15 min)
     narrative_analyzer_task = asyncio.create_task(narrative_analyzer.start())
@@ -207,12 +184,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Orthanc API", lifespan=lifespan)
 
-
-@app.get("/health")
-async def health_check() -> dict:
-    """Simple health probe — no auth required. Used by Docker healthcheck."""
-    return {"status": "ok"}
-
+# ── Middleware (applied in reverse order: last-added = outermost) ─────────────
 
 app.add_middleware(
     CORSMiddleware,
@@ -221,6 +193,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log requests that take longer than 1 second."""
+    start = time.time()
+    response = await call_next(request)
+    duration = time.time() - start
+    if duration > 1.0:
+        logger.warning(
+            "Slow request: %s %s took %.2fs",
+            request.method,
+            request.url.path,
+            duration,
+        )
+    return response
+
+
+app.middleware("http")(rate_limit_middleware)
 
 app.include_router(auth.router)
 app.include_router(credentials.router)
@@ -252,6 +243,7 @@ app.include_router(narratives_router_module.router)
 app.include_router(models_router)
 app.include_router(graph_router_module.router)
 app.include_router(frontlines_router)
+app.include_router(health_router_module.router)
 
 
 @app.get("/")

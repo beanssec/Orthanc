@@ -7,6 +7,7 @@ import { MapSidebar, SOURCE_TYPES } from './MapSidebar';
 import type { SidebarFilters, TimeRange } from './MapSidebar';
 import { MapControls } from './MapControls';
 import { FrontlineSlider } from './FrontlineSlider';
+import { useNavigate } from 'react-router-dom';
 
 // CartoDB dark-matter — no token needed
 const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
@@ -126,7 +127,7 @@ function buildPopupHtml(event: MapEvent): string {
       ${content ? `<div class="map-popup__content">${escapeHtml(content)}</div>` : ''}
       <div class="map-popup__footer">
         <span class="map-popup__time">${time}</span>
-        <a class="map-popup__link" data-navigate="/feed?post=${event.post.id}" href="#">View in Feed →</a>
+        <a class="map-popup__link" data-navigate="/feed?post=${event.post.id}" href="/feed?post=${event.post.id}">View in Feed →</a>
       </div>
     </div>
   `;
@@ -428,6 +429,7 @@ function showTooltip(map: maplibregl.Map, tooltipRef: React.MutableRefObject<map
 // ---------------------------------------------------------------------------
 
 export function MapView() {
+  const navigate = useNavigate();
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
@@ -1380,7 +1382,10 @@ export function MapView() {
               ${p.date ? `Date: ${new Date(p.date).toLocaleDateString()}` : ''}
               ${p.title ? `<div style="margin-top:6px;font-size:11px;color:var(--text-muted)">${escapeHtml(String(p.title).slice(0, 200))}</div>` : ''}
             </div>
-            ${p.source_url ? `<div class="map-popup__footer"><a class="map-popup__link" href="${escapeHtml(String(p.source_url))}" target="_blank" rel="noopener">Source →</a></div>` : ''}
+            <div class="map-popup__footer">
+              ${p.id ? `<a class="map-popup__link" data-navigate="/feed?post=${encodeURIComponent(String(p.id))}" href="/feed?post=${encodeURIComponent(String(p.id))}">View in Feed →</a>` : ''}
+              ${p.source_url ? `<a class="map-popup__link" href="${escapeHtml(String(p.source_url))}" target="_blank" rel="noopener">Source →</a>` : ''}
+            </div>
           </div>`;
         if (popupRef.current) popupRef.current.remove();
         popupRef.current = new maplibregl.Popup({ closeButton: true, maxWidth: '300px', offset: 10 })
@@ -1469,6 +1474,7 @@ export function MapView() {
               ${p.radius_nm ? `<br>Radius: ${p.radius_nm} NM` : ''}
             </div>
             ${body ? `<div class="map-popup__content" style="font-size:11px;margin-top:6px">${escapeHtml(body)}</div>` : ''}
+            ${p.id ? `<div class="map-popup__footer"><a class="map-popup__link" data-navigate="/feed?post=${encodeURIComponent(String(p.id))}" href="/feed?post=${encodeURIComponent(String(p.id))}">View in Feed →</a></div>` : ''}
           </div>`;
         if (popupRef.current) popupRef.current.remove();
         popupRef.current = new maplibregl.Popup({ closeButton: true, maxWidth: '320px', offset: 10 })
@@ -1541,6 +1547,11 @@ export function MapView() {
         // Parse source_types
         let sourceTypes: string[] = [];
         try { sourceTypes = JSON.parse(p.source_types || '[]'); } catch { /* */ }
+        // Parse related component post IDs
+        let componentPostIds: string[] = [];
+        try { componentPostIds = JSON.parse(p.component_post_ids || '[]'); } catch { /* */ }
+        const primaryPostId = componentPostIds.find((id) => typeof id === 'string' && id.length > 0);
+        const feedPath = primaryPostId ? `/feed?post=${encodeURIComponent(primaryPostId)}` : '/feed';
         const summary = String(p.summary || '').slice(0, 300);
         const html = `
           <div class="map-popup">
@@ -1555,7 +1566,7 @@ export function MapView() {
             ${summary ? `<div class="map-popup__content" style="font-size:11px">${escapeHtml(summary)}</div>` : ''}
             ${sourceTypes.length > 0 ? `<div style="margin-top:6px;font-size:10px;color:var(--text-muted)">Sources: ${escapeHtml(sourceTypes.join(', '))}</div>` : ''}
             <div class="map-popup__footer">
-              <a class="map-popup__link" data-navigate="/feed" href="#">View component posts →</a>
+              <a class="map-popup__link" data-navigate="${feedPath}" href="${feedPath}">View related events →</a>
             </div>
           </div>`;
         if (popupRef.current) popupRef.current.remove();
@@ -1822,7 +1833,7 @@ export function MapView() {
               Posts: <strong>${p.post_count || 0}</strong>
             </div>
             <div class="map-popup__footer">
-              <a class="map-popup__link" data-navigate="/narratives" href="#">View Narratives →</a>
+              <a class="map-popup__link" data-navigate="/narratives" href="/narratives">View Narratives →</a>
             </div>
           </div>`;
         if (popupRef.current) popupRef.current.remove();
@@ -2151,7 +2162,7 @@ export function MapView() {
               Posts analyzed: <strong>${p.post_count ?? 0}</strong>
             </div>
             <div class="map-popup__footer">
-              <a class="map-popup__link" data-navigate="/feed?source=&q=${encodeURIComponent(p.place_name || '')}" href="#">View in Feed →</a>
+              <a class="map-popup__link" data-navigate="/feed?location=${encodeURIComponent(p.place_name || '')}&has_geo=true" href="/feed?location=${encodeURIComponent(p.place_name || '')}&has_geo=true">View in Feed →</a>
             </div>
           </div>`;
         if (popupRef.current) popupRef.current.remove();
@@ -2164,7 +2175,9 @@ export function MapView() {
 
     // Global handler for data-navigate links in popups (avoids full page reload which wipes auth)
     map.getContainer().addEventListener('click', (evt) => {
-      const link = (evt.target as HTMLElement).closest('[data-navigate]');
+      const target = evt.target;
+      if (!(target instanceof Element)) return;
+      const link = target.closest('[data-navigate]');
       if (link) {
         evt.preventDefault();
         const path = link.getAttribute('data-navigate');
@@ -2332,9 +2345,13 @@ export function MapView() {
               </div>
             </div>
 
-            <a className="map-event-detail__feed-link" href={`/feed?post=${selectedEvent.post.id}`}>
+            <button
+              type="button"
+              className="map-event-detail__feed-link"
+              onClick={() => navigate(`/feed?post=${selectedEvent.post.id}`)}
+            >
               View in Feed →
-            </a>
+            </button>
           </div>
         </div>
       )}

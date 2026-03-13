@@ -288,6 +288,11 @@ class StanceClassifier:
         )
 
         try:
+            # If no providers are registered yet (e.g., before user credentials are
+            # unlocked at login), skip AI call and use deterministic fallback.
+            if not model_router._providers:
+                return self._classify_keywords(content)
+
             # Enforce rate limits
             await self._minute_window.acquire()
             async with self._rate_limiter:

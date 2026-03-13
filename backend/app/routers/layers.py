@@ -631,6 +631,7 @@ async def get_fusion_layer_alias(
                 "summary": (e["ai_summary"] or "")[:200],
                 "entity_names": e["entity_names"],
                 "source_types": e["component_source_types"],
+                "component_post_ids": e.get("component_post_ids", []),
                 "radius_km": e["radius_km"],
                 "created_at": e["created_at"],
                 "color": SEVERITY_COLORS.get(e["severity"], "#6b7280"),
@@ -833,7 +834,7 @@ async def get_narrative_layer(
 
 
 @router.post("/translate")
-async def translate_text(
+async def translate_text_layers(
     body: TranslateRequest,
     current_user: User = Depends(get_current_user),
 ) -> dict:

@@ -157,6 +157,8 @@ class GeoExtractor:
     def __init__(self) -> None:
         self._nlp = None
         self._geocode_cache: dict[str, tuple[float, float, str, str] | None] = {}
+        # Backward-compatible timestamp used by country centroid fallback path.
+        self._last_geocode_time = 0.0
 
     def _load_model(self) -> None:
         """Lazy-load spaCy model on first use to avoid slowing startup."""
