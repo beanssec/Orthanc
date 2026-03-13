@@ -10,6 +10,17 @@ interface Provider {
   model_count: number;
 }
 
+type ProviderApiRow = Partial<Provider> & {
+  name?: string;
+  type?: string;
+  base_url?: string | null;
+};
+
+type ProvidersApiResponse = ProviderApiRow[] | {
+  providers?: ProviderApiRow[];
+  count?: number;
+};
+
 interface ModelInfo {
   id: string;
   name?: string;
@@ -18,11 +29,20 @@ interface ModelInfo {
 
 type TaskAssignments = Record<string, string>;
 
+type TaskAssignmentsApiResponse = TaskAssignments | {
+  tasks?: Record<string, { task?: string; model?: string; overridden?: boolean }>;
+};
+
+type ModelsApiResponse = ModelInfo[] | {
+  models?: ModelInfo[];
+  count?: number;
+};
+
 interface UsageData {
   total_calls: number;
   total_tokens_in: number;
   total_tokens_out: number;
-  total_cost_usd: number;
+  total_cost_usd: number | null;
   by_task: Record<string, number>;
   by_model: Record<string, number>;
 }
@@ -54,7 +74,8 @@ function fmt(n: number): string {
   return n.toLocaleString('en-US');
 }
 
-function fmtCost(n: number): string {
+function fmtCost(n: number | null | undefined): string {
+  if (typeof n !== 'number' || Number.isNaN(n)) return '—';
   return `$${n.toFixed(2)}`;
 }
 
@@ -65,6 +86,37 @@ function guessProvider(modelId: string): string {
   if (modelId.includes('claude')) return 'OpenRouter';
   if (modelId.includes('hash') || modelId.includes('local')) return 'Built-in';
   return '—';
+}
+
+function normalizeProviders(data: ProvidersApiResponse): Provider[] {
+  const rows = Array.isArray(data) ? data : Array.isArray(data?.providers) ? data.providers : [];
+  return rows
+    .filter((row): row is ProviderApiRow & { name: string } => typeof row?.name === 'string' && row.name.length > 0)
+    .map((row) => ({
+      name: row.name,
+      status: row.status === 'connected' || row.status === 'disconnected' || row.status === 'not_configured'
+        ? row.status
+        : 'connected',
+      model_count: typeof row.model_count === 'number' ? row.model_count : 0,
+    }));
+}
+
+function normalizeModels(data: ModelsApiResponse): ModelInfo[] {
+  return Array.isArray(data) ? data : Array.isArray(data?.models) ? data.models : [];
+}
+
+function normalizeTasks(data: TaskAssignmentsApiResponse): TaskAssignments {
+  if (!data || Array.isArray(data)) return {};
+  if ('tasks' in data && data.tasks && typeof data.tasks === 'object') {
+    const out: TaskAssignments = {};
+    Object.entries(data.tasks).forEach(([taskKey, taskInfo]) => {
+      out[taskKey] = taskInfo?.model ?? '';
+    });
+    return out;
+  }
+  return Object.fromEntries(
+    Object.entries(data).map(([k, v]) => [k, typeof v === 'string' ? v : '']),
+  );
 }
 
 /* ── Section 1: Providers ───────────────────────────────── */
@@ -78,8 +130,8 @@ function ProvidersSection() {
   const fetchProviders = useCallback(async () => {
     try {
       setError('');
-      const { data } = await api.get<Provider[]>('/models/providers');
-      setProviders(data);
+      const { data } = await api.get<ProvidersApiResponse>('/models/providers');
+      setProviders(normalizeProviders(data));
     } catch {
       setError('Failed to load provider status.');
     } finally {
@@ -203,11 +255,11 @@ function TasksSection() {
     try {
       setError('');
       const [tasksRes, modelsRes] = await Promise.all([
-        api.get<TaskAssignments>('/models/tasks'),
-        api.get<ModelInfo[]>('/models/'),
+        api.get<TaskAssignmentsApiResponse>('/models/tasks'),
+        api.get<ModelsApiResponse>('/models/'),
       ]);
-      setTasks(tasksRes.data);
-      setModels(modelsRes.data);
+      setTasks(normalizeTasks(tasksRes.data));
+      setModels(normalizeModels(modelsRes.data));
     } catch {
       setError('Failed to load task assignments.');
     } finally {
@@ -331,7 +383,7 @@ function UsageSection() {
   useEffect(() => { fetchUsage(); }, [fetchUsage]);
 
   const byTaskEntries = usage
-    ? Object.entries(usage.by_task).sort(([, a], [, b]) => b - a)
+    ? Object.entries(usage.by_task ?? {}).sort(([, a], [, b]) => b - a)
     : [];
 
   const maxCalls = byTaskEntries.length > 0 ? byTaskEntries[0][1] : 1;
