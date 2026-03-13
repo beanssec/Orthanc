@@ -141,6 +141,29 @@ function escapeHtml(str: string): string {
     .replace(/"/g, '&quot;');
 }
 
+function parseStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((v): v is string => typeof v === 'string' && v.length > 0);
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((v): v is string => typeof v === 'string' && v.length > 0);
+      }
+    } catch {
+      // Fallback for comma-delimited strings
+      return trimmed
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    }
+  }
+  return [];
+}
+
 function buildClusterPopupHtml(events: MapEvent[]): string {
   const items = events.slice(0, 15).map((ev, idx) => {
     const color = getSourceColor(ev.post.source_type);
@@ -1541,16 +1564,10 @@ export function MapView() {
         const severityColors: Record<string, string> = { flash: '#ef4444', urgent: '#f97316', routine: '#3b82f6' };
         const color = severityColors[p.severity] ?? '#6b7280';
         const severityLabel = String(p.severity || 'routine').toUpperCase();
-        // Parse entity_names (stored as JSON string in GeoJSON properties)
-        let entityNames: string[] = [];
-        try { entityNames = JSON.parse(p.entity_names || '[]'); } catch { /* */ }
-        // Parse source_types
-        let sourceTypes: string[] = [];
-        try { sourceTypes = JSON.parse(p.source_types || '[]'); } catch { /* */ }
-        // Parse related component post IDs
-        let componentPostIds: string[] = [];
-        try { componentPostIds = JSON.parse(p.component_post_ids || '[]'); } catch { /* */ }
-        const primaryPostId = componentPostIds.find((id) => typeof id === 'string' && id.length > 0);
+        const entityNames = parseStringArray(p.entity_names);
+        const sourceTypes = parseStringArray(p.source_types);
+        const componentPostIds = parseStringArray(p.component_post_ids);
+        const primaryPostId = componentPostIds.find((id) => id.length > 0);
         const feedPath = primaryPostId ? `/feed?post=${encodeURIComponent(primaryPostId)}` : '/feed';
         const summary = String(p.summary || '').slice(0, 300);
         const html = `
