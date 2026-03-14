@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from app.db import AsyncSessionLocal
 from app.models.post import Post
 from app.models.brief import Brief
-from app.services.ai_models import get_model, AI_MODELS
+from app.services.ai_models import get_model, AI_MODELS, make_fallback_model_config
 from app.services.model_router import model_router
 from app.services.brief_confidence import compute_brief_confidence, confidence_context_block
 from sqlalchemy import select
@@ -51,7 +51,16 @@ class BriefGenerator:
         model_id = model_id or DEFAULT_MODEL
         model_config = get_model(model_id)
         if not model_config:
-            return {"error": f"Unknown model: {model_id}. Available: {[m['id'] for m in AI_MODELS]}"}
+            # If the model looks like an OpenRouter-namespaced model (contains "/"),
+            # use a safe fallback config so live-discovered models can still generate briefs.
+            if "/" in model_id or model_id not in {m["id"] for m in AI_MODELS}:
+                logger.info(
+                    "Model '%s' not in static registry; using fallback config for brief generation.",
+                    model_id,
+                )
+                model_config = make_fallback_model_config(model_id)
+            else:
+                return {"error": f"Unknown model: {model_id}. Available: {[m['id'] for m in AI_MODELS]}"}
 
         # Fetch recent posts with optional filters
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)

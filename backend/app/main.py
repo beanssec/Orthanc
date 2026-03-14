@@ -156,6 +156,33 @@ async def lifespan(app: FastAPI):
     await cooccurrence_service.start()
     logger.info("Entity co-occurrence service started")
 
+
+    # Load persisted task→model overrides into model_router on startup.
+    # Reads the most-recently-updated override per task across all users so
+    # that the singleton starts in the last-known configured state.
+    try:
+        from app.db import AsyncSessionLocal
+        from app.models.task_model_override import TaskModelOverride
+        from app.services.model_router import model_router as _mr
+        from sqlalchemy import select, text as sa_text
+        async with AsyncSessionLocal() as _db:
+            # Latest override per task (across all users; last-write wins)
+            _result = await _db.execute(
+                select(TaskModelOverride).order_by(TaskModelOverride.updated_at.desc())
+            )
+            _rows = _result.scalars().all()
+            _seen: set = set()
+            for _row in _rows:
+                if _row.task not in _seen:
+                    _mr.set_task_model(_row.task, _row.model_id)
+                    _seen.add(_row.task)
+        if _seen:
+            logger.info("Loaded %d persisted task model override(s) from DB", len(_seen))
+        else:
+            logger.info("No persisted task model overrides found — using defaults")
+    except Exception as _tmo_err:
+        logger.warning("Failed to load task model overrides from DB: %s", _tmo_err)
+
     yield
 
     logger.info("Orthanc API shutting down — cancelling background tasks...")

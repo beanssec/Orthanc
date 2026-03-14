@@ -1,5 +1,6 @@
 from .base import Base
 from .user import User
+from .task_model_override import TaskModelOverride
 from .credential import Credential
 from .post import Post
 from .event import Event
@@ -33,7 +34,7 @@ from .narrative import (
 )
 
 __all__ = [
-    "Base", "User", "Credential", "Post", "Event", "Source",
+    "Base", "User", "TaskModelOverride", "Credential", "Post", "Event", "Source",
     "Alert", "AlertHit", "AlertRule", "AlertEvent",
     "Entity", "EntityMention", "EntityAlias", "EntityTypeOverride",
     "EntityRelationship",
@@ -50,3 +51,4 @@ __all__ = [
     "SourceGroup", "SourceGroupMember", "SourceBiasProfile", "PostEmbedding",
     "NarrativeTracker", "NarrativeTrackerVersion", "NarrativeTrackerMatch", "NarrativeTrackerMonthlySnapshot",
 ]
+

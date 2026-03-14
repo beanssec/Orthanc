@@ -1,6 +1,12 @@
 """AI model registry with descriptions and pricing for intelligence briefs."""
 from __future__ import annotations
 
+import logging
+
+import httpx
+
+logger = logging.getLogger("orthanc.ai_models")
+
 AI_MODELS = [
     {
         "id": "grok-3-mini",
@@ -147,3 +153,125 @@ def get_models_for_provider(provider: str) -> list[dict]:
 def get_available_models(configured_providers: set[str]) -> list[dict]:
     """Get models the user can actually use based on their configured credentials."""
     return [m for m in AI_MODELS if m["credential_provider"] in configured_providers]
+
+
+# ---------------------------------------------------------------------------
+# Live model fetching (OpenRouter)
+# ---------------------------------------------------------------------------
+
+_OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+_CHAT_MODALITIES = {"text->text", "text+image->text"}
+
+
+async def fetch_live_openrouter_models(api_key: str) -> list[dict]:
+    """Fetch the live model list from OpenRouter and return brief-friendly dicts.
+
+    Only chat-capable models (text->text or text+image->text) are returned.
+    Returns an empty list on any network / auth failure so callers degrade safely.
+    """
+    try:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(_OPENROUTER_MODELS_URL, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+
+        results: list[dict] = []
+        for m in data.get("data", []):
+            arch = m.get("architecture", {})
+            modality = arch.get("modality", "")
+            if not any(cm in modality for cm in _CHAT_MODALITIES):
+                continue
+
+            pricing = m.get("pricing", {})
+            try:
+                cost_in = float(pricing.get("prompt", 0)) * 1000
+            except (TypeError, ValueError):
+                cost_in = 0.0
+            try:
+                cost_out = float(pricing.get("completion", 0)) * 1000
+            except (TypeError, ValueError):
+                cost_out = 0.0
+
+            ctx = m.get("context_length") or 128000
+            results.append({
+                "id": m["id"],
+                "provider": "openrouter",
+                "name": m.get("name", m["id"]),
+                "description": m.get("description") or f"{m.get('name', m['id'])} via OpenRouter.",
+                "strengths": "",
+                "context_window": ctx,
+                "cost_per_1k_input": cost_in,
+                "cost_per_1k_output": cost_out,
+                "cost_estimate_per_brief": f"~${max(cost_in, cost_out) * 30:.3f}",
+                "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+                "credential_provider": "openrouter",
+                "key_field": "api_key",
+                "_live": True,
+            })
+        return results
+
+    except Exception as exc:
+        logger.warning("fetch_live_openrouter_models failed (non-fatal): %s", exc)
+        return []
+
+
+def merge_brief_models(
+    live_openrouter: list[dict],
+    configured_providers: set[str],
+) -> list[dict]:
+    """Merge static AI_MODELS registry with live OpenRouter models.
+
+    Rules:
+    - Static curated entries take precedence (richer metadata).
+    - Live models not already in the registry are appended.
+    - Availability flag is set based on configured_providers.
+    - Each returned dict includes an ``available`` and ``requires`` key.
+    """
+    static_ids = {m["id"] for m in AI_MODELS}
+
+    result: list[dict] = []
+
+    # Static curated models first (full metadata)
+    for m in AI_MODELS:
+        result.append({
+            **m,
+            "available": m["credential_provider"] in configured_providers,
+            "requires": m["credential_provider"],
+        })
+
+    # Append live-discovered models that are not already in the registry
+    for m in live_openrouter:
+        if m["id"] in static_ids:
+            continue
+        result.append({
+            **m,
+            "available": m["credential_provider"] in configured_providers,
+            "requires": m["credential_provider"],
+        })
+
+    return result
+
+
+def make_fallback_model_config(model_id: str) -> dict:
+    """Return a minimal safe model config for a model not in the static registry.
+
+    Used by brief_generator when a live-discovered OpenRouter model is selected.
+    """
+    return {
+        "id": model_id,
+        "provider": "openrouter",
+        "name": model_id,
+        "description": "Live OpenRouter model.",
+        "strengths": "",
+        "context_window": 128000,
+        "cost_per_1k_input": 0.0,
+        "cost_per_1k_output": 0.0,
+        "cost_estimate_per_brief": "unknown",
+        "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+        "credential_provider": "openrouter",
+        "key_field": "api_key",
+    }

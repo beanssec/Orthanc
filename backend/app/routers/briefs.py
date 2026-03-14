@@ -17,7 +17,7 @@ from app.models import User
 from app.models.brief import Brief
 from app.services.brief_generator import brief_generator
 from app.services.brief_scheduler import brief_scheduler
-from app.services.ai_models import AI_MODELS
+from app.services.ai_models import AI_MODELS, fetch_live_openrouter_models, merge_brief_models
 from app.services.collector_manager import collector_manager
 from sqlalchemy import select, delete
 
@@ -83,32 +83,48 @@ async def list_models(
     current_user: User = Depends(get_current_user),
 ) -> list[dict]:
     """List available AI models with descriptions and pricing.
-    Marks which ones the user can use based on configured credentials."""
+
+    Merges the curated static registry with live-discovered models from
+    configured providers (OpenRouter). Marks which ones the user can use
+    based on configured credentials.
+    """
     user_id = str(current_user.id)
 
     # Check which credential providers the user has configured
     configured = set()
+    or_keys = None
     for provider in ["x", "openrouter"]:
         keys = await collector_manager.get_keys(user_id, provider)
         if keys:
             configured.add(provider)
+            if provider == "openrouter":
+                or_keys = keys
 
-    models = []
-    for m in AI_MODELS:
-        models.append({
+    # Fetch live OpenRouter models if credentials are available
+    live_or_models: list[dict] = []
+    if or_keys and or_keys.get("api_key"):
+        live_or_models = await fetch_live_openrouter_models(or_keys["api_key"])
+
+    # Merge static registry + live models; apply availability flags
+    merged = merge_brief_models(live_or_models, configured)
+
+    # Strip internal-only fields before returning
+    result = []
+    for m in merged:
+        result.append({
             "id": m["id"],
             "provider": m["provider"],
             "name": m["name"],
             "description": m["description"],
-            "strengths": m["strengths"],
+            "strengths": m.get("strengths", ""),
             "context_window": m["context_window"],
             "cost_per_1k_input": m["cost_per_1k_input"],
             "cost_per_1k_output": m["cost_per_1k_output"],
             "cost_estimate_per_brief": m["cost_estimate_per_brief"],
-            "available": m["credential_provider"] in configured,
-            "requires": m["credential_provider"],
+            "available": m["available"],
+            "requires": m["requires"],
         })
-    return models
+    return result
 
 
 # ── Schedule endpoints (MUST be before /{brief_id} to avoid route conflict) ──

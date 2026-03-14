@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import logging
+import uuid
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import select, delete
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db, AsyncSessionLocal
 from app.middleware.auth import get_current_user
+from app.models.task_model_override import TaskModelOverride
 from app.services.model_router import model_router
 from app.services.llm_usage_service import LLMUsageService
 
@@ -24,6 +29,31 @@ router = APIRouter(prefix="/models", tags=["models"])
 
 def _usage_service() -> LLMUsageService:
     return LLMUsageService(AsyncSessionLocal)
+
+
+_VALID_TASKS = frozenset([
+    model_router.TASK_BRIEF,
+    model_router.TASK_STANCE,
+    model_router.TASK_TRANSLATE,
+    model_router.TASK_EMBED,
+    model_router.TASK_SUMMARISE,
+    model_router.TASK_ENRICH,
+    model_router.TASK_IMAGE,
+    model_router.TASK_NARRATIVE_TITLE,
+    model_router.TASK_NARRATIVE_LABEL,
+    model_router.TASK_NARRATIVE_CONFIRMATION,
+    model_router.TASK_TRACKED_NARRATIVE_MATCH,
+    model_router.TASK_ENTITY_RESOLUTION_ASSIST,
+])
+
+
+async def _load_overrides_for_user(user_id: uuid.UUID, db: AsyncSession) -> dict[str, str]:
+    """Fetch all persisted task→model overrides for a user from DB."""
+    result = await db.execute(
+        select(TaskModelOverride).where(TaskModelOverride.user_id == user_id)
+    )
+    rows = result.scalars().all()
+    return {row.task: row.model_id for row in rows}
 
 
 # ---------------------------------------------------------------------------
@@ -54,27 +84,28 @@ async def list_models(
 @router.get("/tasks")
 async def list_task_assignments(
     current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Get current task-to-model assignments."""
+    """Get current task-to-model assignments (reads persisted DB overrides)."""
+    user_id: uuid.UUID = current_user.id
+
+    # Load persisted overrides from DB for this user
+    db_overrides = await _load_overrides_for_user(user_id, db)
+
     tasks = {}
-    for task_const in [
-        model_router.TASK_BRIEF,
-        model_router.TASK_STANCE,
-        model_router.TASK_TRANSLATE,
-        model_router.TASK_EMBED,
-        model_router.TASK_SUMMARISE,
-        model_router.TASK_ENRICH,
-        model_router.TASK_IMAGE,
-        model_router.TASK_NARRATIVE_TITLE,
-        model_router.TASK_NARRATIVE_LABEL,
-        model_router.TASK_NARRATIVE_CONFIRMATION,
-        model_router.TASK_TRACKED_NARRATIVE_MATCH,
-        model_router.TASK_ENTITY_RESOLUTION_ASSIST,
-    ]:
+    for task_const in _VALID_TASKS:
+        # DB override takes precedence over in-memory, which takes precedence over defaults
+        if task_const in db_overrides:
+            model = db_overrides[task_const]
+            overridden = True
+        else:
+            model = model_router.get_task_model(task_const)
+            overridden = task_const in model_router._task_overrides
+
         tasks[task_const] = {
             "task": task_const,
-            "model": model_router.get_task_model(task_const),
-            "overridden": task_const in model_router._task_overrides,
+            "model": model,
+            "overridden": overridden,
         }
     return {"tasks": tasks}
 
@@ -84,29 +115,75 @@ async def set_task_model(
     task: str,
     body: SetTaskModelRequest,
     current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Override which model handles a specific task."""
-    valid_tasks = {
-        model_router.TASK_BRIEF,
-        model_router.TASK_STANCE,
-        model_router.TASK_TRANSLATE,
-        model_router.TASK_EMBED,
-        model_router.TASK_SUMMARISE,
-        model_router.TASK_ENRICH,
-        model_router.TASK_IMAGE,
-        model_router.TASK_NARRATIVE_TITLE,
-        model_router.TASK_NARRATIVE_LABEL,
-        model_router.TASK_NARRATIVE_CONFIRMATION,
-        model_router.TASK_TRACKED_NARRATIVE_MATCH,
-        model_router.TASK_ENTITY_RESOLUTION_ASSIST,
-    }
-    if task not in valid_tasks:
+    """Override which model handles a specific task. Persisted to DB."""
+    if task not in _VALID_TASKS:
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown task '{task}'. Valid tasks: {sorted(valid_tasks)}",
+            detail=f"Unknown task '{task}'. Valid tasks: {sorted(_VALID_TASKS)}",
         )
+
+    user_id: uuid.UUID = current_user.id
+
+    # Upsert into DB (insert or update on conflict)
+    stmt = pg_insert(TaskModelOverride).values(
+        user_id=user_id,
+        task=task,
+        model_id=body.model_id,
+        updated_at=datetime.utcnow(),
+    ).on_conflict_do_update(
+        constraint="uq_task_model_override_user_task",
+        set_={
+            "model_id": body.model_id,
+            "updated_at": datetime.utcnow(),
+        },
+    )
+    await db.execute(stmt)
+    await db.commit()
+
+    # Also update the in-memory singleton so current requests use it immediately
     model_router.set_task_model(task, body.model_id)
+
+    logger.info(
+        "Task model override persisted: user=%s task=%s model=%s",
+        user_id, task, body.model_id,
+    )
     return {"task": task, "model_id": body.model_id, "status": "updated"}
+
+
+@router.delete("/tasks/{task}")
+async def reset_task_model(
+    task: str,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a persisted task override, reverting to default."""
+    if task not in _VALID_TASKS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown task '{task}'. Valid tasks: {sorted(_VALID_TASKS)}",
+        )
+
+    user_id: uuid.UUID = current_user.id
+
+    await db.execute(
+        delete(TaskModelOverride).where(
+            TaskModelOverride.user_id == user_id,
+            TaskModelOverride.task == task,
+        )
+    )
+    await db.commit()
+
+    # Remove from in-memory overrides too (reverts to default)
+    model_router._task_overrides.pop(task, None)
+
+    default_model = model_router.DEFAULT_TASK_MODELS.get(task, "grok-3-mini")
+    logger.info(
+        "Task model override removed: user=%s task=%s (reverts to %s)",
+        user_id, task, default_model,
+    )
+    return {"task": task, "model_id": default_model, "status": "reset_to_default"}
 
 
 @router.get("/providers")
