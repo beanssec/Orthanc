@@ -128,6 +128,7 @@ docker compose up -d
 The platform will be available at:
 - **Frontend:** `http://localhost:3001`
 - **Backend API:** `http://localhost:8000/docs`
+- **Agent Access API:** [`docs/agent-api.md`](docs/agent-api.md) — machine-friendly endpoints + API key guide
 
 ### First Login
 

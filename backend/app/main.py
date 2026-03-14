@@ -28,6 +28,8 @@ from app.routers import narratives as narratives_router_module
 from app.routers.models import router as models_router
 from app.routers import graph as graph_router_module
 from app.routers import health as health_router_module
+from app.routers import agent as agent_router_module
+from app.routers import api_keys as api_keys_router_module
 from app.middleware.rate_limit import rate_limit_middleware
 from app.collectors.orchestrator import orchestrator
 from app.collectors.satellite_collector import satellite_collector
@@ -271,6 +273,8 @@ app.include_router(models_router)
 app.include_router(graph_router_module.router)
 app.include_router(frontlines_router)
 app.include_router(health_router_module.router)
+app.include_router(agent_router_module.router)
+app.include_router(api_keys_router_module.router)
 
 
 @app.get("/")
