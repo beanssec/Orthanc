@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../../services/api';
-import { BiasPoint } from './types';
+import type { BiasPoint } from './types';
 
 interface TooltipState {
   x: number;

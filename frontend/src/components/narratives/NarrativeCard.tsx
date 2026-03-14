@@ -1,4 +1,4 @@
-import { Narrative } from './types';
+import type { Narrative } from './types';
 import { timeAgo, divergenceClass, pct } from './utils';
 
 interface NarrativeCardProps {

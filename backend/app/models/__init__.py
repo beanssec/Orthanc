@@ -16,6 +16,7 @@ from .fused_event import FusedEvent
 from .query import SavedQuery, QueryHistory
 from .vessel import VesselTrack, VesselWatchlist, MaritimeEvent
 from .watchpoint import SatWatchpoint, SatSnapshot
+from .source_reliability import SourceReliability
 from .narrative import (
     Narrative,
     NarrativePost,
@@ -44,6 +45,7 @@ __all__ = [
     "SavedQuery", "QueryHistory",
     "VesselTrack", "VesselWatchlist", "MaritimeEvent",
     "SatWatchpoint", "SatSnapshot",
+    "SourceReliability",
     "Narrative", "NarrativePost", "Claim", "ClaimEvidence",
     "SourceGroup", "SourceGroupMember", "SourceBiasProfile", "PostEmbedding",
     "NarrativeTracker", "NarrativeTrackerVersion", "NarrativeTrackerMatch", "NarrativeTrackerMonthlySnapshot",

@@ -6,6 +6,14 @@ import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { formatDateTime } from '../../utils/dateFormat';
 
+interface SourceReliability {
+  reliability_score: number | null;
+  confidence_band: string | null;
+  analyst_override: number | null;
+  analyst_note: string | null;
+  updated_at: string | null;
+}
+
 interface Source {
   id: string;
   type: 'telegram' | 'x' | 'rss' | 'reddit' | 'discord' | 'shodan' | 'webhook' | 'youtube' | 'bluesky' | 'mastodon';
@@ -18,6 +26,7 @@ interface Source {
   download_videos: boolean;
   max_image_size_mb: number;
   max_video_size_mb: number;
+  reliability?: SourceReliability | null;
 }
 
 const TYPE_COLORS: Record<string, string> = {
@@ -45,6 +54,212 @@ const TYPE_PLACEHOLDERS: Record<string, string> = {
   bluesky: 'handle.bsky.social',
   mastodon: 'user@instance.social',
 };
+
+// ── Reliability helpers ──────────────────────────────────────────────────────
+
+const BAND_STYLES: Record<string, { color: string; label: string }> = {
+  high:    { color: '#22c55e', label: 'High' },
+  medium:  { color: '#f59e0b', label: 'Med' },
+  low:     { color: '#f97316', label: 'Low' },
+  unrated: { color: 'var(--text-muted)', label: 'Unrated' },
+};
+
+function ReliabilityBadge({ rel }: { rel: SourceReliability | null | undefined }) {
+  if (!rel) {
+    return <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>—</span>;
+  }
+
+  // Prefer analyst override over computed score
+  const effectiveScore = rel.analyst_override ?? rel.reliability_score;
+  const band = rel.confidence_band ?? 'unrated';
+  const style = BAND_STYLES[band] ?? BAND_STYLES.unrated;
+  const isOverride = rel.analyst_override !== null && rel.analyst_override !== undefined;
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+          padding: '2px 7px',
+          borderRadius: 4,
+          fontSize: 11,
+          fontWeight: 600,
+          letterSpacing: '0.03em',
+          background: `${style.color}22`,
+          color: style.color,
+          border: `1px solid ${style.color}55`,
+        }}
+      >
+        {style.label}
+        {effectiveScore !== null && effectiveScore !== undefined && (
+          <span style={{ opacity: 0.75, fontWeight: 400 }}>
+            {(effectiveScore * 100).toFixed(0)}%
+          </span>
+        )}
+      </span>
+      {isOverride && (
+        <span
+          title={`Analyst override${rel.analyst_note ? ': ' + rel.analyst_note : ''}`}
+          style={{ fontSize: 10, color: '#8b5cf6', fontWeight: 600, cursor: 'default' }}
+        >
+          ✎
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ── Analyst override modal ───────────────────────────────────────────────────
+
+function AnalystOverrideModal({
+  source,
+  onClose,
+  onSaved,
+}: {
+  source: Source;
+  onClose: () => void;
+  onSaved: (updated: SourceReliability) => void;
+}) {
+  const existing = source.reliability;
+  const [scoreInput, setScoreInput] = useState<string>(
+    existing?.analyst_override !== null && existing?.analyst_override !== undefined
+      ? String(Math.round((existing.analyst_override) * 100))
+      : ''
+  );
+  const [note, setNote] = useState(existing?.analyst_note ?? '');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSave = async () => {
+    // Validate score if provided
+    let overrideVal: number | null = null;
+    if (scoreInput.trim() !== '') {
+      const parsed = parseFloat(scoreInput);
+      if (isNaN(parsed) || parsed < 0 || parsed > 100) {
+        setError('Score must be 0–100.');
+        return;
+      }
+      overrideVal = parsed / 100;
+    }
+
+    setError('');
+    setLoading(true);
+    try {
+      const res = await api.patch(`/sources/${source.id}/reliability/override`, {
+        analyst_override: overrideVal,
+        analyst_note: note.trim() || null,
+      });
+      onSaved(res.data);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setError(msg ?? 'Failed to save override.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleClear = async () => {
+    setLoading(true);
+    try {
+      const res = await api.patch(`/sources/${source.id}/reliability/override`, {
+        analyst_override: null,
+        analyst_note: null,
+      });
+      onSaved(res.data);
+    } catch {
+      setError('Failed to clear override.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const hasExisting = existing?.analyst_override !== null && existing?.analyst_override !== undefined;
+
+  return (
+    <Modal
+      title="Analyst Override"
+      onClose={onClose}
+      footer={
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', width: '100%' }}>
+          <div>
+            {hasExisting && (
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ color: 'var(--danger)', fontSize: 12 }}
+                onClick={handleClear}
+                disabled={loading}
+              >
+                Clear Override
+              </button>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
+            <button className="btn btn-primary" onClick={handleSave} disabled={loading}>
+              {loading ? <LoadingSpinner size="sm" /> : null}
+              Save
+            </button>
+          </div>
+        </div>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {/* Source context */}
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 10px', background: 'var(--bg-secondary)', borderRadius: 6 }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{source.display_name}</span>
+          <span style={{ marginLeft: 6, opacity: 0.7 }}>{source.handle}</span>
+          {existing && (
+            <div style={{ marginTop: 4, fontSize: 11 }}>
+              Computed score:{' '}
+              <strong>
+                {existing.reliability_score !== null && existing.reliability_score !== undefined
+                  ? `${(existing.reliability_score * 100).toFixed(0)}% (${existing.confidence_band ?? 'unrated'})`
+                  : 'n/a'}
+              </strong>
+            </div>
+          )}
+        </div>
+
+        {error && <div className="error-message">{error}</div>}
+
+        <div className="form-group">
+          <label className="form-label">
+            Override Score (0–100, leave blank to clear)
+          </label>
+          <input
+            className="input"
+            type="number"
+            min={0}
+            max={100}
+            step={1}
+            placeholder="e.g. 72"
+            value={scoreInput}
+            onChange={(e) => setScoreInput(e.target.value)}
+          />
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+            Overrides the computed score. Leave blank to use the system score.
+          </p>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Analyst Note (optional)</label>
+          <textarea
+            className="input"
+            rows={3}
+            placeholder="Reason for override, known bias, verification status…"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            style={{ resize: 'vertical', fontFamily: 'inherit', fontSize: 13 }}
+          />
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Source add/edit modal ────────────────────────────────────────────────────
 
 function SourceModal({
   onClose,
@@ -224,6 +439,8 @@ function SourceModal({
   );
 }
 
+// ── Main page ────────────────────────────────────────────────────────────────
+
 export function SourcesPage() {
   const [sources, setSources] = useState<Source[]>([]);
   const [loading, setLoading] = useState(true);
@@ -231,6 +448,7 @@ export function SourcesPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [editSource, setEditSource] = useState<Source | null>(null);
   const [deleteSource, setDeleteSource] = useState<Source | null>(null);
+  const [overrideSource, setOverrideSource] = useState<Source | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const fetchSources = async () => {
@@ -270,6 +488,17 @@ export function SourcesPage() {
     }
   };
 
+  // After analyst override is saved, patch the local state so the badge updates
+  // without a full reload.
+  const handleOverrideSaved = (sourceId: string, updated: SourceReliability) => {
+    setSources((prev) =>
+      prev.map((s) =>
+        s.id === sourceId ? { ...s, reliability: updated } : s
+      )
+    );
+    setOverrideSource(null);
+  };
+
   if (loading) return <div style={{ padding: '40px', display: 'flex', justifyContent: 'center' }}><LoadingSpinner size="lg" /></div>;
 
   return (
@@ -293,6 +522,7 @@ export function SourcesPage() {
                 <th>Type</th>
                 <th>Handle</th>
                 <th>Display Name</th>
+                <th>Reliability</th>
                 <th>Status</th>
                 <th>Last Polled</th>
                 <th>Actions</th>
@@ -312,6 +542,9 @@ export function SourcesPage() {
                   </td>
                   <td style={{ color: 'var(--text-primary)' }}>{source.display_name}</td>
                   <td>
+                    <ReliabilityBadge rel={source.reliability} />
+                  </td>
+                  <td>
                     <label className="toggle" title={source.enabled ? 'Disable' : 'Enable'}>
                       <input
                         type="checkbox"
@@ -329,6 +562,14 @@ export function SourcesPage() {
                   </td>
                   <td>
                     <div style={{ display: 'flex', gap: '4px' }}>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        title="Analyst override"
+                        style={{ color: 'var(--text-muted)', fontSize: 12 }}
+                        onClick={() => setOverrideSource(source)}
+                      >
+                        ⚖
+                      </button>
                       <button className="btn btn-ghost btn-sm" onClick={() => setEditSource(source)} title="Edit">✎</button>
                       <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => setDeleteSource(source)} title="Delete">✕</button>
                     </div>
@@ -345,6 +586,14 @@ export function SourcesPage() {
           onClose={() => { setShowAdd(false); setEditSource(null); }}
           onSave={() => { setShowAdd(false); setEditSource(null); fetchSources(); }}
           initial={editSource}
+        />
+      )}
+
+      {overrideSource && (
+        <AnalystOverrideModal
+          source={overrideSource}
+          onClose={() => setOverrideSource(null)}
+          onSaved={(updated) => handleOverrideSaved(overrideSource.id, updated)}
         />
       )}
 

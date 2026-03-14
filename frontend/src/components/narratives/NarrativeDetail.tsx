@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import api from '../../services/api';
-import { NarrativeDetail as NarrativeDetailType, NarrativePost, Claim } from './types';
+import type { NarrativeDetail as NarrativeDetailType, NarrativePost, Claim } from './types';
 import { timeAgo, pct, claimStatusIcon } from './utils';
 
 interface NarrativeDetailProps {

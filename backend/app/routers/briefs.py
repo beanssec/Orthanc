@@ -53,6 +53,10 @@ def brief_to_dict(b: Brief) -> dict:
         "generated_at": b.generated_at.isoformat() if b.generated_at else None,
         # frontend compat aliases
         "time_range_hours": b.hours,
+        # ── Confidence / reliability layer (Sprint 29 Checkpoint 4) ─────────
+        # These fields are nullable for briefs generated before this feature.
+        "confidence_score": b.confidence_score,
+        "confidence_label": b.confidence_label,
     }
 
 
@@ -255,6 +259,9 @@ async def export_brief_pdf(
         "post_count": brief.post_count,
         "cost_estimate": brief.cost_estimate,
         "generated_at": brief.generated_at.strftime("%Y-%m-%d %H:%M UTC"),
+        # Confidence fields (may be None for older briefs)
+        "confidence_score": brief.confidence_score,
+        "confidence_label": brief.confidence_label,
     }
 
     from app.services.pdf_report import pdf_report

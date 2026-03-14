@@ -10,6 +10,7 @@ from app.models.post import Post
 from app.models.brief import Brief
 from app.services.ai_models import get_model, AI_MODELS
 from app.services.model_router import model_router
+from app.services.brief_confidence import compute_brief_confidence, confidence_context_block
 from sqlalchemy import select
 
 logger = logging.getLogger("orthanc.brief_generator")
@@ -77,6 +78,31 @@ class BriefGenerator:
                 "time_range_hours": hours,
                 "model": model_id,
                 "generated_at": datetime.now(timezone.utc).isoformat(),
+                # Confidence metadata — neutral/unrated since no posts
+                "confidence_score": None,
+                "confidence_label": "unrated",
+                "confidence_summary": "No posts available; confidence is unrated.",
+                "confidence_detail": None,
+            }
+
+        # ── Compute source reliability / confidence for this set of posts ──────
+        # Runs inside its own session; degrades safely if reliability data absent.
+        post_uuids = [p.id for p in posts if p.id is not None]
+        confidence: dict = {}
+        try:
+            async with AsyncSessionLocal() as rel_session:
+                confidence = await compute_brief_confidence(rel_session, post_uuids)
+        except Exception as _conf_err:
+            logger.debug("brief_confidence: failed to compute (non-fatal): %s", _conf_err)
+            confidence = {
+                "confidence_score": None,
+                "confidence_label": "unrated",
+                "confidence_summary": "Confidence unavailable.",
+                "source_coverage": 0.0,
+                "conflicting_signals": False,
+                "early_signal": False,
+                "rated_post_count": 0,
+                "total_post_count": len(posts),
             }
 
         # Use more posts for large-context models
@@ -107,6 +133,10 @@ class BriefGenerator:
             f"Generate an intelligence brief from these {len(posts)} recent "
             f"posts (last {hours} hours{filter_desc}):\n\n{context}"
         )
+
+        # Append reliability/confidence context so the AI can factor it in
+        if confidence:
+            user_message += "\n\n" + confidence_context_block(confidence)
 
         logger.info(
             "Generating brief: user=%s model=%s posts=%d hours=%d topic=%s sources=%s",
@@ -152,6 +182,9 @@ class BriefGenerator:
             summary=brief_text,
             cost_estimate=cost_estimate,
             generated_at=generated_at,
+            # Confidence fields (nullable; absent on older rows)
+            confidence_score=confidence.get("confidence_score"),
+            confidence_label=confidence.get("confidence_label"),
         )
         async with AsyncSessionLocal() as session:
             session.add(brief_record)
@@ -168,6 +201,23 @@ class BriefGenerator:
             "model_name": model_config["name"],
             "cost_estimate": cost_estimate,
             "generated_at": generated_at.isoformat(),
+            # ── Confidence / reliability layer (Sprint 29 Checkpoint 4) ──────
+            "confidence_score": confidence.get("confidence_score"),
+            "confidence_label": confidence.get("confidence_label"),
+            "confidence_summary": confidence.get("confidence_summary"),
+            "confidence_detail": {
+                k: confidence[k]
+                for k in (
+                    "source_coverage",
+                    "high_confidence_fraction",
+                    "low_confidence_fraction",
+                    "conflicting_signals",
+                    "early_signal",
+                    "rated_post_count",
+                    "total_post_count",
+                )
+                if k in confidence
+            } or None,
         }
 
 

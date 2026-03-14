@@ -37,6 +37,12 @@ from app.models.post import Post
 from app.models.source import Source
 from app.services.evidence_linker import evidence_linker
 from app.services.stance_classifier import stance_classifier
+from app.services.source_reliability_helper import (  # Sprint 29 CP2
+    reliability_weight,
+    effective_score,
+    weighted_average,
+    NEUTRAL_WEIGHT,
+)
 
 logger = logging.getLogger("orthanc.analyzer")
 
@@ -178,55 +184,127 @@ class NarrativeAnalyzer:
     async def _compute_divergence(self, narrative_id: uuid.UUID) -> float:
         """Compute divergence score: how much do source groups disagree?
 
-        Algorithm:
-        - Get dominant stance per source group.
+        Algorithm (Sprint 29 CP2: reliability-weighted):
+        - Get dominant stance per source group using reliability-weighted voting.
+          High-reliability sources contribute more weight to their group's stance.
+          Sources with no reliability data are treated as neutral weight (0.5).
         - If all groups agree → low divergence (0.0–0.3).
         - If groups have opposing stances → high divergence (0.7–1.0).
         - Western vs Russian disagreement weighted extra.
+
+        Fallback: if SourceReliability table is absent or empty, degrades to
+        unweighted counting (identical to previous behaviour).
         """
-        # Collect (source_group_name, stance) tuples for this narrative
-        group_stances: dict[str, list[str]] = defaultdict(list)
+        # Collect (source_group_name, stance, reliability_weight) tuples
+        # group_stances maps group_name → list of (stance, weight) pairs
+        group_stances: dict[str, list[tuple[str, float]]] = defaultdict(list)
+
+        try:
+            from app.models.source_reliability import SourceReliability  # noqa: PLC0415
+            reliability_available = True
+        except ImportError:
+            reliability_available = False
 
         async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(NarrativePost, Post, Source, SourceGroupMember, SourceGroup)
-                .join(Post, NarrativePost.post_id == Post.id)
-                .join(
-                    Source,
-                    (Source.type == Post.source_type) & (Source.handle == Post.source_id),
-                    isouter=True,
-                )
-                .join(
-                    SourceGroupMember,
-                    SourceGroupMember.source_id == Source.id,
-                    isouter=True,
-                )
-                .join(
-                    SourceGroup,
-                    SourceGroup.id == SourceGroupMember.source_group_id,
-                    isouter=True,
-                )
-                .where(
-                    NarrativePost.narrative_id == narrative_id,
-                    NarrativePost.stance.isnot(None),
-                )
-            )
-            rows = result.all()
+            if reliability_available:
+                try:
+                    result = await session.execute(
+                        select(
+                            NarrativePost.stance,
+                            SourceGroup.name,
+                            SourceReliability.reliability_score,
+                            SourceReliability.analyst_override,
+                            SourceReliability.confidence_band,
+                        )
+                        .join(Post, NarrativePost.post_id == Post.id)
+                        .join(
+                            Source,
+                            (Source.type == Post.source_type) & (Source.handle == Post.source_id),
+                            isouter=True,
+                        )
+                        .join(
+                            SourceGroupMember,
+                            SourceGroupMember.source_id == Source.id,
+                            isouter=True,
+                        )
+                        .join(
+                            SourceGroup,
+                            SourceGroup.id == SourceGroupMember.source_group_id,
+                            isouter=True,
+                        )
+                        .join(
+                            SourceReliability,
+                            SourceReliability.source_id == Source.id,
+                            isouter=True,
+                        )
+                        .where(
+                            NarrativePost.narrative_id == narrative_id,
+                            NarrativePost.stance.isnot(None),
+                        )
+                    )
+                    rows = result.all()
+                    for stance, group_name, rs, ao, band in rows:
+                        if not stance:
+                            continue
+                        gname = group_name or "unknown"
 
-        for row in rows:
-            np_row, post, source, sgm, sg = row
-            group_name = sg.name if sg else "unknown"
-            if np_row.stance:
-                group_stances[group_name].append(np_row.stance)
+                        # Build a lightweight stand-in for effective_score
+                        class _Stub:
+                            reliability_score = rs
+                            analyst_override = ao
+                            confidence_band = band
+
+                        w = reliability_weight(effective_score(_Stub()))
+                        group_stances[gname].append((stance, w))
+                except Exception as exc:
+                    # source_reliability table not yet migrated — fall back to legacy path
+                    logger.debug(
+                        "_compute_divergence: reliability join failed (%s) — using equal weights",
+                        exc,
+                    )
+                    reliability_available = False
+
+            if not reliability_available:
+                # Legacy path: equal weight 1.0 for all stances
+                result = await session.execute(
+                    select(NarrativePost.stance, SourceGroup.name)
+                    .join(Post, NarrativePost.post_id == Post.id)
+                    .join(
+                        Source,
+                        (Source.type == Post.source_type) & (Source.handle == Post.source_id),
+                        isouter=True,
+                    )
+                    .join(
+                        SourceGroupMember,
+                        SourceGroupMember.source_id == Source.id,
+                        isouter=True,
+                    )
+                    .join(
+                        SourceGroup,
+                        SourceGroup.id == SourceGroupMember.source_group_id,
+                        isouter=True,
+                    )
+                    .where(
+                        NarrativePost.narrative_id == narrative_id,
+                        NarrativePost.stance.isnot(None),
+                    )
+                )
+                for stance, group_name in result.all():
+                    if stance:
+                        group_stances[group_name or "unknown"].append((stance, 1.0))
 
         if not group_stances:
             return 0.0
 
-        # Dominant stance per group
+        # Reliability-weighted dominant stance per group
+        # Instead of a raw Counter, accumulate weights per stance
         dominant: dict[str, str] = {}
-        for grp, stances in group_stances.items():
-            if stances:
-                dominant[grp] = Counter(stances).most_common(1)[0][0]
+        for grp, stance_weight_pairs in group_stances.items():
+            stance_scores: dict[str, float] = defaultdict(float)
+            for stance, w in stance_weight_pairs:
+                stance_scores[stance] += w
+            if stance_scores:
+                dominant[grp] = max(stance_scores, key=lambda s: stance_scores[s])
 
         if len(dominant) <= 1:
             return 0.1  # single group — minimal divergence
@@ -243,8 +321,8 @@ class NarrativeAnalyzer:
                 pair = frozenset({s1, s2})
                 if pair in _OPPOSING_PAIRS:
                     # Extra weight for the canonical Western vs Russian axis
-                    weight = 2 if frozenset({g1, g2}) == frozenset({"western", "russian"}) else 1
-                    opposing_count += weight
+                    axis_weight = 2 if frozenset({g1, g2}) == frozenset({"western", "russian"}) else 1
+                    opposing_count += axis_weight
 
         if total_pairs == 0:
             return 0.0
@@ -276,24 +354,86 @@ class NarrativeAnalyzer:
 
         - confirmed   : evidence_score > 0.7 AND divergence < 0.3
         - disputed    : evidence_score > 0.3 AND divergence > 0.5
-        - denied      : majority of stances are 'denying' across multiple groups
+        - denied      : reliability-weighted denial stance is majority
         - unverified  : evidence_score < 0.3
-        """
-        # Check for denial majority
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(NarrativePost.stance)
-                .where(
-                    NarrativePost.narrative_id == narrative_id,
-                    NarrativePost.stance.isnot(None),
-                )
-            )
-            stances = [row[0] for row in result.all()]
 
-        if not stances:
+        Sprint 29 CP2: denial ratio is now computed as a reliability-weighted
+        fraction so that denials from low-credibility sources carry less weight.
+        Falls back to unweighted counting when reliability data is absent.
+        """
+        try:
+            from app.models.source_reliability import SourceReliability  # noqa: PLC0415
+            reliability_available = True
+        except ImportError:
+            reliability_available = False
+
+        denial_weight_total = 0.0
+        total_weight = 0.0
+
+        async with AsyncSessionLocal() as session:
+            if reliability_available:
+                try:
+                    result = await session.execute(
+                        select(
+                            NarrativePost.stance,
+                            SourceReliability.reliability_score,
+                            SourceReliability.analyst_override,
+                            SourceReliability.confidence_band,
+                        )
+                        .join(Post, NarrativePost.post_id == Post.id)
+                        .join(
+                            Source,
+                            (Source.type == Post.source_type) & (Source.handle == Post.source_id),
+                            isouter=True,
+                        )
+                        .join(
+                            SourceReliability,
+                            SourceReliability.source_id == Source.id,
+                            isouter=True,
+                        )
+                        .where(
+                            NarrativePost.narrative_id == narrative_id,
+                            NarrativePost.stance.isnot(None),
+                        )
+                    )
+                    rows = result.all()
+                    if rows:
+                        for stance, rs, ao, band in rows:
+                            class _Stub:
+                                reliability_score = rs
+                                analyst_override = ao
+                                confidence_band = band
+
+                            w = reliability_weight(effective_score(_Stub()))
+                            total_weight += w
+                            if stance == "denying":
+                                denial_weight_total += w
+                except Exception as exc:
+                    logger.debug(
+                        "_determine_consensus: reliability join failed (%s) — using equal weights",
+                        exc,
+                    )
+                    reliability_available = False
+
+            if not reliability_available or total_weight == 0.0:
+                # Legacy fallback: unweighted stance list
+                result = await session.execute(
+                    select(NarrativePost.stance)
+                    .where(
+                        NarrativePost.narrative_id == narrative_id,
+                        NarrativePost.stance.isnot(None),
+                    )
+                )
+                stances = [row[0] for row in result.all()]
+                if not stances:
+                    return "unverified"
+                denial_weight_total = float(stances.count("denying"))
+                total_weight = float(len(stances))
+
+        if total_weight == 0.0:
             return "unverified"
 
-        denial_ratio = stances.count("denying") / len(stances)
+        denial_ratio = denial_weight_total / total_weight
 
         if denial_ratio >= 0.5:
             return "denied"

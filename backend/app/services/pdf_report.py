@@ -122,6 +122,24 @@ class OrthanIntelReport:
 
         story = []
 
+        # Confidence banner (if present in brief data)
+        confidence_label = brief.get("confidence_label")
+        if confidence_label and confidence_label != "unrated":
+            banner_color, banner_text = self._confidence_banner_style(confidence_label)
+            conf_style = ParagraphStyle(
+                'ConfidenceBanner',
+                parent=self.styles['Normal'],
+                fontSize=9,
+                textColor=colors.white,
+                backColor=banner_color,
+                alignment=TA_CENTER,
+                spaceAfter=4,
+                spaceBefore=0,
+                fontName='Helvetica-Bold',
+                leading=16,
+            )
+            story.append(Paragraph(banner_text, conf_style))
+
         # Classification banner
         story.append(Paragraph("UNCLASSIFIED // OSINT", self.styles['Classification']))
 
@@ -175,6 +193,50 @@ class OrthanIntelReport:
             ]))
             story.append(t)
 
+        # Confidence summary section (if present)
+        confidence_summary = brief.get("confidence_summary")
+        confidence_detail = brief.get("confidence_detail")
+        if confidence_label or confidence_summary:
+            story.append(Spacer(1, 6 * mm))
+            story.append(Paragraph("SOURCE RELIABILITY & CONFIDENCE", self.styles['SectionHead']))
+            if confidence_summary:
+                story.append(Paragraph(
+                    self._inline(confidence_summary),
+                    self.styles['BodyText_Dark'],
+                ))
+            if confidence_detail:
+                detail_rows = [['Metric', 'Value']]
+                detail_map = {
+                    'source_coverage': ('Source Coverage', lambda v: f"{int(v * 100)}%"),
+                    'rated_post_count': ('Rated Posts', str),
+                    'total_post_count': ('Total Posts', str),
+                    'high_confidence_fraction': ('High-Reliability Fraction', lambda v: f"{int(v * 100)}%"),
+                    'low_confidence_fraction': ('Low-Reliability Fraction', lambda v: f"{int(v * 100)}%"),
+                    'conflicting_signals': ('Conflicting Signals', lambda v: '⚠ YES' if v else 'No'),
+                    'early_signal': ('Early/Weak Signal', lambda v: '⚠ YES' if v else 'No'),
+                }
+                for key, (label_str, fmt) in detail_map.items():
+                    if key in confidence_detail:
+                        try:
+                            detail_rows.append([label_str, fmt(confidence_detail[key])])
+                        except Exception:
+                            pass
+                if len(detail_rows) > 1:
+                    t = Table(detail_rows, colWidths=[90 * mm, 60 * mm])
+                    t.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), SURFACE),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), ACCENT),
+                        ('TEXTCOLOR', (0, 1), (-1, -1), TEXT_PRIMARY),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, -1), 9),
+                        ('BACKGROUND', (0, 1), (-1, -1), DARK_BG),
+                        ('GRID', (0, 0), (-1, -1), 0.5, BORDER),
+                        ('ALIGN', (1, 0), (1, -1), 'LEFT'),
+                        ('TOPPADDING', (0, 0), (-1, -1), 4),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+                    ]))
+                    story.append(t)
+
         # Source breakdown (if provided and non-empty)
         if source_stats:
             story.append(Spacer(1, 6 * mm))
@@ -210,6 +272,18 @@ class OrthanIntelReport:
 
         doc.build(story, onFirstPage=self._add_bg, onLaterPages=self._add_bg)
         return buffer.getvalue()
+
+    def _confidence_banner_style(self, label: str) -> tuple:
+        """Return (background_color, banner_text) for a confidence label."""
+        label_lower = label.lower()
+        if "high" in label_lower:
+            return colors.HexColor('#065f46'), f"SOURCE CONFIDENCE: {label.upper()}"
+        if "conflict" in label_lower:
+            return colors.HexColor('#92400e'), f"⚠ {label.upper()}"
+        if "low" in label_lower or "early" in label_lower or "weak" in label_lower:
+            return colors.HexColor('#7f1d1d'), f"⚠ {label.upper()}"
+        # medium / default
+        return colors.HexColor('#1e3a5f'), f"SOURCE CONFIDENCE: {label.upper()}"
 
     def _add_bg(self, canvas, doc):
         """Dark background on every page."""

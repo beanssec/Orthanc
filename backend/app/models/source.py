@@ -43,3 +43,6 @@ class Source(Base):
     bias_profiles: Mapped[list["SourceBiasProfile"]] = relationship(  # noqa: F821
         back_populates="source", cascade="all, delete-orphan"
     )
+    reliability: Mapped[Optional["SourceReliability"]] = relationship(  # noqa: F821
+        back_populates="source", uselist=False, cascade="all, delete-orphan"
+    )

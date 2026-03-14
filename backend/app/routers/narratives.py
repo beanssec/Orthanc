@@ -564,6 +564,7 @@ def _classify_evidence_relation(
     match_score: float,
     pattern_matched: bool,
     entity_matched: bool,
+    source_quality: float | None = None,
 ) -> str:
     """Heuristic evidence-relation classification.
 
@@ -574,9 +575,40 @@ def _classify_evidence_relation(
     2. Strong confirmation + high match → supports
     3. Medium relevance signal → contextual
     4. Fallback → unclear
+
+    Sprint 29 CP2 — source_quality integration:
+    When ``source_quality`` (average reliability weight of sources that
+    contributed to this narrative, 0.0–1.0) is provided:
+    - High quality (≥ 0.7): slightly lower threshold for "supports" — we trust
+      the signal more.
+    - Low quality (≤ 0.3): slightly raise threshold for "supports" — require
+      stronger evidence before promoting to "supports".
+    - None / absent: falls back to original thresholds exactly.
+
+    This keeps the function additive and backward-safe.
     """
     confirmation = (narrative.confirmation_status or "").lower()
     consensus = (narrative.consensus or "").lower()
+
+    # ── Threshold adjustment based on source quality ─────────────────────────
+    # supports_threshold: min match_score to label as "supports" (high match path)
+    # supports_evidence_threshold: min match_score when narrative confirms + evidence
+    if source_quality is not None:
+        if source_quality >= 0.7:
+            # High-reliability sources → lower bar slightly
+            supports_threshold = 0.65          # was 0.75
+            supports_evidence_threshold = 0.50  # was 0.60
+        elif source_quality <= 0.3:
+            # Low-reliability sources → raise bar
+            supports_threshold = 0.85          # was 0.75
+            supports_evidence_threshold = 0.70  # was 0.60
+        else:
+            supports_threshold = 0.75
+            supports_evidence_threshold = 0.60
+    else:
+        # No reliability data — original thresholds preserved exactly
+        supports_threshold = 0.75
+        supports_evidence_threshold = 0.60
 
     # ── 1. Refutation signals ────────────────────────────────────────────────
     if confirmation in ("refuted", "debunked", "false", "disproven") or \
@@ -585,13 +617,13 @@ def _classify_evidence_relation(
             return "contradicts"
 
     # ── 2. Confirmation / strong support signals ─────────────────────────────
-    if match_score >= 0.6:
+    if match_score >= supports_evidence_threshold:
         if confirmation in ("confirmed", "verified", "true") or \
                 narrative.evidence_score >= 0.6:
             return "supports"
 
     # High match rate alone is strong enough to be "supports"
-    if match_score >= 0.75:
+    if match_score >= supports_threshold:
         return "supports"
 
     # ── 3. Medium relevance → contextual ────────────────────────────────────
@@ -615,6 +647,14 @@ async def _recompute_tracker(db: AsyncSession, tracker: NarrativeTracker, versio
       entity_ids     — from criteria *union* tracker.entity_ids (resolved to names)
 
     Each match gets an evidence_relation classification via _classify_evidence_relation.
+
+    Sprint 29 CP2 — source reliability integration:
+    Before scoring candidates, a bulk reliability weight map is precomputed for
+    all candidate narrative ids.  Each narrative's average source reliability
+    weight is passed to ``_classify_evidence_relation`` as ``source_quality``,
+    allowing the relation classification to be more precise when reliable sources
+    are present.  Falls back to original thresholds when no reliability data
+    exists (source_quality=None).
 
     Optional LLM assist (Sprint 26 CP3)
     ------------------------------------
@@ -700,6 +740,34 @@ async def _recompute_tracker(db: AsyncSession, tracker: NarrativeTracker, versio
     for row in old_snaps.scalars().all():
         await db.delete(row)
 
+    # ── Sprint 29 CP2: precompute source reliability weights for all candidates ──
+    # One bulk query covering all candidate narrative_ids; falls back to empty
+    # dict (source_quality=None for all narratives) if the table is absent.
+    narrative_reliability_weights: dict[uuid.UUID, float] = {}
+    if candidates:
+        try:
+            from app.services.source_reliability_helper import (  # noqa: PLC0415
+                fetch_narrative_reliability_weights,
+            )
+            candidate_ids = [n.id for n in candidates]
+            narrative_reliability_weights = await fetch_narrative_reliability_weights(
+                db, candidate_ids
+            )
+            if narrative_reliability_weights:
+                logger.debug(
+                    "Tracker %s: loaded reliability weights for %d/%d narratives",
+                    tracker.id,
+                    len(narrative_reliability_weights),
+                    len(candidate_ids),
+                )
+        except Exception as exc:
+            # Degrade safely — reliability weighting is strictly additive
+            logger.debug(
+                "Tracker %s: reliability weight preload failed (%s) — "
+                "source_quality will be None for all narratives",
+                tracker.id, exc,
+            )
+
     # ── Score each candidate ─────────────────────────────────────────────────
     # Each entry: (narrative, score, pattern_matched, entity_matched, evidence_relation)
     matched: list[tuple[Narrative, float, bool, bool, str]] = []
@@ -743,9 +811,14 @@ async def _recompute_tracker(db: AsyncSession, tracker: NarrativeTracker, versio
             keyword_hit_rate, pattern_score, entity_score,
             has_keywords, has_patterns, has_entities,
         )
+
+        # Source quality hint for this narrative (None if no reliability data)
+        source_quality = narrative_reliability_weights.get(n.id)
+
         # Heuristic evidence_relation — always computed as safe baseline
         heuristic_relation = _classify_evidence_relation(
-            n, score, pattern_matched, entity_matched
+            n, score, pattern_matched, entity_matched,
+            source_quality=source_quality,
         )
         matched.append((n, score, pattern_matched, entity_matched, heuristic_relation))
 

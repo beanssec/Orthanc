@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import api from '../../services/api';
-import { Narrative, NarrativeTracker, NarrativeTrackerMonthlyPoint } from './types';
+import type { Narrative, NarrativeTracker, NarrativeTrackerMonthlyPoint } from './types';
 import { NarrativeCard } from './NarrativeCard';
 import { NarrativeDetail } from './NarrativeDetail';
 import { BiasCompass } from './BiasCompass';
