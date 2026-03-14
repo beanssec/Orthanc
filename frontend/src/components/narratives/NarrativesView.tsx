@@ -165,7 +165,7 @@ export function NarrativesView() {
           </button>
 
           {total > 0 && (
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
+            <span className="narratives-total-count">
               {total} total
             </span>
           )}
@@ -173,71 +173,65 @@ export function NarrativesView() {
       </div>
 
       {trackersEnabled && (
-        <div className="models-card" style={{ marginBottom: '0.75rem', padding: '0.75rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-            <strong style={{ fontSize: '0.8rem' }}>Story Trackers (operator-defined)</strong>
+        <div className="models-card narratives-trackers">
+          <div className="narratives-trackers__header">
+            <strong className="narratives-trackers__title">Story Trackers (operator-defined)</strong>
             {selectedTrackerId && (
-              <button onClick={() => handleRecomputeTracker(selectedTrackerId)} style={{ fontSize: '0.75rem' }}>
+              <button className="narratives-trackers__recompute" onClick={() => handleRecomputeTracker(selectedTrackerId)}>
                 Recompute
               </button>
             )}
           </div>
 
-          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+          <div className="narratives-trackers__form">
             <input
-              className="input"
+              className="input narratives-trackers__input"
               placeholder="Tracker name (e.g. Iran nuclear build-up)"
               value={trackerName}
               onChange={(e) => setTrackerName(e.target.value)}
-              style={{ minWidth: 260 }}
             />
             <input
-              className="input"
+              className="input narratives-trackers__input"
               placeholder="keywords comma-separated"
               value={trackerKeywords}
               onChange={(e) => setTrackerKeywords(e.target.value)}
-              style={{ minWidth: 260 }}
             />
             <button onClick={handleCreateTracker} disabled={creatingTracker || !trackerName.trim()}>
               {creatingTracker ? 'Creating…' : 'Add Tracker'}
             </button>
           </div>
 
-          {trackerError && <div className="narratives-error" style={{ marginBottom: '0.5rem' }}>{trackerError}</div>}
+          {trackerError && <div className="narratives-error narratives-trackers__error">{trackerError}</div>}
 
           {trackers.length > 0 ? (
             <>
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+              <div className="narratives-trackers__list">
                 {trackers.map((t) => (
                   <button
                     key={t.id}
                     onClick={() => setSelectedTrackerId(t.id)}
-                    style={{
-                      fontSize: '0.72rem',
-                      border: selectedTrackerId === t.id ? '1px solid var(--accent-primary)' : '1px solid var(--border-primary)',
-                      background: 'transparent',
-                    }}
+                    className={selectedTrackerId === t.id ? 'narratives-trackers__pill narratives-trackers__pill--active' : 'narratives-trackers__pill'}
                   >
                     {t.name} · v{t.version}
                   </button>
                 ))}
               </div>
               {trackerTimeline.length > 0 && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(120px,1fr))', gap: '0.4rem' }}>
+                <div className="narratives-trackers__timeline">
                   {trackerTimeline.map((row) => (
-                    <div key={row.month} style={{ border: '1px solid var(--border-primary)', borderRadius: 6, padding: '0.4rem' }}>
-                      <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }}>
+                    <div key={row.month} className="narratives-trackers__month">
+                      <div className="narratives-trackers__month-label">
                         {new Date(row.month).toLocaleDateString('en-US', { month: 'short', year: '2-digit' })}
                       </div>
-                      <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{row.matched_narratives} narratives</div>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{row.total_posts} posts</div>
+                      <div className="narratives-trackers__month-value">{row.matched_narratives} narratives</div>
+                      <div className="narratives-trackers__month-subvalue">{row.total_posts} posts</div>
                     </div>
                   ))}
                 </div>
               )}
             </>
           ) : (
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+            <div className="narratives-trackers__empty">
               No trackers yet.
             </div>
           )}
@@ -255,7 +249,7 @@ export function NarrativesView() {
             <div className="narratives-error">{error}</div>
           )}
           {!loading && !error && narratives.length === 0 && (
-            <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+            <div className="narratives-empty">
               No narratives found.
               <br />
               <span style={{ fontSize: '0.75rem' }}>Narratives are generated as sources ingest conflicting reports.</span>
