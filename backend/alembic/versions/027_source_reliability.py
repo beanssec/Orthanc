@@ -1,7 +1,7 @@
 """source_reliability — Sprint 29 Checkpoint 1
 
-Revision ID: 027
-Revises: 026
+Revision ID: 027_source_reliability
+Revises: 026_tracker_narrative_refinement
 Create Date: 2026-03-14
 """
 from alembic import op
@@ -9,8 +9,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = "027"
-down_revision = "026"
+revision = "027_source_reliability"
+down_revision = "026_tracker_narrative_refinement"
 branch_labels = None
 depends_on = None
 

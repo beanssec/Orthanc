@@ -3,16 +3,16 @@
 Adds optional confidence_score and confidence_label columns to the briefs
 table.  Both are nullable so existing rows are unaffected (backward-safe).
 
-Revision ID: 028
-Revises: 027
+Revision ID: 028_brief_confidence
+Revises: 027_source_reliability
 Create Date: 2026-03-14
 """
 from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = "028"
-down_revision = "027"
+revision = "028_brief_confidence"
+down_revision = "027_source_reliability"
 branch_labels = None
 depends_on = None
 
