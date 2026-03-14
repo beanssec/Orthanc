@@ -6,7 +6,7 @@ from .event import Event
 from .source import Source
 from .alert import Alert, AlertHit
 from .alert_rule import AlertRule, AlertEvent
-from .entity import Entity, EntityMention
+from .entity import Entity, EntityMention, EntityAlias, EntityTypeOverride
 from .entity_relationship import EntityRelationship
 from .collaboration import UserNote, UserBookmark, UserTag
 from .brief import Brief
@@ -16,12 +16,25 @@ from .fused_event import FusedEvent
 from .query import SavedQuery, QueryHistory
 from .vessel import VesselTrack, VesselWatchlist, MaritimeEvent
 from .watchpoint import SatWatchpoint, SatSnapshot
-from .narrative import Narrative, NarrativePost, Claim, ClaimEvidence, SourceGroup, SourceGroupMember, SourceBiasProfile, PostEmbedding
+from .narrative import (
+    Narrative,
+    NarrativePost,
+    Claim,
+    ClaimEvidence,
+    SourceGroup,
+    SourceGroupMember,
+    SourceBiasProfile,
+    PostEmbedding,
+    NarrativeTracker,
+    NarrativeTrackerVersion,
+    NarrativeTrackerMatch,
+    NarrativeTrackerMonthlySnapshot,
+)
 
 __all__ = [
     "Base", "User", "Credential", "Post", "Event", "Source",
     "Alert", "AlertHit", "AlertRule", "AlertEvent",
-    "Entity", "EntityMention",
+    "Entity", "EntityMention", "EntityAlias", "EntityTypeOverride",
     "EntityRelationship",
     "UserNote", "UserBookmark", "UserTag",
     "Brief",
@@ -33,4 +46,5 @@ __all__ = [
     "SatWatchpoint", "SatSnapshot",
     "Narrative", "NarrativePost", "Claim", "ClaimEvidence",
     "SourceGroup", "SourceGroupMember", "SourceBiasProfile", "PostEmbedding",
+    "NarrativeTracker", "NarrativeTrackerVersion", "NarrativeTrackerMatch", "NarrativeTrackerMonthlySnapshot",
 ]

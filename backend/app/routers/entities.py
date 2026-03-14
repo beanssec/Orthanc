@@ -15,7 +15,8 @@ from sqlalchemy.orm import selectinload
 from app.db import get_db
 from app.middleware.auth import get_current_user
 from app.models import Post, User
-from app.models.entity import Entity, EntityMention
+from app.models.entity import Entity, EntityMention, EntityAlias, EntityTypeOverride
+from app.services.entity_extractor import entity_extractor
 from app.models.entity_relationship import EntityRelationship
 from app.schemas.entities import EntityConnectionItem, EntityDetailSchema, EntitySchema
 
@@ -62,13 +63,14 @@ class RelationshipCreate(BaseModel):
 async def list_entities(
     type: Optional[str] = Query(None, description="Filter by entity type (PERSON, ORG, GPE, EVENT, NORP)"),
     sort_by: Literal["mention_count", "last_seen", "name"] = Query("mention_count"),
+    resolved: bool = Query(False, description="When true, apply type overrides if present"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> list[EntitySchema]:
     query = select(Entity)
-    if type:
+    if type and not resolved:
         query = query.where(Entity.type == type.upper())
 
     if sort_by == "mention_count":
@@ -80,7 +82,214 @@ async def list_entities(
 
     query = query.limit(limit).offset(offset)
     result = await db.execute(query)
-    return result.scalars().all()
+    entities = result.scalars().all()
+
+    if not resolved:
+        return entities
+
+    overrides_result = await db.execute(select(EntityTypeOverride))
+    override_map = {str(o.entity_id): o.override_type for o in overrides_result.scalars().all()}
+
+    output: list[dict[str, Any]] = []
+    requested_type = type.upper() if type else None
+    for entity in entities:
+        effective_type = override_map.get(str(entity.id), entity.type)
+        if requested_type and effective_type != requested_type:
+            continue
+        output.append(
+            {
+                "id": entity.id,
+                "name": entity.name,
+                "type": effective_type,
+                "canonical_name": entity.canonical_name,
+                "mention_count": entity.mention_count,
+                "first_seen": entity.first_seen,
+                "last_seen": entity.last_seen,
+            }
+        )
+
+    return output
+
+
+VALID_ENTITY_TYPES = {"PERSON", "ORG", "GPE", "EVENT", "NORP"}
+_ORG_SUFFIX_HINTS = (
+    "ministry",
+    "department",
+    "agency",
+    "command",
+    "forces",
+    "army",
+    "government",
+    "committee",
+    "corporation",
+    "corp",
+    "inc",
+    "ltd",
+    "llc",
+    "co",
+)
+
+
+@router.get("/normalization/summary")
+async def entity_normalization_summary(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> dict:
+    alias_rows = await db.execute(select(func.count()).select_from(EntityAlias))
+    override_rows = await db.execute(select(func.count()).select_from(EntityTypeOverride))
+
+    top_aliases = await db.execute(
+        select(EntityAlias.alias_text, EntityAlias.alias_norm, Entity.name)
+        .join(Entity, Entity.id == EntityAlias.entity_id)
+        .order_by(EntityAlias.created_at.desc())
+        .limit(20)
+    )
+
+    return {
+        "alias_count": alias_rows.scalar() or 0,
+        "override_count": override_rows.scalar() or 0,
+        "recent_aliases": [
+            {"alias": a, "normalized": n, "entity": e}
+            for a, n, e in top_aliases.all()
+        ],
+    }
+
+
+@router.post("/normalization/rebuild")
+async def rebuild_entity_normalization(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> dict:
+    entities_result = await db.execute(select(Entity).order_by(Entity.mention_count.desc()))
+    entities = entities_result.scalars().all()
+
+    by_canonical: dict[str, list[Entity]] = {}
+    for entity in entities:
+        by_canonical.setdefault(entity.canonical_name, []).append(entity)
+
+    alias_created = 0
+    for canonical, group in by_canonical.items():
+        if len(group) < 2:
+            continue
+        primary = max(group, key=lambda e: e.mention_count)
+        known_alias_norms = set()
+        existing_aliases = await db.execute(select(EntityAlias).where(EntityAlias.entity_id == primary.id))
+        for alias in existing_aliases.scalars().all():
+            known_alias_norms.add(alias.alias_norm)
+
+        for entity in group:
+            alias_norm = entity_extractor.canonical_name(entity.name)
+            if alias_norm in known_alias_norms:
+                continue
+            db.add(
+                EntityAlias(
+                    entity_id=primary.id,
+                    alias_text=entity.name,
+                    alias_norm=alias_norm,
+                    confidence=1.0 if entity.id == primary.id else 0.9,
+                    source="auto",
+                )
+            )
+            known_alias_norms.add(alias_norm)
+            alias_created += 1
+
+    overrides_created = 0
+    for entity in entities:
+        is_person = entity.type == "PERSON"
+        lower_name = (entity.name or "").lower()
+        should_be_org = is_person and any(token in lower_name for token in _ORG_SUFFIX_HINTS)
+        if not should_be_org:
+            continue
+        exists = await db.execute(select(EntityTypeOverride).where(EntityTypeOverride.entity_id == entity.id))
+        if exists.scalars().first():
+            continue
+        db.add(
+            EntityTypeOverride(
+                entity_id=entity.id,
+                override_type="ORG",
+                reason="auto: org-suffix-heuristic",
+            )
+        )
+        overrides_created += 1
+
+    await db.commit()
+    return {
+        "status": "ok",
+        "entities_scanned": len(entities),
+        "aliases_created": alias_created,
+        "overrides_created": overrides_created,
+    }
+
+
+@router.post("/{entity_id}/aliases")
+async def add_entity_alias(
+    entity_id: uuid.UUID,
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> dict:
+    alias_text = str(payload.get("alias_text") or "").strip()
+    if not alias_text:
+        raise HTTPException(status_code=400, detail="alias_text is required")
+
+    entity_result = await db.execute(select(Entity).where(Entity.id == entity_id))
+    entity = entity_result.scalars().first()
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+
+    alias_norm = entity_extractor.canonical_name(alias_text)
+    existing = await db.execute(
+        select(EntityAlias).where(
+            EntityAlias.entity_id == entity.id,
+            EntityAlias.alias_norm == alias_norm,
+        )
+    )
+    if existing.scalars().first():
+        return {"status": "exists", "entity_id": str(entity.id), "alias_norm": alias_norm}
+
+    db.add(
+        EntityAlias(
+            entity_id=entity.id,
+            alias_text=alias_text,
+            alias_norm=alias_norm,
+            confidence=float(payload.get("confidence") or 1.0),
+            source=str(payload.get("source") or "manual"),
+        )
+    )
+    await db.commit()
+    return {"status": "created", "entity_id": str(entity.id), "alias_norm": alias_norm}
+
+
+@router.post("/{entity_id}/type-override")
+async def set_entity_type_override(
+    entity_id: uuid.UUID,
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> dict:
+    override_type = str(payload.get("override_type") or "").upper().strip()
+    if override_type not in VALID_ENTITY_TYPES:
+        raise HTTPException(status_code=400, detail=f"override_type must be one of {sorted(VALID_ENTITY_TYPES)}")
+
+    entity_result = await db.execute(select(Entity).where(Entity.id == entity_id))
+    entity = entity_result.scalars().first()
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+
+    existing = await db.execute(select(EntityTypeOverride).where(EntityTypeOverride.entity_id == entity.id))
+    row = existing.scalars().first()
+    reason = (payload.get("reason") or "manual").strip() if isinstance(payload.get("reason"), str) else "manual"
+
+    if row:
+        row.override_type = override_type
+        row.reason = reason
+        status = "updated"
+    else:
+        db.add(EntityTypeOverride(entity_id=entity.id, override_type=override_type, reason=reason))
+        status = "created"
+
+    await db.commit()
+    return {"status": status, "entity_id": str(entity.id), "override_type": override_type}
 
 
 @router.get("/graph")

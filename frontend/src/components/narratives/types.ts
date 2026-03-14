@@ -66,3 +66,25 @@ export interface BiasPoint {
 export interface BiasCompassResponse {
   points: BiasPoint[];
 }
+
+export interface NarrativeTracker {
+  id: string;
+  name: string;
+  objective: string | null;
+  status: 'active' | 'paused' | 'archived';
+  updated_at: string | null;
+  version: number;
+  criteria: {
+    keywords?: string[];
+    min_divergence?: number;
+    min_evidence?: number;
+  };
+}
+
+export interface NarrativeTrackerMonthlyPoint {
+  month: string;
+  matched_narratives: number;
+  total_posts: number;
+  avg_divergence_score: number | null;
+  avg_evidence_score: number | null;
+}

@@ -7,7 +7,7 @@ import '../../styles/entities.css';
 
 // ── Types ──────────────────────────────────────────────────
 interface Entity {
-  id: number;
+  id: string;
   name: string;
   type: string;
   canonical_name?: string;
@@ -65,10 +65,10 @@ export function EntitiesView() {
   const [page, setPage] = useState(0);
 
   // Selection — initialise from URL params or route id
-  const [selectedId, setSelectedId] = useState<number | null>(() => {
-    if (routeId) return parseInt(routeId, 10);
+  const [selectedId, setSelectedId] = useState<string | null>(() => {
+    if (routeId) return routeId;
     const sel = searchParams.get('selected');
-    return sel ? parseInt(sel, 10) : null;
+    return sel || null;
   });
 
   useEffect(() => {

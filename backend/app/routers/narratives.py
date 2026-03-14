@@ -1,11 +1,19 @@
+from datetime import datetime, timezone
+from collections import defaultdict
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import settings
 from app.db import get_db
+from app.models.user import User
 from app.routers.auth import get_current_user
 from app.models.narrative import (
     Narrative, NarrativePost, Claim, ClaimEvidence,
     SourceGroup, SourceGroupMember, SourceBiasProfile, PostEmbedding,
+    NarrativeTracker, NarrativeTrackerVersion, NarrativeTrackerMatch, NarrativeTrackerMonthlySnapshot,
 )
 from app.models.post import Post
 from app.models.source import Source
@@ -263,16 +271,15 @@ async def bias_compass(
 # registered BEFORE the wildcard /{narrative_id} routes so FastAPI doesn't
 # greedily match them as UUIDs.
 
-@router.get("/{narrative_id}")
+@router.get("/{narrative_id:uuid}")
 async def get_narrative(
-    narrative_id: str,
+    narrative_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """Get full narrative detail with posts, stances, and claims."""
-    import uuid
     result = await db.execute(
-        select(Narrative).where(Narrative.id == uuid.UUID(narrative_id))
+        select(Narrative).where(Narrative.id == narrative_id)
     )
     narrative = result.scalars().first()
     if not narrative:
@@ -330,21 +337,20 @@ async def get_narrative(
     return detail
 
 
-@router.get("/{narrative_id}/timeline")
+@router.get("/{narrative_id:uuid}/timeline")
 async def narrative_timeline(
-    narrative_id: str,
+    narrative_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """Hourly post count by source group for a narrative."""
-    import uuid
     from collections import defaultdict
 
     # Get posts with source info
     result = await db.execute(
         select(Post.timestamp, Post.source_type, Post.source_id)
         .join(NarrativePost, NarrativePost.post_id == Post.id)
-        .where(NarrativePost.narrative_id == uuid.UUID(narrative_id))
+        .where(NarrativePost.narrative_id == narrative_id)
         .order_by(Post.timestamp)
     )
     posts = result.all()
@@ -364,17 +370,16 @@ async def narrative_timeline(
     return {"timeline": {k: dict(v) for k, v in buckets.items()}}
 
 
-@router.get("/{narrative_id}/claims")
+@router.get("/{narrative_id:uuid}/claims")
 async def narrative_claims(
-    narrative_id: str,
+    narrative_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """Get all claims with their evidence for a narrative."""
-    import uuid
 
     claims_result = await db.execute(
-        select(Claim).where(Claim.narrative_id == uuid.UUID(narrative_id))
+        select(Claim).where(Claim.narrative_id == narrative_id)
     )
     claims = claims_result.scalars().all()
 
@@ -411,13 +416,431 @@ async def narrative_claims(
     return output
 
 
-@router.post("/{narrative_id}/refresh")
+@router.post("/{narrative_id:uuid}/refresh")
 async def refresh_narrative(
-    narrative_id: str,
+    narrative_id: uuid.UUID,
     current_user=Depends(get_current_user),
 ):
     """Force re-cluster and re-classify a narrative (placeholder)."""
     return {"status": "refresh queued", "narrative_id": narrative_id}
+
+
+# ─── Tracker APIs (FEAT-001) ──────────────────────────────────────────────────
+
+
+def _ensure_trackers_enabled() -> None:
+    if not settings.NARRATIVE_TRACKERS_ENABLED:
+        raise HTTPException(status_code=404, detail="Narrative trackers are disabled")
+
+
+def _month_bucket(ts: datetime) -> datetime:
+    ts = ts.astimezone(timezone.utc)
+    return datetime(ts.year, ts.month, 1, tzinfo=timezone.utc)
+
+
+def _normalize_criteria(data: dict) -> dict:
+    keywords = data.get("keywords") or []
+    if isinstance(keywords, str):
+        keywords = [k.strip() for k in keywords.split(",") if k.strip()]
+    keywords = [str(k).strip().lower() for k in keywords if str(k).strip()]
+    unique_keywords: list[str] = []
+    for k in keywords:
+        if k not in unique_keywords:
+            unique_keywords.append(k)
+
+    return {
+        "keywords": unique_keywords,
+        "min_divergence": float(data.get("min_divergence") or 0),
+        "min_evidence": float(data.get("min_evidence") or 0),
+    }
+
+
+async def _get_latest_tracker_version(db: AsyncSession, tracker_id: uuid.UUID) -> NarrativeTrackerVersion | None:
+    result = await db.execute(
+        select(NarrativeTrackerVersion)
+        .where(NarrativeTrackerVersion.tracker_id == tracker_id)
+        .order_by(desc(NarrativeTrackerVersion.version))
+        .limit(1)
+    )
+    return result.scalars().first()
+
+
+async def _recompute_tracker(db: AsyncSession, tracker: NarrativeTracker, version: NarrativeTrackerVersion) -> dict:
+    criteria = version.criteria or {}
+    keywords = [str(k).strip().lower() for k in (criteria.get("keywords") or []) if str(k).strip()]
+    min_divergence = float(criteria.get("min_divergence") or 0)
+    min_evidence = float(criteria.get("min_evidence") or 0)
+
+    result = await db.execute(
+        select(Narrative)
+        .where(
+            Narrative.divergence_score >= min_divergence,
+            Narrative.evidence_score >= min_evidence,
+        )
+        .order_by(desc(Narrative.last_updated))
+    )
+    candidates = result.scalars().all()
+
+    # Replace prior match artifacts for current tracker version.
+    old_matches = await db.execute(
+        select(NarrativeTrackerMatch).where(
+            NarrativeTrackerMatch.tracker_id == tracker.id,
+            NarrativeTrackerMatch.tracker_version_id == version.id,
+        )
+    )
+    for row in old_matches.scalars().all():
+        await db.delete(row)
+
+    old_snaps = await db.execute(
+        select(NarrativeTrackerMonthlySnapshot).where(
+            NarrativeTrackerMonthlySnapshot.tracker_id == tracker.id,
+            NarrativeTrackerMonthlySnapshot.tracker_version_id == version.id,
+        )
+    )
+    for row in old_snaps.scalars().all():
+        await db.delete(row)
+
+    matched: list[tuple[Narrative, float]] = []
+    for n in candidates:
+        haystack = " ".join([
+            n.title or "",
+            n.summary or "",
+            " ".join(n.topic_keywords or []),
+        ]).lower()
+
+        score = 0.0
+        if keywords:
+            hits = sum(1 for kw in keywords if kw in haystack)
+            if hits == 0:
+                continue
+            score = hits / max(len(keywords), 1)
+        else:
+            score = 1.0
+
+        matched.append((n, score))
+
+    month_rollup: dict[datetime, dict] = defaultdict(lambda: {
+        "matched_narratives": 0,
+        "total_posts": 0,
+        "sum_divergence": 0.0,
+        "sum_evidence": 0.0,
+    })
+
+    for narrative, score in matched:
+        db.add(NarrativeTrackerMatch(
+            tracker_id=tracker.id,
+            tracker_version_id=version.id,
+            narrative_id=narrative.id,
+            match_score=score,
+        ))
+        month = _month_bucket(narrative.last_updated or narrative.created_at)
+        bucket = month_rollup[month]
+        bucket["matched_narratives"] += 1
+        bucket["total_posts"] += (narrative.post_count or 0)
+        bucket["sum_divergence"] += (narrative.divergence_score or 0)
+        bucket["sum_evidence"] += (narrative.evidence_score or 0)
+
+    for month, stats in month_rollup.items():
+        count = max(stats["matched_narratives"], 1)
+        db.add(NarrativeTrackerMonthlySnapshot(
+            tracker_id=tracker.id,
+            tracker_version_id=version.id,
+            month_bucket=month,
+            matched_narratives=stats["matched_narratives"],
+            total_posts=stats["total_posts"],
+            avg_divergence_score=stats["sum_divergence"] / count,
+            avg_evidence_score=stats["sum_evidence"] / count,
+        ))
+
+    await db.commit()
+    return {
+        "matched_narratives": len(matched),
+        "months": len(month_rollup),
+        "keywords": keywords,
+    }
+
+
+@router.get("/trackers")
+async def list_trackers(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_trackers_enabled()
+    result = await db.execute(
+        select(NarrativeTracker)
+        .where(NarrativeTracker.owner_user_id == current_user.id)
+        .order_by(desc(NarrativeTracker.updated_at))
+    )
+    trackers = result.scalars().all()
+
+    items = []
+    for t in trackers:
+        latest_version = await _get_latest_tracker_version(db, t.id)
+        items.append({
+            "id": str(t.id),
+            "name": t.name,
+            "objective": t.objective,
+            "status": t.status,
+            "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+            "version": latest_version.version if latest_version else 0,
+            "criteria": latest_version.criteria if latest_version else {},
+        })
+    return {"trackers": items}
+
+
+@router.post("/trackers")
+async def create_tracker(
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_trackers_enabled()
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+
+    objective = (payload.get("objective") or "").strip() or None
+    criteria = _normalize_criteria(payload.get("criteria") or {})
+
+    existing = await db.execute(
+        select(NarrativeTracker).where(
+            NarrativeTracker.owner_user_id == current_user.id,
+            NarrativeTracker.name == name,
+        )
+    )
+    if existing.scalars().first():
+        raise HTTPException(status_code=409, detail="Tracker with this name already exists")
+
+    tracker = NarrativeTracker(
+        owner_user_id=current_user.id,
+        name=name,
+        objective=objective,
+        status="active",
+    )
+    db.add(tracker)
+    await db.flush()
+
+    version = NarrativeTrackerVersion(
+        tracker_id=tracker.id,
+        version=1,
+        criteria=criteria,
+        created_by_user_id=current_user.id,
+    )
+    db.add(version)
+    await db.commit()
+
+    return {
+        "id": str(tracker.id),
+        "name": tracker.name,
+        "objective": tracker.objective,
+        "status": tracker.status,
+        "version": 1,
+        "criteria": criteria,
+    }
+
+
+@router.get("/trackers/{tracker_id}")
+async def get_tracker(
+    tracker_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_trackers_enabled()
+    tracker_uuid = uuid.UUID(tracker_id)
+    result = await db.execute(
+        select(NarrativeTracker).where(
+            NarrativeTracker.id == tracker_uuid,
+            NarrativeTracker.owner_user_id == current_user.id,
+        )
+    )
+    tracker = result.scalars().first()
+    if not tracker:
+        raise HTTPException(status_code=404, detail="Tracker not found")
+
+    latest_version = await _get_latest_tracker_version(db, tracker.id)
+
+    matches_result = await db.execute(
+        select(NarrativeTrackerMatch, Narrative)
+        .join(Narrative, Narrative.id == NarrativeTrackerMatch.narrative_id)
+        .where(
+            NarrativeTrackerMatch.tracker_id == tracker.id,
+            NarrativeTrackerMatch.tracker_version_id == (latest_version.id if latest_version else None),
+        )
+        .order_by(desc(NarrativeTrackerMatch.match_score), desc(Narrative.last_updated))
+        .limit(50)
+    )
+
+    matches = [
+        {
+            "narrative_id": str(n.id),
+            "title": n.title,
+            "status": n.status,
+            "last_updated": n.last_updated.isoformat() if n.last_updated else None,
+            "post_count": n.post_count or 0,
+            "match_score": m.match_score,
+        }
+        for m, n in matches_result.all()
+    ]
+
+    return {
+        "id": str(tracker.id),
+        "name": tracker.name,
+        "objective": tracker.objective,
+        "status": tracker.status,
+        "updated_at": tracker.updated_at.isoformat() if tracker.updated_at else None,
+        "version": latest_version.version if latest_version else 0,
+        "criteria": latest_version.criteria if latest_version else {},
+        "matches": matches,
+    }
+
+
+@router.patch("/trackers/{tracker_id}")
+async def update_tracker(
+    tracker_id: str,
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_trackers_enabled()
+    tracker_uuid = uuid.UUID(tracker_id)
+    result = await db.execute(
+        select(NarrativeTracker).where(
+            NarrativeTracker.id == tracker_uuid,
+            NarrativeTracker.owner_user_id == current_user.id,
+        )
+    )
+    tracker = result.scalars().first()
+    if not tracker:
+        raise HTTPException(status_code=404, detail="Tracker not found")
+
+    name = payload.get("name")
+    if isinstance(name, str) and name.strip():
+        tracker.name = name.strip()
+
+    if "objective" in payload:
+        objective = payload.get("objective")
+        tracker.objective = objective.strip() if isinstance(objective, str) and objective.strip() else None
+
+    if "status" in payload and payload["status"] in {"active", "paused", "archived"}:
+        tracker.status = payload["status"]
+
+    if "criteria" in payload:
+        latest_version = await _get_latest_tracker_version(db, tracker.id)
+        next_version = (latest_version.version + 1) if latest_version else 1
+        criteria = _normalize_criteria(payload.get("criteria") or {})
+        db.add(NarrativeTrackerVersion(
+            tracker_id=tracker.id,
+            version=next_version,
+            criteria=criteria,
+            created_by_user_id=current_user.id,
+        ))
+
+    tracker.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    return {"status": "updated", "tracker_id": str(tracker.id)}
+
+
+@router.post("/trackers/{tracker_id}/deactivate")
+async def deactivate_tracker(
+    tracker_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_trackers_enabled()
+    tracker_uuid = uuid.UUID(tracker_id)
+    result = await db.execute(
+        select(NarrativeTracker).where(
+            NarrativeTracker.id == tracker_uuid,
+            NarrativeTracker.owner_user_id == current_user.id,
+        )
+    )
+    tracker = result.scalars().first()
+    if not tracker:
+        raise HTTPException(status_code=404, detail="Tracker not found")
+
+    tracker.status = "paused"
+    tracker.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"status": "paused", "tracker_id": str(tracker.id)}
+
+
+@router.get("/trackers/{tracker_id}/monthly")
+async def tracker_monthly_timeline(
+    tracker_id: str,
+    months: int = Query(12, ge=1, le=36),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_trackers_enabled()
+    tracker_uuid = uuid.UUID(tracker_id)
+    tracker_result = await db.execute(
+        select(NarrativeTracker).where(
+            NarrativeTracker.id == tracker_uuid,
+            NarrativeTracker.owner_user_id == current_user.id,
+        )
+    )
+    tracker = tracker_result.scalars().first()
+    if not tracker:
+        raise HTTPException(status_code=404, detail="Tracker not found")
+
+    latest_version = await _get_latest_tracker_version(db, tracker.id)
+    if not latest_version:
+        return {"tracker_id": tracker_id, "timeline": []}
+
+    snaps_result = await db.execute(
+        select(NarrativeTrackerMonthlySnapshot)
+        .where(
+            NarrativeTrackerMonthlySnapshot.tracker_id == tracker.id,
+            NarrativeTrackerMonthlySnapshot.tracker_version_id == latest_version.id,
+        )
+        .order_by(desc(NarrativeTrackerMonthlySnapshot.month_bucket))
+        .limit(months)
+    )
+    rows = list(reversed(snaps_result.scalars().all()))
+
+    return {
+        "tracker_id": str(tracker.id),
+        "version": latest_version.version,
+        "timeline": [
+            {
+                "month": r.month_bucket.isoformat() if r.month_bucket else None,
+                "matched_narratives": r.matched_narratives,
+                "total_posts": r.total_posts,
+                "avg_divergence_score": r.avg_divergence_score,
+                "avg_evidence_score": r.avg_evidence_score,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.post("/trackers/{tracker_id}/recompute")
+async def recompute_tracker(
+    tracker_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_trackers_enabled()
+    tracker_uuid = uuid.UUID(tracker_id)
+    tracker_result = await db.execute(
+        select(NarrativeTracker).where(
+            NarrativeTracker.id == tracker_uuid,
+            NarrativeTracker.owner_user_id == current_user.id,
+        )
+    )
+    tracker = tracker_result.scalars().first()
+    if not tracker:
+        raise HTTPException(status_code=404, detail="Tracker not found")
+
+    latest_version = await _get_latest_tracker_version(db, tracker.id)
+    if not latest_version:
+        raise HTTPException(status_code=400, detail="Tracker has no criteria version")
+
+    summary = await _recompute_tracker(db, tracker, latest_version)
+    tracker.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"status": "recomputed", "tracker_id": str(tracker.id), "summary": summary}
 
 
 # ─── Helper functions ──────────────────────────────────────────────────────────

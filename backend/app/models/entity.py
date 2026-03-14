@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, text
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -56,3 +56,40 @@ class EntityMention(Base):
 
     entity: Mapped["Entity"] = relationship(back_populates="mentions")
     post: Mapped["Post"] = relationship()  # noqa: F821
+
+
+class EntityAlias(Base):
+    """Alias names that resolve to a canonical entity."""
+    __tablename__ = "entity_aliases"
+    __table_args__ = (
+        Index("ix_entity_aliases_norm", "alias_norm"),
+        Index("ix_entity_aliases_entity", "entity_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, server_default=text("uuid_generate_v4()")
+    )
+    entity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("entities.id", ondelete="CASCADE"), nullable=False
+    )
+    alias_text: Mapped[str] = mapped_column(String, nullable=False)
+    alias_norm: Mapped[str] = mapped_column(String, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=1.0, server_default="1.0")
+    source: Mapped[str] = mapped_column(String, nullable=False, server_default=text("'manual'"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
+class EntityTypeOverride(Base):
+    """Manual/curated effective type overrides without destructive edits."""
+    __tablename__ = "entity_type_overrides"
+
+    entity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("entities.id", ondelete="CASCADE"), primary_key=True
+    )
+    override_type: Mapped[str] = mapped_column(String, nullable=False)
+    reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )

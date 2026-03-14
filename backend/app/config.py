@@ -11,5 +11,8 @@ class Settings(BaseSettings):
     ENCRYPTION_KEY: str = "change-me-to-a-random-string"
     CORS_ORIGINS: str = "*"
 
+    # Feature flags
+    NARRATIVE_TRACKERS_ENABLED: bool = False
+
 
 settings = Settings()

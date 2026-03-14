@@ -199,3 +199,84 @@ class PostEmbedding(Base):
 
     # Relationships
     post: Mapped["Post"] = relationship()  # noqa: F821
+
+
+class NarrativeTracker(Base):
+    __tablename__ = "narrative_trackers"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, server_default=text("uuid_generate_v4()")
+    )
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    objective: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'active'"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+    versions: Mapped[list["NarrativeTrackerVersion"]] = relationship(
+        back_populates="tracker", cascade="all, delete-orphan"
+    )
+
+
+class NarrativeTrackerVersion(Base):
+    __tablename__ = "narrative_tracker_versions"
+    __table_args__ = (
+        UniqueConstraint("tracker_id", "version", name="uq_tracker_version"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, server_default=text("uuid_generate_v4()")
+    )
+    tracker_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("narrative_trackers.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    criteria: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_by_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+    tracker: Mapped["NarrativeTracker"] = relationship(back_populates="versions")
+
+
+class NarrativeTrackerMatch(Base):
+    __tablename__ = "narrative_tracker_matches"
+    __table_args__ = (
+        UniqueConstraint("tracker_id", "tracker_version_id", "narrative_id", name="uq_tracker_version_narrative"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, server_default=text("uuid_generate_v4()")
+    )
+    tracker_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("narrative_trackers.id", ondelete="CASCADE"), nullable=False
+    )
+    tracker_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("narrative_tracker_versions.id", ondelete="CASCADE"), nullable=False
+    )
+    narrative_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("narratives.id", ondelete="CASCADE"), nullable=False)
+    match_score: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0"))
+    matched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+
+class NarrativeTrackerMonthlySnapshot(Base):
+    __tablename__ = "narrative_tracker_monthly_snapshots"
+    __table_args__ = (
+        UniqueConstraint("tracker_id", "tracker_version_id", "month_bucket", name="uq_tracker_monthly_snapshot"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, server_default=text("uuid_generate_v4()")
+    )
+    tracker_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("narrative_trackers.id", ondelete="CASCADE"), nullable=False
+    )
+    tracker_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("narrative_tracker_versions.id", ondelete="CASCADE"), nullable=False
+    )
+    month_bucket: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    matched_narratives: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    total_posts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    avg_divergence_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    avg_evidence_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))

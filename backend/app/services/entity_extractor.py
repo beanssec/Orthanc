@@ -15,6 +15,19 @@ _TITLE_RE = re.compile(
     r"^(Mr|Mrs|Ms|Dr|Prof|President|PM|Sen|Rep|Gen|Adm|Col|Cpt|Lt|Sgt)\.?\s+",
     re.IGNORECASE,
 )
+_NON_ALNUM_RE = re.compile(r"[^a-z0-9\s]")
+_MULTI_SPACE_RE = re.compile(r"\s+")
+
+_ALIAS_EQUIVALENTS = {
+    "u s": "united states",
+    "u s a": "united states",
+    "us": "united states",
+    "usa": "united states",
+    "u k": "united kingdom",
+    "uk": "united kingdom",
+    "u a e": "united arab emirates",
+    "uae": "united arab emirates",
+}
 
 
 class EntityExtractor:
@@ -89,11 +102,16 @@ class EntityExtractor:
     def canonical_name(self, name: str) -> str:
         """Normalize entity name for deduplication/linking.
 
-        Strips titles, lowercases, and strips whitespace.
+        - strips titles
+        - normalizes punctuation/spacing/case
+        - applies a small high-confidence alias map for common geo abbreviations
         """
         n = name.strip()
         n = _TITLE_RE.sub("", n)
-        return n.lower().strip()
+        n = n.lower().strip()
+        n = _NON_ALNUM_RE.sub(" ", n)
+        n = _MULTI_SPACE_RE.sub(" ", n).strip()
+        return _ALIAS_EQUIVALENTS.get(n, n)
 
 
 # Module-level singleton — shared across all collectors
