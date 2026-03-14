@@ -1,8 +1,12 @@
 from datetime import datetime, timezone
 from collections import defaultdict
+import logging
+import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+
+logger = logging.getLogger("orthanc.narratives")
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -439,6 +443,20 @@ def _month_bucket(ts: datetime) -> datetime:
 
 
 def _normalize_criteria(data: dict) -> dict:
+    """Normalise and validate criteria dict stored in NarrativeTrackerVersion.
+
+    Versioned search parameters for a tracker.  All fields are optional and
+    additive — unknown keys are dropped to prevent criteria bloat.
+
+    Supported fields
+    ----------------
+    keywords        : list[str] | comma-separated str  — full-text matching
+    entity_ids      : list[str]  — entity UUIDs to restrict matching
+    claim_patterns  : list[str]  — keyword/regex patterns for claim matching
+    min_divergence  : float      — minimum narrative divergence score (0–1)
+    min_evidence    : float      — minimum narrative evidence score (0–1)
+    """
+    # ── keywords ────────────────────────────────────────────────────────────
     keywords = data.get("keywords") or []
     if isinstance(keywords, str):
         keywords = [k.strip() for k in keywords.split(",") if k.strip()]
@@ -448,10 +466,48 @@ def _normalize_criteria(data: dict) -> dict:
         if k not in unique_keywords:
             unique_keywords.append(k)
 
+    # ── entity_ids ──────────────────────────────────────────────────────────
+    entity_ids = data.get("entity_ids") or []
+    if not isinstance(entity_ids, list):
+        entity_ids = []
+    entity_ids = [str(e).strip() for e in entity_ids if str(e).strip()]
+
+    # ── claim_patterns ──────────────────────────────────────────────────────
+    claim_patterns = data.get("claim_patterns") or []
+    if not isinstance(claim_patterns, list):
+        claim_patterns = []
+    claim_patterns = [str(p).strip() for p in claim_patterns if str(p).strip()]
+
     return {
         "keywords": unique_keywords,
+        "entity_ids": entity_ids,
+        "claim_patterns": claim_patterns,
         "min_divergence": float(data.get("min_divergence") or 0),
         "min_evidence": float(data.get("min_evidence") or 0),
+    }
+
+
+def _serialize_tracker(
+    tracker: "NarrativeTracker",
+    latest_version: "NarrativeTrackerVersion | None",
+) -> dict:
+    """Shared serialization helper for NarrativeTracker responses."""
+    return {
+        "id": str(tracker.id),
+        "name": tracker.name,
+        # Legacy field retained for backward compat
+        "objective": tracker.objective,
+        # Sprint 26 CP1: richer hypothesis fields
+        "description": tracker.description,
+        "hypothesis": tracker.hypothesis,
+        "entity_ids": tracker.entity_ids or [],
+        "claim_patterns": tracker.claim_patterns or [],
+        "model_policy": tracker.model_policy,
+        "status": tracker.status,
+        "created_at": tracker.created_at.isoformat() if tracker.created_at else None,
+        "updated_at": tracker.updated_at.isoformat() if tracker.updated_at else None,
+        "version": latest_version.version if latest_version else 0,
+        "criteria": latest_version.criteria if latest_version else {},
     }
 
 
@@ -465,12 +521,156 @@ async def _get_latest_tracker_version(db: AsyncSession, tracker_id: uuid.UUID) -
     return result.scalars().first()
 
 
+def _compute_match_score(
+    keyword_hit_rate: float,
+    pattern_score: float,
+    entity_score: float,
+    has_keywords: bool,
+    has_patterns: bool,
+    has_entities: bool,
+) -> float:
+    """Compute composite match score from available signals.
+
+    When only keywords are set this degrades to the old keyword_hit_rate
+    behaviour exactly, so existing trackers are unaffected.
+    """
+    if not has_keywords and not has_patterns and not has_entities:
+        return 1.0  # No criteria: match everything
+
+    # Weights are assigned proportionally; absent signals contribute 0 weight.
+    weighted_sum = 0.0
+    total_weight = 0.0
+
+    if has_keywords:
+        w = 0.5 if (has_patterns or has_entities) else 1.0
+        weighted_sum += keyword_hit_rate * w
+        total_weight += w
+
+    if has_patterns:
+        w = 0.3
+        weighted_sum += pattern_score * w
+        total_weight += w
+
+    if has_entities:
+        w = 0.2
+        weighted_sum += entity_score * w
+        total_weight += w
+
+    return weighted_sum / total_weight if total_weight > 0 else 0.0
+
+
+def _classify_evidence_relation(
+    narrative: "Narrative",
+    match_score: float,
+    pattern_matched: bool,
+    entity_matched: bool,
+) -> str:
+    """Heuristic evidence-relation classification.
+
+    Returns one of: supports | contradicts | contextual | unclear
+
+    Heuristics (in priority order):
+    1. Strong refutation signals → contradicts
+    2. Strong confirmation + high match → supports
+    3. Medium relevance signal → contextual
+    4. Fallback → unclear
+    """
+    confirmation = (narrative.confirmation_status or "").lower()
+    consensus = (narrative.consensus or "").lower()
+
+    # ── 1. Refutation signals ────────────────────────────────────────────────
+    if confirmation in ("refuted", "debunked", "false", "disproven") or \
+            consensus in ("contradicted", "false", "debunked"):
+        if match_score >= 0.25:
+            return "contradicts"
+
+    # ── 2. Confirmation / strong support signals ─────────────────────────────
+    if match_score >= 0.6:
+        if confirmation in ("confirmed", "verified", "true") or \
+                narrative.evidence_score >= 0.6:
+            return "supports"
+
+    # High match rate alone is strong enough to be "supports"
+    if match_score >= 0.75:
+        return "supports"
+
+    # ── 3. Medium relevance → contextual ────────────────────────────────────
+    if match_score >= 0.35:
+        return "contextual"
+    if entity_matched and match_score >= 0.15:
+        return "contextual"
+    if pattern_matched and match_score >= 0.15:
+        return "contextual"
+
+    # ── 4. Fallback ──────────────────────────────────────────────────────────
+    return "unclear"
+
+
 async def _recompute_tracker(db: AsyncSession, tracker: NarrativeTracker, version: NarrativeTrackerVersion) -> dict:
+    """Recompute matches for a tracker version using rich signal matching.
+
+    Signal priority (all additive, all backward-safe):
+      keywords       — from criteria (old behaviour preserved when only field set)
+      claim_patterns — from criteria *union* tracker.claim_patterns
+      entity_ids     — from criteria *union* tracker.entity_ids (resolved to names)
+
+    Each match gets an evidence_relation classification via _classify_evidence_relation.
+
+    Optional LLM assist (Sprint 26 CP3)
+    ------------------------------------
+    When ``tracker.model_policy`` has ``{"enabled": true}``, the top-N heuristic
+    candidates are passed to ``llm_refine_batch`` which calls the model to
+    re-classify ``evidence_relation``.  Heuristic values are preserved on any
+    model failure — the LLM path is strictly additive and never blocks.
+    """
     criteria = version.criteria or {}
     keywords = [str(k).strip().lower() for k in (criteria.get("keywords") or []) if str(k).strip()]
     min_divergence = float(criteria.get("min_divergence") or 0)
     min_evidence = float(criteria.get("min_evidence") or 0)
 
+    # ── claim_patterns: union of criteria + tracker-level ───────────────────
+    crit_patterns = [str(p).strip() for p in (criteria.get("claim_patterns") or []) if str(p).strip()]
+    tracker_patterns = [str(p).strip() for p in (tracker.claim_patterns or []) if str(p).strip()]
+    # dedup preserving order
+    seen_pat: set[str] = set()
+    merged_patterns: list[str] = []
+    for p in crit_patterns + tracker_patterns:
+        if p not in seen_pat:
+            seen_pat.add(p)
+            merged_patterns.append(p)
+
+    compiled_patterns: list[re.Pattern] = []
+    for pat in merged_patterns:
+        try:
+            compiled_patterns.append(re.compile(pat, re.IGNORECASE))
+        except re.error:
+            compiled_patterns.append(re.compile(re.escape(pat), re.IGNORECASE))
+
+    # ── entity_ids: union of criteria + tracker-level, resolved to names ────
+    crit_eids = [str(e).strip() for e in (criteria.get("entity_ids") or []) if str(e).strip()]
+    tracker_eids = [str(e).strip() for e in (tracker.entity_ids or []) if str(e).strip()]
+    merged_eids: list[str] = list(dict.fromkeys(crit_eids + tracker_eids))  # dedup, order-stable
+
+    entity_names: list[str] = []
+    if merged_eids:
+        from app.models.entity import Entity as EntityModel
+        valid_uuids: list[uuid.UUID] = []
+        for eid in merged_eids:
+            try:
+                valid_uuids.append(uuid.UUID(eid))
+            except ValueError:
+                pass
+        if valid_uuids:
+            ent_result = await db.execute(
+                select(EntityModel.canonical_name).where(EntityModel.id.in_(valid_uuids))
+            )
+            entity_names = [r[0].lower() for r in ent_result.all() if r[0]]
+
+    has_keywords = bool(keywords)
+    has_patterns = bool(compiled_patterns)
+    has_entities = bool(entity_names)
+
+    # ── Fetch candidates ─────────────────────────────────────────────────────
     result = await db.execute(
         select(Narrative)
         .where(
@@ -481,7 +681,7 @@ async def _recompute_tracker(db: AsyncSession, tracker: NarrativeTracker, versio
     )
     candidates = result.scalars().all()
 
-    # Replace prior match artifacts for current tracker version.
+    # ── Replace prior match artefacts for this tracker version ───────────────
     old_matches = await db.execute(
         select(NarrativeTrackerMatch).where(
             NarrativeTrackerMatch.tracker_id == tracker.id,
@@ -500,25 +700,77 @@ async def _recompute_tracker(db: AsyncSession, tracker: NarrativeTracker, versio
     for row in old_snaps.scalars().all():
         await db.delete(row)
 
-    matched: list[tuple[Narrative, float]] = []
+    # ── Score each candidate ─────────────────────────────────────────────────
+    # Each entry: (narrative, score, pattern_matched, entity_matched, evidence_relation)
+    matched: list[tuple[Narrative, float, bool, bool, str]] = []
+
     for n in candidates:
         haystack = " ".join([
             n.title or "",
             n.summary or "",
+            n.canonical_claim or "",
             " ".join(n.topic_keywords or []),
         ]).lower()
 
-        score = 0.0
-        if keywords:
+        # keyword signal
+        keyword_hit_rate = 0.0
+        if has_keywords:
             hits = sum(1 for kw in keywords if kw in haystack)
-            if hits == 0:
+            keyword_hit_rate = hits / len(keywords)
+
+        # claim_pattern signal
+        pattern_matched = False
+        pattern_score = 0.0
+        if has_patterns:
+            pattern_hits = sum(1 for pat in compiled_patterns if pat.search(haystack))
+            pattern_matched = pattern_hits > 0
+            pattern_score = pattern_hits / len(compiled_patterns)
+
+        # entity signal
+        entity_matched = False
+        entity_score = 0.0
+        if has_entities:
+            entity_hits = sum(1 for en in entity_names if en in haystack)
+            entity_matched = entity_hits > 0
+            entity_score = entity_hits / len(entity_names)
+
+        # Filter: must have at least one signal hit when criteria are set
+        if has_keywords or has_patterns or has_entities:
+            if keyword_hit_rate == 0.0 and not pattern_matched and not entity_matched:
                 continue
-            score = hits / max(len(keywords), 1)
-        else:
-            score = 1.0
 
-        matched.append((n, score))
+        score = _compute_match_score(
+            keyword_hit_rate, pattern_score, entity_score,
+            has_keywords, has_patterns, has_entities,
+        )
+        # Heuristic evidence_relation — always computed as safe baseline
+        heuristic_relation = _classify_evidence_relation(
+            n, score, pattern_matched, entity_matched
+        )
+        matched.append((n, score, pattern_matched, entity_matched, heuristic_relation))
 
+    # ── Optional LLM refinement pass (Sprint 26 CP3) ─────────────────────────
+    # Only activated when model_policy.enabled == true.  Falls back to heuristic
+    # relations on any error — safe by design.
+    llm_assist_used = False
+    if matched and tracker.model_policy and tracker.model_policy.get("enabled"):
+        try:
+            from app.services.tracker_llm_assist import llm_refine_batch
+            from app.services.model_router import model_router as _model_router
+            matched = await llm_refine_batch(tracker, matched, _model_router)
+            llm_assist_used = True
+            logger.info(
+                "LLM assist activated for tracker=%s (policy=%s)",
+                tracker.id, tracker.model_policy,
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "LLM assist import/invocation failed for tracker=%s: %s — "
+                "heuristic relations preserved",
+                tracker.id, exc,
+            )
+
+    # ── Create match rows with evidence_relation ─────────────────────────────
     month_rollup: dict[datetime, dict] = defaultdict(lambda: {
         "matched_narratives": 0,
         "total_posts": 0,
@@ -526,12 +778,13 @@ async def _recompute_tracker(db: AsyncSession, tracker: NarrativeTracker, versio
         "sum_evidence": 0.0,
     })
 
-    for narrative, score in matched:
+    for narrative, score, pattern_matched, entity_matched, evidence_relation in matched:
         db.add(NarrativeTrackerMatch(
             tracker_id=tracker.id,
             tracker_version_id=version.id,
             narrative_id=narrative.id,
             match_score=score,
+            evidence_relation=evidence_relation,
         ))
         month = _month_bucket(narrative.last_updated or narrative.created_at)
         bucket = month_rollup[month]
@@ -557,6 +810,9 @@ async def _recompute_tracker(db: AsyncSession, tracker: NarrativeTracker, versio
         "matched_narratives": len(matched),
         "months": len(month_rollup),
         "keywords": keywords,
+        "claim_patterns": merged_patterns,
+        "entity_ids_resolved": len(entity_names),
+        "llm_assist_used": llm_assist_used,
     }
 
 
@@ -576,15 +832,7 @@ async def list_trackers(
     items = []
     for t in trackers:
         latest_version = await _get_latest_tracker_version(db, t.id)
-        items.append({
-            "id": str(t.id),
-            "name": t.name,
-            "objective": t.objective,
-            "status": t.status,
-            "updated_at": t.updated_at.isoformat() if t.updated_at else None,
-            "version": latest_version.version if latest_version else 0,
-            "criteria": latest_version.criteria if latest_version else {},
-        })
+        items.append(_serialize_tracker(t, latest_version))
     return {"trackers": items}
 
 
@@ -600,7 +848,27 @@ async def create_tracker(
         raise HTTPException(status_code=400, detail="name is required")
 
     objective = (payload.get("objective") or "").strip() or None
-    criteria = _normalize_criteria(payload.get("criteria") or {})
+    description = (payload.get("description") or "").strip() or None
+    hypothesis = (payload.get("hypothesis") or "").strip() or None
+
+    entity_ids = payload.get("entity_ids") or []
+    if not isinstance(entity_ids, list):
+        entity_ids = []
+    entity_ids = [str(e).strip() for e in entity_ids if str(e).strip()]
+
+    claim_patterns = payload.get("claim_patterns") or []
+    if not isinstance(claim_patterns, list):
+        claim_patterns = []
+    claim_patterns = [str(p).strip() for p in claim_patterns if str(p).strip()]
+
+    model_policy = payload.get("model_policy") if isinstance(payload.get("model_policy"), dict) else None
+
+    # Build criteria from explicit criteria dict, but also allow top-level
+    # shorthand (keywords passed at root level) for backward compat.
+    raw_criteria = payload.get("criteria") or {}
+    if not raw_criteria.get("keywords") and payload.get("keywords"):
+        raw_criteria.setdefault("keywords", payload["keywords"])
+    criteria = _normalize_criteria(raw_criteria)
 
     existing = await db.execute(
         select(NarrativeTracker).where(
@@ -615,6 +883,11 @@ async def create_tracker(
         owner_user_id=current_user.id,
         name=name,
         objective=objective,
+        description=description,
+        hypothesis=hypothesis,
+        entity_ids=entity_ids or None,
+        claim_patterns=claim_patterns or None,
+        model_policy=model_policy,
         status="active",
     )
     db.add(tracker)
@@ -629,14 +902,7 @@ async def create_tracker(
     db.add(version)
     await db.commit()
 
-    return {
-        "id": str(tracker.id),
-        "name": tracker.name,
-        "objective": tracker.objective,
-        "status": tracker.status,
-        "version": 1,
-        "criteria": criteria,
-    }
+    return _serialize_tracker(tracker, version)
 
 
 @router.get("/trackers/{tracker_id}")
@@ -678,20 +944,15 @@ async def get_tracker(
             "last_updated": n.last_updated.isoformat() if n.last_updated else None,
             "post_count": n.post_count or 0,
             "match_score": m.match_score,
+            # Sprint 26 CP1: evidence_relation placeholder (populated by CP2 matching engine)
+            "evidence_relation": m.evidence_relation,
         }
         for m, n in matches_result.all()
     ]
 
-    return {
-        "id": str(tracker.id),
-        "name": tracker.name,
-        "objective": tracker.objective,
-        "status": tracker.status,
-        "updated_at": tracker.updated_at.isoformat() if tracker.updated_at else None,
-        "version": latest_version.version if latest_version else 0,
-        "criteria": latest_version.criteria if latest_version else {},
-        "matches": matches,
-    }
+    detail = _serialize_tracker(tracker, latest_version)
+    detail["matches"] = matches
+    return detail
 
 
 @router.patch("/trackers/{tracker_id}")
@@ -721,6 +982,30 @@ async def update_tracker(
         objective = payload.get("objective")
         tracker.objective = objective.strip() if isinstance(objective, str) and objective.strip() else None
 
+    if "description" in payload:
+        description = payload.get("description")
+        tracker.description = description.strip() if isinstance(description, str) and description.strip() else None
+
+    if "hypothesis" in payload:
+        hypothesis = payload.get("hypothesis")
+        tracker.hypothesis = hypothesis.strip() if isinstance(hypothesis, str) and hypothesis.strip() else None
+
+    if "entity_ids" in payload:
+        entity_ids = payload.get("entity_ids") or []
+        if not isinstance(entity_ids, list):
+            entity_ids = []
+        tracker.entity_ids = [str(e).strip() for e in entity_ids if str(e).strip()] or None
+
+    if "claim_patterns" in payload:
+        claim_patterns = payload.get("claim_patterns") or []
+        if not isinstance(claim_patterns, list):
+            claim_patterns = []
+        tracker.claim_patterns = [str(p).strip() for p in claim_patterns if str(p).strip()] or None
+
+    if "model_policy" in payload:
+        mp = payload.get("model_policy")
+        tracker.model_policy = mp if isinstance(mp, dict) else None
+
     if "status" in payload and payload["status"] in {"active", "paused", "archived"}:
         tracker.status = payload["status"]
 
@@ -738,7 +1023,8 @@ async def update_tracker(
     tracker.updated_at = datetime.now(timezone.utc)
     await db.commit()
 
-    return {"status": "updated", "tracker_id": str(tracker.id)}
+    latest_version = await _get_latest_tracker_version(db, tracker.id)
+    return _serialize_tracker(tracker, latest_version)
 
 
 @router.post("/trackers/{tracker_id}/deactivate")
@@ -859,6 +1145,13 @@ def _serialize_narrative(n: Narrative) -> dict:
         "evidence_score": n.evidence_score or 0,
         "consensus": n.consensus,
         "topic_keywords": n.topic_keywords or [],
+        # Canonical narrative intelligence fields (Sprint 25)
+        "raw_title": n.raw_title,
+        "canonical_title": n.canonical_title,
+        "canonical_claim": n.canonical_claim,
+        "narrative_type": n.narrative_type,
+        "label_confidence": n.label_confidence,
+        "confirmation_status": n.confirmation_status,
     }
 
 

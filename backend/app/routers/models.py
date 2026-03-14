@@ -66,6 +66,10 @@ async def list_task_assignments(
         model_router.TASK_ENRICH,
         model_router.TASK_IMAGE,
         model_router.TASK_NARRATIVE_TITLE,
+        model_router.TASK_NARRATIVE_LABEL,
+        model_router.TASK_NARRATIVE_CONFIRMATION,
+        model_router.TASK_TRACKED_NARRATIVE_MATCH,
+        model_router.TASK_ENTITY_RESOLUTION_ASSIST,
     ]:
         tasks[task_const] = {
             "task": task_const,
@@ -91,6 +95,10 @@ async def set_task_model(
         model_router.TASK_ENRICH,
         model_router.TASK_IMAGE,
         model_router.TASK_NARRATIVE_TITLE,
+        model_router.TASK_NARRATIVE_LABEL,
+        model_router.TASK_NARRATIVE_CONFIRMATION,
+        model_router.TASK_TRACKED_NARRATIVE_MATCH,
+        model_router.TASK_ENTITY_RESOLUTION_ASSIST,
     }
     if task not in valid_tasks:
         raise HTTPException(

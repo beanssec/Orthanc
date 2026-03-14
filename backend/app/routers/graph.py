@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.middleware.auth import get_current_user
+from app.models import User
 from app.services.cooccurrence_service import cooccurrence_service
 
 router = APIRouter(prefix="/graph", tags=["graph"])
@@ -16,6 +18,7 @@ async def entity_graph(
     limit: int = Query(default=200, ge=1, le=500),
     entity_type: Optional[str] = Query(default=None),
     center: Optional[str] = Query(default=None, description="Entity ID to center the graph on"),
+    _: User = Depends(get_current_user),
 ) -> dict:
     """Get entity co-occurrence graph.
 
@@ -38,6 +41,7 @@ async def entity_graph(
 async def entity_neighbors(
     entity_id: str,
     limit: int = Query(default=20, ge=1, le=100),
+    _: User = Depends(get_current_user),
 ) -> dict:
     """Get entities most closely related to a specific entity."""
     try:

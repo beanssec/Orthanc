@@ -322,6 +322,10 @@ class ModelRouter:
     TASK_ENRICH = "entity_enrichment"
     TASK_IMAGE = "image_analysis"
     TASK_NARRATIVE_TITLE = "narrative_title"
+    TASK_NARRATIVE_LABEL = "narrative_label"
+    TASK_NARRATIVE_CONFIRMATION = "narrative_confirmation"
+    TASK_TRACKED_NARRATIVE_MATCH = "tracked_narrative_match"
+    TASK_ENTITY_RESOLUTION_ASSIST = "entity_resolution_assist"
 
     # Default task-to-model mapping
     DEFAULT_TASK_MODELS: dict[str, str] = {
@@ -333,6 +337,10 @@ class ModelRouter:
         TASK_ENRICH: "grok-3-mini",
         TASK_IMAGE: "openai/gpt-4o",
         TASK_NARRATIVE_TITLE: "grok-3-mini",
+        TASK_NARRATIVE_LABEL: "grok-3-mini",
+        TASK_NARRATIVE_CONFIRMATION: "grok-3-mini",
+        TASK_TRACKED_NARRATIVE_MATCH: "grok-3-mini",
+        TASK_ENTITY_RESOLUTION_ASSIST: "grok-3-mini",
     }
 
     def __init__(self) -> None:

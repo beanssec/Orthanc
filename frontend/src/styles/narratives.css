@@ -756,3 +756,86 @@
   font-size: 0.75rem;
   color: var(--text-secondary);
 }
+
+/* ── Sprint 25: canonical narrative fields ─────────────── */
+
+/* narrative_type pill — small, low-contrast, no distraction */
+.narrative-type-pill {
+  font-size: 0.62rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 8px;
+  background: rgba(139, 92, 246, 0.1);
+  color: #a78bfa;
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  text-transform: lowercase;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
+.narrative-type-pill--detail {
+  font-size: 0.68rem;
+  padding: 0.15rem 0.55rem;
+}
+
+/* confirmation_status badge — mirrors consensus-badge palette */
+.confirmation-badge {
+  font-size: 0.7rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 10px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.confirmation-badge.confirmed {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--success-primary);
+}
+
+.confirmation-badge.likely_true,
+.confirmation-badge.likely_false {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+.confirmation-badge.false,
+.confirmation-badge.debunked {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--alert-primary);
+}
+
+.confirmation-badge.unverified,
+.confirmation-badge.unknown {
+  background: rgba(156, 163, 175, 0.1);
+  color: var(--text-secondary);
+}
+
+.confirmation-badge.disputed {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+/* canonical_claim block in overview tab */
+.narrative-canonical-claim {
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  background: rgba(59, 130, 246, 0.04);
+  border-left: 3px solid rgba(59, 130, 246, 0.3);
+  border-radius: 0 6px 6px 0;
+}
+
+.narrative-canonical-claim__label {
+  display: block;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-primary);
+  margin-bottom: 0.35rem;
+  font-weight: 600;
+}
+
+.narrative-canonical-claim__text {
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  line-height: 1.55;
+  margin: 0;
+}

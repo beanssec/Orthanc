@@ -168,26 +168,41 @@ interface PathModalProps {
 }
 
 function PathModal({ sourceEntityId, sourceEntityName, onClose }: PathModalProps) {
-  const [allEntities, setAllEntities] = useState<EntityListItem[]>([]);
+  const [searchResults, setSearchResults] = useState<EntityListItem[]>([]);
   const [search, setSearch] = useState('');
   const [selectedTarget, setSelectedTarget] = useState<EntityListItem | null>(null);
   const [pathResult, setPathResult] = useState<PathResult | null>(null);
   const [loading, setLoading] = useState(false);
-  const [entitiesLoading, setEntitiesLoading] = useState(true);
+  const [entitiesLoading, setEntitiesLoading] = useState(false);
   const [maxDepth, setMaxDepth] = useState(3);
   const inputRef = useRef<HTMLInputElement>(null);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     inputRef.current?.focus();
-    api.get('/entities/', { params: { limit: 500, sort_by: 'mention_count' } })
-      .then(res => setAllEntities((res.data as EntityListItem[]).filter(e => String(e.id) !== String(sourceEntityId))))
-      .catch(() => {})
-      .finally(() => setEntitiesLoading(false));
-  }, [sourceEntityId]);
+  }, []);
 
-  const filteredEntities = search.trim()
-    ? allEntities.filter(e => e.name.toLowerCase().includes(search.toLowerCase())).slice(0, 10)
-    : [];
+  // On-demand search: fire when user types (debounced 250ms)
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    if (!search.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      setEntitiesLoading(true);
+      api.get('/entities/search', { params: { q: search.trim(), limit: 10, sort_by: 'mention_count' } })
+        .then(res => {
+          const data = res.data as { items: EntityListItem[] };
+          setSearchResults(data.items.filter(e => String(e.id) !== String(sourceEntityId)));
+        })
+        .catch(() => setSearchResults([]))
+        .finally(() => setEntitiesLoading(false));
+    }, 250);
+    return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
+  }, [search, sourceEntityId]);
+
+  const filteredEntities = searchResults;
 
   const findPath = useCallback(async () => {
     if (!selectedTarget) return;
@@ -230,10 +245,9 @@ function PathModal({ sourceEntityId, sourceEntityName, onClose }: PathModalProps
                 <input
                   ref={inputRef}
                   className="input"
-                  placeholder={entitiesLoading ? 'Loading entities…' : 'Search target entity…'}
+                  placeholder={entitiesLoading ? 'Searching…' : 'Type to search entities…'}
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  disabled={entitiesLoading}
                 />
                 {filteredEntities.length > 0 && (
                   <div className="path-modal__dropdown">
@@ -297,7 +311,7 @@ interface AddRelModalProps {
 }
 
 function AddRelationshipModal({ entityId, relTypes, onClose, onCreated }: AddRelModalProps) {
-  const [allEntities, setAllEntities] = useState<EntityListItem[]>([]);
+  const [searchResults, setSearchResults] = useState<EntityListItem[]>([]);
   const [search, setSearch] = useState('');
   const [selectedTarget, setSelectedTarget] = useState<EntityListItem | null>(null);
   const [relType, setRelType] = useState(relTypes[0]?.id ?? '');
@@ -305,18 +319,35 @@ function AddRelationshipModal({ entityId, relTypes, onClose, onCreated }: AddRel
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const relSearchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    api.get('/entities/', { params: { limit: 500, sort_by: 'mention_count' } })
-      .then(res => setAllEntities((res.data as EntityListItem[]).filter(e => e.id !== entityId)))
-      .catch(() => {});
     inputRef.current?.focus();
-  }, [entityId]);
+  }, []);
 
-  const filtered = search.trim()
-    ? allEntities.filter(e => e.name.toLowerCase().includes(search.toLowerCase())).slice(0, 8)
-    : [];
+  // On-demand search when user types
+  useEffect(() => {
+    if (relSearchDebounceRef.current) clearTimeout(relSearchDebounceRef.current);
+    if (!search.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    relSearchDebounceRef.current = setTimeout(() => {
+      setSearchLoading(true);
+      api.get('/entities/search', { params: { q: search.trim(), limit: 8, sort_by: 'mention_count' } })
+        .then(res => {
+          const data = res.data as { items: EntityListItem[] };
+          setSearchResults(data.items.filter(e => e.id !== entityId));
+        })
+        .catch(() => setSearchResults([]))
+        .finally(() => setSearchLoading(false));
+    }, 250);
+    return () => { if (relSearchDebounceRef.current) clearTimeout(relSearchDebounceRef.current); };
+  }, [search, entityId]);
+
+  const filtered = searchResults;
 
   const handleSubmit = async () => {
     if (!selectedTarget || !relType) return;
@@ -361,7 +392,7 @@ function AddRelationshipModal({ entityId, relTypes, onClose, onCreated }: AddRel
                 <input
                   ref={inputRef}
                   className="input"
-                  placeholder="Search entity…"
+                  placeholder={searchLoading ? 'Searching…' : 'Type to search entities…'}
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                 />

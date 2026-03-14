@@ -18,6 +18,14 @@ class Narrative(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'active'"))
+
+    # Canonical narrative intelligence fields (Sprint 25)
+    raw_title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    canonical_title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    canonical_claim: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    narrative_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    label_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    confirmation_status: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_updated: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     post_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
@@ -214,6 +222,13 @@ class NarrativeTracker(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
 
+    # Sprint 26 CP1: richer analyst-defined hypothesis fields
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    hypothesis: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    entity_ids: Mapped[Optional[list]] = mapped_column(ARRAY(Text), nullable=True)
+    claim_patterns: Mapped[Optional[list]] = mapped_column(ARRAY(Text), nullable=True)
+    model_policy: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+
     versions: Mapped[list["NarrativeTrackerVersion"]] = relationship(
         back_populates="tracker", cascade="all, delete-orphan"
     )
@@ -257,6 +272,9 @@ class NarrativeTrackerMatch(Base):
     narrative_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("narratives.id", ondelete="CASCADE"), nullable=False)
     match_score: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0"))
     matched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    # Sprint 26 CP1: groundwork for evidence classification (CP2 will populate these)
+    # Values: supports | contradicts | contextual | unclear | NULL (unclassified)
+    evidence_relation: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
 
 class NarrativeTrackerMonthlySnapshot(Base):

@@ -16,10 +16,35 @@ function StanceBadge({ stance }: { stance: string }) {
   return <span className={`stance-badge ${cls}`}>{stance}</span>;
 }
 
+/** Confirmation status line in overview — text+badge, not badge-soup */
+function ConfirmationLine({ status, consensus }: { status: string | null; consensus: string | null }) {
+  const value = status ?? consensus;
+  if (!value) return null;
+  const cls = status ? `confirmation-badge ${status}` : `consensus-badge ${value}`;
+  const label = status ? status.replace(/_/g, ' ') : value;
+  return (
+    <div style={{ marginTop: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+      <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+        {status ? 'Confirmation:' : 'Consensus:'}
+      </span>
+      <span className={cls}>{label}</span>
+    </div>
+  );
+}
+
 function OverviewTab({ detail }: { detail: NarrativeDetailType }) {
   return (
     <div>
-      {detail.summary && (
+      {/* canonical_claim is the authoritative statement — show it first when present */}
+      {detail.canonical_claim && (
+        <div className="narrative-canonical-claim">
+          <span className="narrative-canonical-claim__label">Core claim</span>
+          <p className="narrative-canonical-claim__text">{detail.canonical_claim}</p>
+        </div>
+      )}
+
+      {/* Fall back to legacy summary only when no canonical_claim */}
+      {!detail.canonical_claim && detail.summary && (
         <p className="narrative-detail-summary" style={{ marginBottom: '1rem' }}>
           {detail.summary}
         </p>
@@ -48,12 +73,10 @@ function OverviewTab({ detail }: { detail: NarrativeDetailType }) {
         </div>
       </div>
 
-      {detail.consensus && (
-        <div style={{ marginTop: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Consensus:</span>
-          <span className={`consensus-badge ${detail.consensus}`}>{detail.consensus}</span>
-        </div>
-      )}
+      <ConfirmationLine
+        status={detail.confirmation_status}
+        consensus={detail.consensus}
+      />
 
       {detail.topic_keywords.length > 0 && (
         <div className="narrative-keywords">
@@ -430,6 +453,9 @@ export function NarrativeDetail({ narrativeId }: NarrativeDetailProps) {
 
   if (!detail) return null;
 
+  // Prefer canonical_title in the header; fall back to legacy title
+  const displayTitle = detail.canonical_title ?? detail.title;
+
   const tabs: { key: TabKey; label: string }[] = [
     { key: 'overview', label: 'Overview' },
     { key: 'stances', label: `Stances (${detail.posts.length})` },
@@ -441,15 +467,40 @@ export function NarrativeDetail({ narrativeId }: NarrativeDetailProps) {
     <>
       <div className="narrative-detail-header">
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.5rem' }}>
-          <div className="narrative-detail-title">{detail.title}</div>
-          <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
-            {detail.consensus && (
+          <div>
+            <div className="narrative-detail-title">{displayTitle}</div>
+            {/* Show original title as a dim subtitle when canonical differs */}
+            {detail.canonical_title && detail.canonical_title !== detail.title && (
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '0.2rem', fontStyle: 'italic' }}>
+                {detail.title}
+              </div>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {detail.narrative_type && (
+              <span className="narrative-type-pill narrative-type-pill--detail">
+                {detail.narrative_type.replace(/_/g, ' ')}
+              </span>
+            )}
+            {detail.confirmation_status && (
+              <span className={`confirmation-badge ${detail.confirmation_status}`}>
+                {detail.confirmation_status.replace(/_/g, ' ')}
+              </span>
+            )}
+            {!detail.confirmation_status && detail.consensus && (
               <span className={`consensus-badge ${detail.consensus}`}>{detail.consensus}</span>
             )}
             <span className={`narrative-status-badge ${detail.status}`}>{detail.status}</span>
           </div>
         </div>
-        {detail.summary && (
+
+        {/* In the header: show canonical_claim as a compact teaser; full treatment in Overview tab */}
+        {detail.canonical_claim && (
+          <div className="narrative-detail-summary" style={{ marginTop: '0.4rem' }}>
+            {detail.canonical_claim}
+          </div>
+        )}
+        {!detail.canonical_claim && detail.summary && (
           <div className="narrative-detail-summary">{detail.summary}</div>
         )}
       </div>

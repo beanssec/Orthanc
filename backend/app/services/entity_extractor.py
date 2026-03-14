@@ -6,6 +6,8 @@ import logging
 import re
 from concurrent.futures import ThreadPoolExecutor
 
+from .entity_aliases import ALIAS_LOOKUP
+
 logger = logging.getLogger("orthanc.entity_extractor")
 
 # Dedicated thread pool for CPU-bound spaCy work so we don't block the event loop
@@ -17,17 +19,6 @@ _TITLE_RE = re.compile(
 )
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9\s]")
 _MULTI_SPACE_RE = re.compile(r"\s+")
-
-_ALIAS_EQUIVALENTS = {
-    "u s": "united states",
-    "u s a": "united states",
-    "us": "united states",
-    "usa": "united states",
-    "u k": "united kingdom",
-    "uk": "united kingdom",
-    "u a e": "united arab emirates",
-    "uae": "united arab emirates",
-}
 
 
 class EntityExtractor:
@@ -102,16 +93,22 @@ class EntityExtractor:
     def canonical_name(self, name: str) -> str:
         """Normalize entity name for deduplication/linking.
 
-        - strips titles
-        - normalizes punctuation/spacing/case
-        - applies a small high-confidence alias map for common geo abbreviations
+        Pipeline:
+        1. Strip leading honorific titles (Mr., Dr., Gen., etc.)
+        2. Lowercase
+        3. Replace all non-alphanumeric chars with spaces
+           (handles dots in U.S.A., I.R.G.C., hyphens in al-Qaeda, etc.)
+        4. Collapse multiple spaces
+        5. Look up in ALIAS_LOOKUP — covers country abbreviations (US/UK/UAE),
+           org acronyms (NATO/IRGC/IDF/CIA/…), and common variants.
+           If no alias matches the normalized form is returned as-is.
         """
         n = name.strip()
         n = _TITLE_RE.sub("", n)
         n = n.lower().strip()
         n = _NON_ALNUM_RE.sub(" ", n)
         n = _MULTI_SPACE_RE.sub(" ", n).strip()
-        return _ALIAS_EQUIVALENTS.get(n, n)
+        return ALIAS_LOOKUP.get(n, n)
 
 
 # Module-level singleton — shared across all collectors

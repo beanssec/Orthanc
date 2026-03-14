@@ -266,3 +266,149 @@
 - Sprint 18 (bugs) can be interleaved with any other sprint
 - Estimated total: ~8 sprints × 2–4 sessions each = 16–32 sessions
 - All work follows existing patterns: Docker, async, no external UI libs, CSS variables, OQL integration
+
+
+---
+
+## Sprint 25 — Narrative Intelligence 2.0
+
+**Goal:** Upgrade narratives from rough embedding clusters into analyst-usable canonical narratives with better titles, claims, type classification, and optional LLM confirmation.
+
+### Phase 1: Canonical Narrative Layer
+- [ ] Extend narrative model/schema with canonical fields:
+  - `raw_title`
+  - `canonical_title`
+  - `canonical_claim`
+  - `narrative_type`
+  - `label_confidence`
+  - `confirmation_status`
+- [ ] Preserve raw/heuristic clustering output separately from analyst-facing title
+- [ ] Update API responses + frontend to prefer `canonical_title` when present
+
+### Phase 2: Better Heuristic Labeling
+- [ ] Replace naive word-frequency title generation with stronger heuristic labeler
+- [ ] Suppress boilerplate/source-attribution terms (`said`, `officials`, `embassy`, `report`, etc.)
+- [ ] Weight entities, action words, and locations more highly than generic tokens
+- [ ] Generate a better heuristic title + heuristic canonical claim before any LLM step
+
+### Phase 3: LLM-Assisted Narrative Labeling
+- [ ] Add model-router tasks:
+  - `narrative_label`
+  - `narrative_confirmation`
+- [ ] Run LLM refinement on representative posts after clustering (not in hot ingestion path)
+- [ ] LLM outputs:
+  - canonical title
+  - canonical claim
+  - narrative type
+  - cluster coherence / confirmation result
+- [ ] Add execution modes:
+  - Off
+  - Assist
+  - Strict
+- [ ] Default provider path: OpenRouter; allow model dropdown selection (Hunter Alpha if available)
+
+### Phase 4: Narrative UI Improvements
+- [ ] Show canonical title, type badge, and confirmation state in narratives page/detail view
+- [ ] Keep UI restrained — no badge spam
+- [ ] Preserve fallback behavior when no provider/model is available
+
+---
+
+## Sprint 26 — Tracked Narratives
+
+**Goal:** Support operator-defined narratives/hypotheses that accumulate supporting/contradicting evidence over time.
+
+### Phase 1: Analyst-Defined Narrative Objects
+- [ ] Expand current tracker system into true tracked narratives / standing hypotheses
+- [ ] Add richer fields:
+  - `name`
+  - `hypothesis`
+  - `description`
+  - `entity_ids`
+  - `keywords`
+  - `claim_patterns`
+  - `status`
+  - `model_policy`
+- [ ] Preserve versioning of criteria
+
+### Phase 2: Matching Engine
+- [ ] Match tracked narratives against:
+  - new posts
+  - discovered narratives
+- [ ] Store scored matches with rationale and timestamps
+- [ ] Add model-router task: `tracked_narrative_match`
+- [ ] Support OpenRouter model dropdown for matching model selection
+
+### Phase 3: Evidence Semantics
+- [ ] Classify matched evidence into:
+  - supports
+  - contradicts
+  - contextual / mention-only
+  - unclear
+- [ ] Surface source-type breakdown, source-group divergence, and evidence timelines
+
+### Phase 4: UI
+- [ ] Create tracked narrative workflow for create/edit/review
+- [ ] Show longitudinal evolution over time (volume, source mix, support vs contradiction)
+
+---
+
+## Sprint 27 — Entity Resolution
+
+**Goal:** Clean up duplicate entities and establish canonical identity handling for aliases and merges.
+
+### Phase 1: Better Normalization
+- [ ] Improve canonicalization rules:
+  - punctuation normalization
+  - abbreviation expansion
+  - country/org alias mapping
+  - whitespace/hyphen normalization
+- [ ] Handle obvious equivalents like `US`, `U.S.`, `USA`, `United States`
+
+### Phase 2: Merge Candidates
+- [ ] Add merge-candidate API with confidence + rationale
+- [ ] Signals:
+  - normalized text similarity
+  - alias matches
+  - shared context
+  - entity type compatibility
+  - optional LLM assistance
+- [ ] Add model-router task: `entity_resolution_assist`
+
+### Phase 3: Merge Workflow
+- [ ] Add safe manual merge endpoint/process
+- [ ] Reassign mentions, preserve aliases, retain canonical entity, and avoid destructive blind deletes
+- [ ] Ensure downstream systems (graph, narratives, search) continue to resolve correctly after merge
+
+### Phase 4: Entity Detail Improvements
+- [ ] Show aliases, effective type, and merge suggestions in entity detail UI
+
+---
+
+## Sprint 28 — Full Entity Search & Scale
+
+**Goal:** Remove top-500 frontend limitation and make entities searchable/paginatable across the full dataset.
+
+### Phase 1: Backend Pagination
+- [ ] Update `/entities/` to return paginated results with `items`, `total`, `limit`, `offset`
+- [ ] Support server-side search/filter/sort against full dataset
+- [ ] Make search alias-aware once Sprint 27 lands
+
+### Phase 2: Frontend Entity Browser
+- [ ] Replace top-500 preload with backend-driven pagination/search
+- [ ] Ensure list/search/sort reflect full dataset, not an in-memory subset
+- [ ] Update entity pickers/path selectors/detail dropdowns to use backend search, not local 500-row cache
+
+### Phase 3: UX Clarification
+- [ ] Show real totals (e.g. `displaying 1–50 of 5,318`)
+- [ ] Remove misleading `500/500` style counts
+
+### Cross-Cutting LLM Model Routing
+- [ ] Add new model-router tasks for narrative and entity-intelligence workflows:
+  - `narrative_label`
+  - `narrative_confirmation`
+  - `tracked_narrative_match`
+  - `entity_resolution_assist`
+- [ ] Expose dropdown model selection for these tasks in Models settings
+- [ ] Default to OpenRouter path; allow Hunter Alpha selection when available
+- [ ] Keep heuristics-only fallback for all AI-assisted features

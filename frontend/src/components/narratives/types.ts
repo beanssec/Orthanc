@@ -13,6 +13,11 @@ export interface Narrative {
   evidence_score: number;   // 0-1
   consensus: string | null; // confirmed, disputed, denied, unverified
   topic_keywords: string[];
+  // Sprint 25 — canonical narrative fields (may be null for older records)
+  canonical_title: string | null;
+  canonical_claim: string | null;
+  narrative_type: string | null;
+  confirmation_status: string | null;
 }
 
 export interface NarrativePost {

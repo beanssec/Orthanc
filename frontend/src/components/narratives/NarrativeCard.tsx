@@ -7,8 +7,20 @@ interface NarrativeCardProps {
   onClick: () => void;
 }
 
+/** Thin pill for narrative_type — only renders when a type is present. */
+function NarrativeTypePill({ type }: { type: string | null }) {
+  if (!type) return null;
+  return (
+    <span className="narrative-type-pill">
+      {type.replace(/_/g, ' ')}
+    </span>
+  );
+}
+
 export function NarrativeCard({ narrative, selected, onClick }: NarrativeCardProps) {
   const divClass = divergenceClass(narrative.divergence_score);
+  // Prefer canonical_title when available; fall back to legacy title
+  const displayTitle = narrative.canonical_title ?? narrative.title;
 
   return (
     <div
@@ -18,11 +30,12 @@ export function NarrativeCard({ narrative, selected, onClick }: NarrativeCardPro
       tabIndex={0}
       onKeyDown={(e) => e.key === 'Enter' && onClick()}
     >
-      <div className="narrative-card-title">{narrative.title}</div>
+      <div className="narrative-card-title">{displayTitle}</div>
 
       <div className="narrative-card-meta">
         <span>{narrative.post_count} posts</span>
         <span>{narrative.source_count} sources</span>
+        <NarrativeTypePill type={narrative.narrative_type} />
       </div>
 
       <div className="narrative-bar-row">
@@ -54,7 +67,13 @@ export function NarrativeCard({ narrative, selected, onClick }: NarrativeCardPro
       <div className="narrative-card-footer">
         <span className="narrative-card-time">Updated {timeAgo(narrative.last_updated)}</span>
         <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-          {narrative.consensus && (
+          {/* Prefer confirmation_status; fall back to legacy consensus */}
+          {narrative.confirmation_status && (
+            <span className={`confirmation-badge ${narrative.confirmation_status}`}>
+              {narrative.confirmation_status.replace(/_/g, ' ')}
+            </span>
+          )}
+          {!narrative.confirmation_status && narrative.consensus && (
             <span className={`consensus-badge ${narrative.consensus}`}>
               {narrative.consensus}
             </span>

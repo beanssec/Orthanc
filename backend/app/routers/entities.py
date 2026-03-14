@@ -8,7 +8,7 @@ from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -18,7 +18,17 @@ from app.models import Post, User
 from app.models.entity import Entity, EntityMention, EntityAlias, EntityTypeOverride
 from app.services.entity_extractor import entity_extractor
 from app.models.entity_relationship import EntityRelationship
-from app.schemas.entities import EntityConnectionItem, EntityDetailSchema, EntitySchema
+from app.schemas.entities import (
+    EntityConnectionItem,
+    EntityDetailSchema,
+    EntityPagedResponse,
+    EntitySchema,
+    MergeCandidateEntity,
+    MergeCandidateItem,
+    MergeCandidateResponse,
+    MergeRequest,
+    MergeResult,
+)
 
 logger = logging.getLogger("orthanc.routers.entities")
 
@@ -109,6 +119,86 @@ async def list_entities(
         )
 
     return output
+
+
+
+# ── Paged/search endpoint (Sprint 28 — backward-compatible addition) ──────────
+
+@router.get("/search", response_model=EntityPagedResponse)
+async def search_entities(
+    q: Optional[str] = Query(None, description="Free-text search across entity name, canonical name, and aliases"),
+    type: Optional[str] = Query(None, description="Filter by entity type (PERSON, ORG, GPE, EVENT, NORP)"),
+    sort_by: Literal["mention_count", "last_seen", "name"] = Query("mention_count"),
+    include_aliases: bool = Query(True, description="When true, alias text/norm is also matched against q"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> EntityPagedResponse:
+    """
+    Server-side paginated entity search.
+
+    Returns { items, total, limit, offset } for frontend pagination.
+    - q              -- full-text filter on name / canonical_name / alias
+    - type           -- exact entity type filter (case-insensitive)
+    - sort_by        -- mention_count | last_seen | name
+    - include_aliases-- extend q matching to EntityAlias rows (default True)
+    - limit / offset -- standard pagination controls
+
+    Backward-compatible: existing /entities/ endpoint is untouched.
+    """
+    from sqlalchemy import or_, exists as sa_exists
+
+    base_query = select(Entity)
+
+    # -- Type filter --
+    if type:
+        base_query = base_query.where(Entity.type == type.upper())
+
+    # -- Text search --
+    if q and q.strip():
+        pattern = f"%{q.strip()}%"
+        text_conditions = [
+            Entity.name.ilike(pattern),
+            Entity.canonical_name.ilike(pattern),
+        ]
+        # Alias-aware hook: extend match to alias_text and alias_norm
+        if include_aliases:
+            alias_match = sa_exists().where(
+                EntityAlias.entity_id == Entity.id,
+                or_(
+                    EntityAlias.alias_text.ilike(pattern),
+                    EntityAlias.alias_norm.ilike(pattern),
+                ),
+            )
+            text_conditions.append(alias_match)
+        base_query = base_query.where(or_(*text_conditions))
+
+    # -- Total count (against full filtered dataset, before pagination) --
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    # -- Sort --
+    if sort_by == "mention_count":
+        base_query = base_query.order_by(Entity.mention_count.desc())
+    elif sort_by == "last_seen":
+        base_query = base_query.order_by(Entity.last_seen.desc())
+    elif sort_by == "name":
+        base_query = base_query.order_by(Entity.name.asc())
+
+    # -- Pagination --
+    base_query = base_query.limit(limit).offset(offset)
+
+    result = await db.execute(base_query)
+    entities = result.scalars().all()
+
+    return EntityPagedResponse(
+        items=list(entities),
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 VALID_ENTITY_TYPES = {"PERSON", "ORG", "GPE", "EVENT", "NORP"}
@@ -523,6 +613,223 @@ def _rel_dict(rel: EntityRelationship) -> dict:
         } if rel.entity_b else None,
     }
 
+
+
+
+@router.get("/merge-candidates", response_model=MergeCandidateResponse)
+async def get_merge_candidates(
+    min_confidence: float = Query(0.5, ge=0.0, le=1.0, description="Minimum confidence threshold"),
+    limit: int = Query(100, ge=1, le=500, description="Maximum number of candidate pairs to return"),
+    same_type_only: bool = Query(False, description="When true, only return pairs sharing the same entity type"),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> MergeCandidateResponse:
+    """
+    Return likely duplicate entity pairs for analyst review.
+
+    Each candidate pair includes:
+    - **primary**   — entity with higher mention_count (preferred to keep)
+    - **duplicate** — entity likely redundant with primary
+    - **confidence** — 0–1 combined score across all fired signals
+    - **reasons**   — list of signal labels that contributed
+      (exact_canonical_match | alias_canonical_overlap | alias_alias_overlap)
+
+    This endpoint is **read-only** — it never modifies data.
+    Use the upcoming merge endpoint (Sprint 27 Checkpoint 3+) to act on these.
+    """
+    from app.services.merge_candidate_service import generate_merge_candidates
+
+    raw = await generate_merge_candidates(
+        db=db,
+        min_confidence=min_confidence,
+        limit=limit,
+        same_type_only=same_type_only,
+    )
+
+    items: list[MergeCandidateItem] = []
+    for c in raw:
+        items.append(
+            MergeCandidateItem(
+                primary=MergeCandidateEntity(
+                    id=c.primary_id,
+                    name=c.primary_name,
+                    type=c.primary_type,
+                    canonical_name=c.primary_canonical,
+                    mention_count=c.primary_mention_count,
+                ),
+                duplicate=MergeCandidateEntity(
+                    id=c.duplicate_id,
+                    name=c.duplicate_name,
+                    type=c.duplicate_type,
+                    canonical_name=c.duplicate_canonical,
+                    mention_count=c.duplicate_mention_count,
+                ),
+                confidence=c.confidence,
+                reasons=c.reasons,
+            )
+        )
+
+    return MergeCandidateResponse(
+        candidates=items,
+        total=len(items),
+        min_confidence=min_confidence,
+        same_type_only=same_type_only,
+    )
+
+
+@router.post("/{primary_id}/merge", response_model=MergeResult)
+async def merge_entities(
+    primary_id: uuid.UUID,
+    body: MergeRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> MergeResult:
+    """
+    Merge one or more duplicate entities into a chosen primary entity.
+
+    Safe merge workflow:
+    - All EntityMention rows from secondary entities are reassigned to the primary.
+    - When preserve_aliases=True (default), the secondary's name and canonical_name
+      are stored as EntityAlias rows on the primary before deletion.
+    - All EntityAlias rows from secondaries are moved to the primary (deduped by alias_norm).
+    - Secondary entities are deleted only after all reassignments are flushed.
+    - The entire operation runs in a single transaction; any failure rolls back cleanly.
+    """
+    if not body.secondary_ids:
+        raise HTTPException(status_code=400, detail="secondary_ids must not be empty")
+
+    # Deduplicate and guard against merging primary with itself
+    secondary_ids = list({sid for sid in body.secondary_ids if sid != primary_id})
+    if not secondary_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid secondary_ids after deduplication (primary cannot be its own secondary)",
+        )
+
+    # ── Load primary ────────────────────────────────────────────────────────
+    primary_result = await db.execute(select(Entity).where(Entity.id == primary_id))
+    primary = primary_result.scalar_one_or_none()
+    if not primary:
+        raise HTTPException(status_code=404, detail="Primary entity not found")
+
+    # ── Load secondaries ─────────────────────────────────────────────────────
+    secondaries_result = await db.execute(
+        select(Entity).where(Entity.id.in_(secondary_ids))
+    )
+    secondaries = list(secondaries_result.scalars().all())
+    if len(secondaries) != len(secondary_ids):
+        found_ids = {s.id for s in secondaries}
+        missing = [str(sid) for sid in secondary_ids if sid not in found_ids]
+        raise HTTPException(status_code=404, detail=f"Secondary entities not found: {missing}")
+
+    logger.info(
+        "merge_entities: primary=%s absorbing %d secondary entity/entities",
+        primary_id,
+        len(secondaries),
+    )
+
+    # ── Collect existing alias norms on primary (for dedup check) ────────────
+    existing_aliases_result = await db.execute(
+        select(EntityAlias).where(EntityAlias.entity_id == primary_id)
+    )
+    existing_alias_norms: set[str] = {
+        a.alias_norm for a in existing_aliases_result.scalars().all()
+    }
+
+    aliases_added = 0
+    aliases_skipped = 0
+    mentions_reassigned = 0
+
+    for secondary in secondaries:
+        # ── Step 1: preserve secondary identity as aliases on primary ─────────
+        if body.preserve_aliases:
+            for alias_text in {secondary.name, secondary.canonical_name}:
+                alias_norm = entity_extractor.canonical_name(alias_text)
+                if alias_norm and alias_norm not in existing_alias_norms:
+                    db.add(
+                        EntityAlias(
+                            entity_id=primary_id,
+                            alias_text=alias_text,
+                            alias_norm=alias_norm,
+                            confidence=0.9,
+                            source="merge",
+                        )
+                    )
+                    existing_alias_norms.add(alias_norm)
+                    aliases_added += 1
+                else:
+                    aliases_skipped += 1
+
+        # ── Step 2: move secondary's existing aliases to primary ─────────────
+        sec_aliases_result = await db.execute(
+            select(EntityAlias).where(EntityAlias.entity_id == secondary.id)
+        )
+        for alias in sec_aliases_result.scalars().all():
+            if alias.alias_norm not in existing_alias_norms:
+                # Re-point alias at primary
+                alias.entity_id = primary_id
+                existing_alias_norms.add(alias.alias_norm)
+                aliases_added += 1
+            else:
+                # Duplicate — leave pointing at secondary; cascade will clean it up
+                aliases_skipped += 1
+
+        # ── Step 3: reassign all EntityMention rows from secondary to primary ─
+        upd = await db.execute(
+            sa_update(EntityMention)
+            .where(EntityMention.entity_id == secondary.id)
+            .values(entity_id=primary_id)
+        )
+        mentions_reassigned += upd.rowcount
+
+        # Flush after each secondary so reassignments are visible within the
+        # transaction before we delete the secondary entity below.
+        await db.flush()
+
+    # ── Step 4: update primary stats ─────────────────────────────────────────
+    # Recount mentions from DB (source of truth after reassignment)
+    count_result = await db.execute(
+        select(func.count(EntityMention.id)).where(EntityMention.entity_id == primary_id)
+    )
+    primary.mention_count = count_result.scalar() or 0
+
+    # Widen first_seen / last_seen to cover all absorbed entities
+    candidate_first = [primary.first_seen] + [
+        s.first_seen for s in secondaries if s.first_seen is not None
+    ]
+    candidate_last = [primary.last_seen] + [
+        s.last_seen for s in secondaries if s.last_seen is not None
+    ]
+    if candidate_first:
+        primary.first_seen = min(candidate_first)
+    if candidate_last:
+        primary.last_seen = max(candidate_last)
+
+    await db.flush()
+
+    # ── Step 5: delete secondary entities ────────────────────────────────────
+    # Any remaining rows (e.g. duplicate aliases) pointing at secondaries
+    # will be removed via CASCADE (ondelete="CASCADE" on entity FK).
+    for secondary in secondaries:
+        await db.delete(secondary)
+
+    await db.commit()
+
+    logger.info(
+        "merge_entities: done — primary=%s, mentions_reassigned=%d, aliases_added=%d",
+        primary_id,
+        mentions_reassigned,
+        aliases_added,
+    )
+
+    return MergeResult(
+        status="merged",
+        primary_id=primary_id,
+        merged_ids=secondary_ids,
+        mentions_reassigned=mentions_reassigned,
+        aliases_added=aliases_added,
+        aliases_skipped_duplicate=aliases_skipped,
+    )
 
 @router.get("/{entity_id}", response_model=EntityDetailSchema)
 async def get_entity(

@@ -58,6 +58,10 @@ const TASK_LABELS: Record<string, string> = {
   entity_enrichment: 'Entity Enrichment',
   image_analysis: 'Image Analysis',
   narrative_title: 'Narrative Titles',
+  narrative_label: 'Narrative Canonical Labels',
+  narrative_confirmation: 'Narrative Confirmation',
+  tracked_narrative_match: 'Tracked Narrative Matching',
+  entity_resolution_assist: 'Entity Resolution Assist',
 };
 
 const PROVIDER_LABELS: Record<string, string> = {
