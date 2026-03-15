@@ -12,6 +12,7 @@ from .entity import Entity, EntityMention, EntityAlias, EntityTypeOverride
 from .entity_relationship import EntityRelationship
 from .collaboration import UserNote, UserBookmark, UserTag
 from .brief import Brief
+from .scheduled_brief import ScheduledBrief, ScheduledBriefRun
 from .financial import Holding, Quote, EntityTickerMap, Signal
 from .sanctions import SanctionsEntity, EntitySanctionsMatch
 from .fused_event import FusedEvent
@@ -40,7 +41,7 @@ __all__ = [
     "Entity", "EntityMention", "EntityAlias", "EntityTypeOverride",
     "EntityRelationship",
     "UserNote", "UserBookmark", "UserTag",
-    "Brief",
+    "Brief", "ScheduledBrief", "ScheduledBriefRun",
     "Holding", "Quote", "EntityTickerMap", "Signal",
     "SanctionsEntity", "EntitySanctionsMatch",
     "FusedEvent",

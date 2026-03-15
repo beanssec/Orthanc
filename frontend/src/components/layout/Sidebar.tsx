@@ -20,6 +20,7 @@ const ANALYSIS_LINKS = [
   { to: '/narratives', icon: '📖', label: 'Narratives' },
   { to: '/graph', icon: '🕸️', label: 'Graph' },
   { to: '/query', icon: '🧠', label: 'Ask AI' },
+  { to: '/schedules', icon: '🕐', label: 'Schedules' },
 ];
 
 const FINANCE_LINKS = [

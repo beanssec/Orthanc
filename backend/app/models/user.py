@@ -25,3 +25,4 @@ class User(Base):
     alert_rules: Mapped[list["AlertRule"]] = relationship(back_populates="user", lazy="noload")  # noqa: F821
     briefs: Mapped[list["Brief"]] = relationship(back_populates="user", lazy="noload")  # noqa: F821
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="user", lazy="noload")  # noqa: F821
+    scheduled_briefs: Mapped[list["ScheduledBrief"]] = relationship(back_populates="user", lazy="noload")  # noqa: F821

@@ -30,6 +30,8 @@ from app.routers import graph as graph_router_module
 from app.routers import health as health_router_module
 from app.routers import agent as agent_router_module
 from app.routers import api_keys as api_keys_router_module
+from app.routers import scheduled_briefs as scheduled_briefs_router_module
+from app.routers import digests as digests_router_module
 from app.middleware.rate_limit import rate_limit_middleware
 from app.collectors.orchestrator import orchestrator
 from app.collectors.satellite_collector import satellite_collector
@@ -275,6 +277,8 @@ app.include_router(frontlines_router)
 app.include_router(health_router_module.router)
 app.include_router(agent_router_module.router)
 app.include_router(api_keys_router_module.router)
+app.include_router(scheduled_briefs_router_module.router)
+app.include_router(digests_router_module.router)
 
 
 @app.get("/")

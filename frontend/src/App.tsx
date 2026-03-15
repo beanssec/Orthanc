@@ -17,6 +17,7 @@ import { MapView } from './components/map/MapView';
 import { DashboardView } from './components/dashboard/DashboardView';
 import { EntitiesView } from './components/entities/EntitiesView';
 import { BriefsView } from './components/briefs/BriefsView';
+import { ScheduledBriefsView } from './components/briefs/ScheduledBriefsView';
 import { DocumentsView } from './components/documents/DocumentsView';
 import { PortfolioView } from './components/finance/PortfolioView';
 import { MarketsView } from './components/finance/MarketsView';
@@ -136,6 +137,7 @@ export default function App() {
         <Route path="entities" element={<EntitiesView />} />
         <Route path="entities/:id" element={<EntitiesView />} />
         <Route path="briefs" element={<BriefsView />} />
+        <Route path="schedules" element={<ScheduledBriefsView />} />
         <Route path="documents" element={<DocumentsView />} />
         <Route path="search" element={<SearchResults />} />
         <Route path="bookmarks" element={<BookmarksView />} />
