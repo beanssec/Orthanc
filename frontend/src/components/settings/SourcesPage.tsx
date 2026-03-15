@@ -27,6 +27,11 @@ interface Source {
   max_image_size_mb: number;
   max_video_size_mb: number;
   reliability?: SourceReliability | null;
+  // Sprint 32 classification fields
+  source_class?: string | null;
+  default_reliability_prior?: string | null;
+  ecosystem?: string | null;
+  risk_note?: string | null;
 }
 
 const TYPE_COLORS: Record<string, string> = {
@@ -56,6 +61,41 @@ const TYPE_PLACEHOLDERS: Record<string, string> = {
 };
 
 // ── Reliability helpers ──────────────────────────────────────────────────────
+
+const SOURCE_CLASS_STYLES: Record<string, { color: string; label: string }> = {
+  official:         { color: '#3b82f6', label: 'Official' },
+  official_data:    { color: '#3b82f6', label: 'Official Data' },
+  state_media:      { color: '#f59e0b', label: 'State Media' },
+  journalist:       { color: '#22c55e', label: 'Journalist' },
+  propaganda_risk:  { color: '#ef4444', label: 'Prop. Risk' },
+  militia_adjacent: { color: '#f97316', label: 'Militia Adj.' },
+};
+
+function SourceClassBadge({ sourceClass, configJson }: { sourceClass?: string | null; configJson: Record<string, unknown> }) {
+  // Prefer top-level source_class (Sprint 32 C3), fall back to config_json for legacy seeds
+  const cls = sourceClass ?? (configJson?.source_class as string | undefined);
+  if (!cls) return null;
+  const style = SOURCE_CLASS_STYLES[cls] ?? { color: 'var(--text-muted)', label: cls };
+  return (
+    <span
+      title={`Source class: ${cls}`}
+      style={{
+        display: 'inline-block',
+        padding: '1px 6px',
+        borderRadius: 3,
+        fontSize: 10,
+        fontWeight: 600,
+        letterSpacing: '0.04em',
+        background: `${style.color}1a`,
+        color: style.color,
+        border: `1px solid ${style.color}44`,
+        marginTop: 2,
+      }}
+    >
+      {style.label.toUpperCase()}
+    </span>
+  );
+}
 
 const BAND_STYLES: Record<string, { color: string; label: string }> = {
   high:    { color: '#22c55e', label: 'High' },
@@ -540,7 +580,12 @@ export function SourcesPage() {
                   <td>
                     <span className="mono" style={{ fontSize: '12px', color: 'var(--text-primary)' }}>{source.handle}</span>
                   </td>
-                  <td style={{ color: 'var(--text-primary)' }}>{source.display_name}</td>
+                  <td style={{ color: 'var(--text-primary)' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <span>{source.display_name}</span>
+                      <SourceClassBadge sourceClass={source.source_class} configJson={source.config_json} />
+                    </div>
+                  </td>
                   <td>
                     <ReliabilityBadge rel={source.reliability} />
                   </td>

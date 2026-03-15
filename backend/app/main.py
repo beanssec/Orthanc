@@ -90,6 +90,14 @@ async def lifespan(app: FastAPI):
     await orchestrator.start_market()
     await orchestrator.start_notams()
     try:
+        await orchestrator.start_maritime_advisories()
+    except Exception as exc:
+        logger.warning("Maritime Advisory Collector failed to start: %s", exc)
+    try:
+        await orchestrator.start_official_sources()
+    except Exception as exc:
+        logger.warning("Official sources collector failed to start: %s", exc)
+    try:
         await satellite_collector.start()
     except Exception as exc:
         logger.warning("Satellite collector failed to start: %s", exc)
@@ -126,6 +134,22 @@ async def lifespan(app: FastAPI):
         logger.warning("Source group seeding skipped (will retry on next start): %s", _sg_err)
     logger.info("Source groups seeded")
 
+    # Seed Telegram Wave 1 channels for all existing users (idempotent)
+    try:
+        from app.services.telegram_wave1_seeder import seed_telegram_wave1
+        await seed_telegram_wave1()
+    except Exception as _tw1_err:
+        logger.warning("Telegram Wave 1 seeder skipped (will retry on next start): %s", _tw1_err)
+    logger.info("Telegram Wave 1 channels seeded")
+
+    # Seed official/sanctions/maritime Source records with metadata (idempotent)
+    try:
+        from app.services.official_sources_seeder import seed_official_sources
+        await seed_official_sources()
+    except Exception as _off_err:
+        logger.warning("Official sources seeder skipped (will retry on next start): %s", _off_err)
+    logger.info("Official sources seeded")
+
     # OpenRouter credentials are decrypted on user login and providers are
     # registered in auth.login. At startup there is no user password/key
     # material available, so embedding falls back until a user logs in.
@@ -159,6 +183,35 @@ async def lifespan(app: FastAPI):
     # Start entity co-occurrence service (builds relationship graph every 30 min)
     await cooccurrence_service.start()
     logger.info("Entity co-occurrence service started")
+
+    # Start official sanctions services (OFAC, UK FCDO, UN SC, EU FSF) — daily refresh
+    try:
+        from app.services.ofac_sanctions_service import ofac_sanctions_service
+        await ofac_sanctions_service.start()
+        logger.info("OFAC sanctions service started")
+    except Exception as _ofac_err:
+        logger.warning("OFAC sanctions service failed to start: %s", _ofac_err)
+
+    try:
+        from app.services.uk_sanctions_service import uk_sanctions_service
+        await uk_sanctions_service.start()
+        logger.info("UK FCDO sanctions service started")
+    except Exception as _uk_err:
+        logger.warning("UK sanctions service failed to start: %s", _uk_err)
+
+    try:
+        from app.services.un_sanctions_service import un_sanctions_service
+        await un_sanctions_service.start()
+        logger.info("UN SC sanctions service started")
+    except Exception as _un_err:
+        logger.warning("UN SC sanctions service failed to start: %s", _un_err)
+
+    try:
+        from app.services.eu_sanctions_service import eu_sanctions_service
+        await eu_sanctions_service.start()
+        logger.info("EU FSF sanctions service started")
+    except Exception as _eu_err:
+        logger.warning("EU FSF sanctions service failed to start: %s", _eu_err)
 
 
     # Load persisted task→model overrides into model_router on startup.
@@ -210,6 +263,21 @@ async def lifespan(app: FastAPI):
         await satellite_collector.stop()
     except Exception:
         pass
+    # Stop sanctions services
+    for _svc_name, _svc_mod, _svc_attr in [
+        ("OFAC", "app.services.ofac_sanctions_service", "ofac_sanctions_service"),
+        ("UK", "app.services.uk_sanctions_service", "uk_sanctions_service"),
+        ("UN SC", "app.services.un_sanctions_service", "un_sanctions_service"),
+        ("EU FSF", "app.services.eu_sanctions_service", "eu_sanctions_service"),
+    ]:
+        try:
+            import importlib
+            _mod = importlib.import_module(_svc_mod)
+            _svc = getattr(_mod, _svc_attr, None)
+            if _svc and hasattr(_svc, "stop"):
+                await _svc.stop()
+        except Exception:
+            pass
     logger.info("Shutdown complete")
 
 

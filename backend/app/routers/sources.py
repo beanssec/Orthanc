@@ -55,6 +55,11 @@ def _to_response(source: Source) -> SourceResponse:
         max_image_size_mb=source.max_image_size_mb,
         max_video_size_mb=source.max_video_size_mb,
         reliability=rel_info,
+        # Sprint 32 C3 classification fields
+        source_class=getattr(source, "source_class", None),
+        default_reliability_prior=getattr(source, "default_reliability_prior", None),
+        ecosystem=getattr(source, "ecosystem", None),
+        risk_note=getattr(source, "risk_note", None),
     )
 
 

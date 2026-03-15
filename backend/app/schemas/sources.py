@@ -67,5 +67,11 @@ class SourceResponse(BaseModel):
     # ── Reliability fields (Sprint 29 C1) — all Optional, fully backward-safe
     reliability: Optional[SourceReliabilityInfo] = None
 
+    # ── Source classification fields (Sprint 32 C3) — all Optional
+    source_class: Optional[str] = None
+    default_reliability_prior: Optional[str] = None
+    ecosystem: Optional[str] = None
+    risk_note: Optional[str] = None
+
     class Config:
         from_attributes = True

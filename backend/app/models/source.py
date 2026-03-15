@@ -25,6 +25,16 @@ class Source(Base):
     last_polled: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     config_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
+    # ── Source classification metadata (migration 032) ───────────────────────
+    source_class: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True
+    )
+    default_reliability_prior: Mapped[Optional[str]] = mapped_column(
+        String(16), nullable=True
+    )
+    ecosystem: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    risk_note: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+
     # ── Media download settings (migration 009) ───────────────────────────────
     download_images: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")

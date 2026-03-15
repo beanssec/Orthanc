@@ -23,6 +23,8 @@ from app.services.notam_service import notam_service
 from .youtube_collector import youtube_collector
 from .bluesky_collector import bluesky_collector
 from .mastodon_collector import mastodon_collector
+from .maritime_advisory_collector import maritime_advisory_collector
+from .official_sources_collector import official_sources_collector
 
 logger = logging.getLogger("orthanc.collectors.orchestrator")
 
@@ -40,6 +42,8 @@ class CollectorOrchestrator:
         self._cashtag_collector = cashtag_collector  # module-level singleton
         self._bluesky_collector = bluesky_collector  # module-level singleton
         self._mastodon_collector = mastodon_collector  # module-level singleton
+        self._maritime_advisory_collector = maritime_advisory_collector  # module-level singleton
+        self._official_sources_collector = official_sources_collector  # module-level singleton
         self._x_collectors: dict[str, XCollector] = {}       # user_id -> XCollector
         self._shodan_collectors: dict[str, ShodanCollector] = {}  # user_id -> ShodanCollector
         self._discord_collectors: dict[str, DiscordCollector] = {}  # user_id -> DiscordCollector
@@ -59,6 +63,14 @@ class CollectorOrchestrator:
             await self._rss_collector.start(sources)
         except Exception:
             logger.exception("Failed to start RSS collector")
+
+    async def start_maritime_advisories(self) -> None:
+        """Start MARAD + UKMTO maritime advisory scraper (no auth needed)."""
+        logger.info("Starting Maritime Advisory Collector (MARAD + UKMTO)")
+        try:
+            await self._maritime_advisory_collector.start()
+        except Exception:
+            logger.exception("Failed to start Maritime Advisory Collector")
 
     async def start_firms(self) -> None:
         """Start NASA FIRMS thermal anomaly collector (no auth needed)."""
@@ -163,6 +175,14 @@ class CollectorOrchestrator:
                 await self._mastodon_collector.start(sources)
         except Exception:
             logger.exception("Failed to start Mastodon collector")
+
+    async def start_official_sources(self) -> None:
+        """Start official sources collector (OFAC actions, State Dept, China MFA, OPEC)."""
+        logger.info("Starting official sources collector")
+        try:
+            await self._official_sources_collector.start()
+        except Exception:
+            logger.exception("Failed to start official sources collector")
 
     async def start_user_collectors(self, user_id: str) -> None:
         """Called on user login — start their X, Shodan, and Discord collectors."""
@@ -423,6 +443,11 @@ class CollectorOrchestrator:
             logger.exception("Error stopping Mastodon collector")
 
         try:
+            await self._maritime_advisory_collector.stop()
+        except Exception:
+            logger.exception("Error stopping Maritime Advisory Collector")
+
+        try:
             await self._firms_collector.stop()
         except Exception:
             logger.exception("Error stopping FIRMS collector")
@@ -473,6 +498,11 @@ class CollectorOrchestrator:
                 logger.exception("Error stopping Discord collector for user %s", user_id)
         self._discord_collectors.clear()
 
+        try:
+            await self._official_sources_collector.stop()
+        except Exception:
+            logger.exception("Error stopping official sources collector")
+
     def get_collector_status(self) -> dict[str, str]:
         """Return active/inactive status for each collector type."""
         return {
@@ -492,6 +522,8 @@ class CollectorOrchestrator:
             "youtube": "active" if (self._youtube_collector._task and not self._youtube_collector._task.done()) else "inactive",
             "bluesky": "active" if (self._bluesky_collector._task and not self._bluesky_collector._task.done()) else "inactive",
             "mastodon": "active" if (self._mastodon_collector._task and not self._mastodon_collector._task.done()) else "inactive",
+            "maritime_advisory": "active" if self._maritime_advisory_collector.is_running else "inactive",
+            "official_sources": "active" if self._official_sources_collector._running else "inactive",
         }
 
 
