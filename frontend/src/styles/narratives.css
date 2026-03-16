@@ -814,6 +814,16 @@
   color: #f59e0b;
 }
 
+.confirmation-badge.contradicted {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--alert-primary);
+}
+
+.confirmation-badge.unverifiable {
+  background: rgba(156, 163, 175, 0.1);
+  color: var(--text-secondary);
+}
+
 /* canonical_claim block in overview tab */
 .narrative-canonical-claim {
   margin-bottom: 1rem;
@@ -838,4 +848,26 @@
   color: var(--text-primary);
   line-height: 1.55;
   margin: 0;
+}
+
+/* label_confidence dot — subtle colored indicator next to timestamp */
+.narrative-confidence-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+.narrative-confidence-dot.high {
+  background: var(--success-primary, #10b981);
+}
+
+.narrative-confidence-dot.mid {
+  background: #f59e0b;
+}
+
+.narrative-confidence-dot.low {
+  background: var(--alert-primary, #ef4444);
 }

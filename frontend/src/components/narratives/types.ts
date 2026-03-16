@@ -17,6 +17,7 @@ export interface Narrative {
   canonical_title: string | null;
   canonical_claim: string | null;
   narrative_type: string | null;
+  label_confidence: number | null;   // 0–1 confidence in the narrative_type label
   confirmation_status: string | null;
 }
 

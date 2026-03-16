@@ -18,14 +18,16 @@ function StanceBadge({ stance }: { stance: string }) {
 
 /** Confirmation status line in overview — text+badge, not badge-soup */
 function ConfirmationLine({ status, consensus }: { status: string | null; consensus: string | null }) {
-  const value = status ?? consensus;
+  // Don't show "pending" — it means no confirmation has been made yet
+  const resolvedStatus = status && status !== 'pending' ? status : null;
+  const value = resolvedStatus ?? consensus;
   if (!value) return null;
-  const cls = status ? `confirmation-badge ${status}` : `consensus-badge ${value}`;
-  const label = status ? status.replace(/_/g, ' ') : value;
+  const cls = resolvedStatus ? `confirmation-badge ${resolvedStatus}` : `consensus-badge ${value}`;
+  const label = resolvedStatus ? resolvedStatus.replace(/_/g, ' ') : value;
   return (
     <div style={{ marginTop: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
       <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-        {status ? 'Confirmation:' : 'Consensus:'}
+        {resolvedStatus ? 'Confirmation:' : 'Consensus:'}
       </span>
       <span className={cls}>{label}</span>
     </div>
@@ -482,12 +484,12 @@ export function NarrativeDetail({ narrativeId }: NarrativeDetailProps) {
                 {detail.narrative_type.replace(/_/g, ' ')}
               </span>
             )}
-            {detail.confirmation_status && (
+            {detail.confirmation_status && detail.confirmation_status !== 'pending' && (
               <span className={`confirmation-badge ${detail.confirmation_status}`}>
                 {detail.confirmation_status.replace(/_/g, ' ')}
               </span>
             )}
-            {!detail.confirmation_status && detail.consensus && (
+            {(!detail.confirmation_status || detail.confirmation_status === 'pending') && detail.consensus && (
               <span className={`consensus-badge ${detail.consensus}`}>{detail.consensus}</span>
             )}
             <span className={`narrative-status-badge ${detail.status}`}>{detail.status}</span>

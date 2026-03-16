@@ -17,6 +17,13 @@ function NarrativeTypePill({ type }: { type: string | null }) {
   );
 }
 
+/** Small colored dot indicating label confidence. Only shown when confidence is present. */
+function ConfidenceDot({ confidence }: { confidence: number | null }) {
+  if (confidence == null) return null;
+  const cls = confidence > 0.7 ? 'high' : confidence > 0.4 ? 'mid' : 'low';
+  return <span className={`narrative-confidence-dot ${cls}`} title={`Label confidence: ${Math.round(confidence * 100)}%`} />;
+}
+
 export function NarrativeCard({ narrative, selected, onClick }: NarrativeCardProps) {
   const divClass = divergenceClass(narrative.divergence_score);
   // Prefer canonical_title when available; fall back to legacy title
@@ -65,10 +72,13 @@ export function NarrativeCard({ narrative, selected, onClick }: NarrativeCardPro
       </div>
 
       <div className="narrative-card-footer">
-        <span className="narrative-card-time">Updated {timeAgo(narrative.last_updated)}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <span className="narrative-card-time">Updated {timeAgo(narrative.last_updated)}</span>
+          <ConfidenceDot confidence={narrative.label_confidence} />
+        </div>
         <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-          {/* Prefer confirmation_status; fall back to legacy consensus */}
-          {narrative.confirmation_status && (
+          {/* Prefer confirmation_status; fall back to legacy consensus. Never show "pending". */}
+          {narrative.confirmation_status && narrative.confirmation_status !== 'pending' && (
             <span className={`confirmation-badge ${narrative.confirmation_status}`}>
               {narrative.confirmation_status.replace(/_/g, ' ')}
             </span>
