@@ -18,6 +18,11 @@ logger = logging.getLogger("orthanc.model_router")
 class LLMProvider(ABC):
     """Base class for LLM providers."""
 
+    # Capability flags — subclasses override as needed
+    supports_chat: bool = True
+    supports_embeddings: bool = True
+    supports_vision: bool = False
+
     @abstractmethod
     async def chat(self, messages: list[dict], model: str, **kwargs) -> dict:
         """Send chat completion request.
@@ -41,6 +46,10 @@ class LLMProvider(ABC):
 
 class OpenRouterProvider(LLMProvider):
     """OpenRouter API provider."""
+
+    supports_chat: bool = True
+    supports_embeddings: bool = True
+    supports_vision: bool = True
 
     def __init__(self, api_key: str) -> None:
         self.api_key = api_key
@@ -114,7 +123,14 @@ class OpenRouterProvider(LLMProvider):
 # ---------------------------------------------------------------------------
 
 class XAIProvider(LLMProvider):
-    """xAI/Grok API provider (OpenAI-compatible)."""
+    """xAI/Grok API provider (OpenAI-compatible).
+
+    Note: xAI does NOT provide an /embeddings endpoint — supports_embeddings is False.
+    """
+
+    supports_chat: bool = True
+    supports_embeddings: bool = False
+    supports_vision: bool = True
 
     def __init__(self, api_key: str) -> None:
         self.api_key = api_key
@@ -149,16 +165,10 @@ class XAIProvider(LLMProvider):
         }
 
     async def embed(self, text: str, model: str = "v1") -> list[float]:
-        payload = {"model": model, "input": text}
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.post(
-                f"{self.base_url}/embeddings",
-                headers=self._headers(),
-                json=payload,
-            )
-            r.raise_for_status()
-            data = r.json()
-        return data["data"][0]["embedding"]
+        raise NotImplementedError(
+            "xAI/Grok does not support embeddings (/v1/embeddings is not available). "
+            "Use OpenRouter or Ollama for embedding tasks."
+        )
 
     async def list_models(self) -> list[dict]:
         try:
@@ -183,13 +193,68 @@ class XAIProvider(LLMProvider):
 # ---------------------------------------------------------------------------
 
 class OllamaProvider(LLMProvider):
-    """Ollama local/remote provider."""
+    """Ollama local/remote provider.
+
+    Supports vision models (llava, bakllava, llama3.2-vision, moondream, etc.).
+    OpenAI-style ``image_url`` content parts are automatically converted to
+    Ollama's ``images`` list format before sending.
+    """
+
+    supports_chat: bool = True
+    supports_embeddings: bool = True
+    supports_vision: bool = True  # Requires a vision-capable model to be pulled
 
     def __init__(self, base_url: str = "http://localhost:11434") -> None:
         self.base_url = base_url.rstrip("/")
 
+    @staticmethod
+    def _convert_messages_for_ollama(messages: list[dict]) -> list[dict]:
+        """Convert OpenAI-format image_url content to Ollama's ``images`` list.
+
+        OpenAI format:
+            {"role": "user", "content": [
+                {"type": "text", "text": "..."},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,<b64>"}}
+            ]}
+
+        Ollama format:
+            {"role": "user", "content": "...", "images": ["<b64>"]}
+        """
+        import re
+        converted = []
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                text_parts: list[str] = []
+                images: list[str] = []
+                for part in content:
+                    ptype = part.get("type")
+                    if ptype == "text":
+                        text_parts.append(part.get("text", ""))
+                    elif ptype == "image_url":
+                        url = part.get("image_url", {}).get("url", "")
+                        # Extract raw base64 from data URI: data:image/png;base64,<data>
+                        m = re.match(r"data:[^;]+;base64,(.+)", url, re.DOTALL)
+                        if m:
+                            images.append(m.group(1))
+                        else:
+                            # Plain URL — pass as-is; Ollama may not support HTTP URLs
+                            # but we pass it through and let Ollama handle/error
+                            images.append(url)
+                new_msg: dict = {
+                    "role": msg["role"],
+                    "content": " ".join(text_parts),
+                }
+                if images:
+                    new_msg["images"] = images
+                converted.append(new_msg)
+            else:
+                converted.append(msg)
+        return converted
+
     async def chat(self, messages: list[dict], model: str, **kwargs) -> dict:
-        payload = {"model": model, "messages": messages, "stream": False}
+        ollama_messages = self._convert_messages_for_ollama(messages)
+        payload = {"model": model, "messages": ollama_messages, "stream": False}
         async with httpx.AsyncClient(timeout=120) as client:
             r = await client.post(
                 f"{self.base_url}/api/chat",
@@ -241,6 +306,10 @@ class OllamaProvider(LLMProvider):
 
 class OpenAICompatibleProvider(LLMProvider):
     """Any server implementing the OpenAI-compatible API."""
+
+    supports_chat: bool = True
+    supports_embeddings: bool = True
+    supports_vision: bool = True  # Depends on the model served
 
     def __init__(self, base_url: str, api_key: str = "") -> None:
         self.base_url = base_url.rstrip("/")
@@ -332,7 +401,7 @@ class ModelRouter:
         TASK_BRIEF: "grok-3-mini",
         TASK_STANCE: "grok-3-mini",
         TASK_TRANSLATE: "grok-3-mini",
-        TASK_EMBED: "hash",  # hash-based fallback, no API needed
+        TASK_EMBED: "openai/text-embedding-3-small",
         TASK_SUMMARISE: "grok-3-mini",
         TASK_ENRICH: "grok-3-mini",
         TASK_IMAGE: "openai/gpt-4o",
@@ -483,14 +552,50 @@ class ModelRouter:
                     logger.warning("Fallback provider %s also failed: %s", fallback_name, fb_exc)
             raise RuntimeError(f"All providers failed for task '{task}': {exc}") from exc
 
+    def _get_embed_capable_provider(self, model_id: str) -> tuple[LLMProvider | None, str]:
+        """Resolve an embedding-capable provider for the given model_id.
+
+        Returns (provider, provider_name).  Skips any provider whose
+        ``supports_embeddings`` flag is False (e.g. xAI/Grok).
+        """
+        # First try the normal resolution path
+        candidate = self.get_provider_for_model(model_id)
+        candidate_name = self._provider_name_for_model(model_id)
+        if candidate is not None and getattr(candidate, "supports_embeddings", True):
+            return candidate, candidate_name
+
+        # Primary provider doesn't support embeddings — warn and find first capable one
+        if candidate is not None:
+            logger.warning(
+                "Provider '%s' does not support embeddings (model=%s). "
+                "Searching for an embedding-capable provider.",
+                candidate_name, model_id,
+            )
+
+        # Prefer openrouter → ollama → openai-compatible; skip xai/any non-embed provider
+        priority_order = ["openrouter", "ollama", "local"]
+        for pname in priority_order:
+            p = self._providers.get(pname)
+            if p is not None and getattr(p, "supports_embeddings", True):
+                return p, pname
+
+        # Last resort: any registered embed-capable provider
+        for pname, p in self._providers.items():
+            if getattr(p, "supports_embeddings", True):
+                return p, pname
+
+        return None, "none"
+
     async def embed(self, text: str, task: str = TASK_EMBED) -> list[float]:
-        """Route an embedding request."""
+        """Route an embedding request, skipping providers that don't support embeddings."""
         model_id = self.get_task_model(task)
-        provider = self.get_provider_for_model(model_id)
-        provider_name = self._provider_name_for_model(model_id)
+        provider, provider_name = self._get_embed_capable_provider(model_id)
 
         if provider is None:
-            logger.warning("No embed provider available — returning empty vector")
+            logger.warning(
+                "No embedding-capable provider available (model=%s task=%s) — returning empty vector",
+                model_id, task,
+            )
             return []
 
         t0 = time.monotonic()
@@ -508,9 +613,11 @@ class ModelRouter:
                 "LLM embed error | provider=%s model=%s task=%s latency_ms=%d error=%s",
                 provider_name, model_id, task, latency_ms, exc,
             )
-            # Try fallback providers
+            # Try fallback providers that support embeddings
             for fallback_name, fallback_provider in self._providers.items():
                 if fallback_name == provider_name:
+                    continue
+                if not getattr(fallback_provider, "supports_embeddings", True):
                     continue
                 try:
                     result = await fallback_provider.embed(text, model_id)

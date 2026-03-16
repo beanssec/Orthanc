@@ -33,6 +33,16 @@ from app.models.event import Event
 
 logger = logging.getLogger("orthanc.collectors.official_sources")
 
+# Realistic browser headers — used for sites that block plain bot user-agents (OPEC, etc.)
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
 # ── Source definitions ────────────────────────────────────────────────────────
 
 SOURCES = {
@@ -202,6 +212,62 @@ async def _persist_post(
 
 # ── Individual source collectors ──────────────────────────────────────────────
 
+async def _fetch_state_dept_rss_fallback(url: str) -> list:
+    """Fallback: fetch raw RSS/XML via httpx and extract <item> blocks via regex.
+
+    Used when feedparser chokes on malformed XML from the State Dept feed.
+    Returns a list of simple namespace objects mimicking feedparser entries.
+    """
+    import email.utils  # noqa: PLC0415
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=_BROWSER_HEADERS) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            raw = resp.text
+    except Exception as exc:
+        logger.warning("State Dept RSS raw fallback fetch failed: %s", exc)
+        return []
+
+    def _extract_tag(tag: str, text: str) -> str:
+        m = re.search(
+            rf"<{tag}[^>]*>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</{tag}>",
+            text,
+            re.DOTALL | re.IGNORECASE,
+        )
+        return m.group(1).strip() if m else ""
+
+    entries = []
+    for item_m in re.finditer(r"<item[^>]*>(.*?)</item>", raw, re.DOTALL | re.IGNORECASE):
+        item_xml = item_m.group(1)
+
+        class _Entry:  # noqa: N801
+            pass
+
+        e = _Entry()
+        e.title = _extract_tag("title", item_xml)
+        link_val = _extract_tag("link", item_xml) or _extract_tag("guid", item_xml)
+        e.link = link_val
+        e.id = link_val
+        e.summary = _extract_tag("description", item_xml) or _extract_tag("summary", item_xml)
+        e.description = e.summary
+        e.published_parsed = None
+        e.updated_parsed = None
+        e.created_parsed = None
+
+        pub_date = _extract_tag("pubDate", item_xml)
+        if pub_date:
+            try:
+                e.published_parsed = email.utils.parsedate(pub_date)
+            except Exception:
+                pass
+
+        entries.append(e)
+
+    logger.info("State Dept RSS fallback: extracted %d items via regex", len(entries))
+    return entries
+
+
 async def _collect_state_dept_rss() -> int:
     """Collect US State Department press releases via RSS."""
     source_cfg = SOURCES["state_dept_rss"]
@@ -214,12 +280,21 @@ async def _collect_state_dept_rss() -> int:
         logger.error("State Dept RSS fetch error: %s", exc)
         return 0
 
-    if parsed.get("bozo") and not parsed.entries:
-        logger.warning("State Dept RSS parse error: %s", parsed.get("bozo_exception"))
-        return 0
+    entries = list(parsed.entries)
+
+    if parsed.get("bozo") and not entries:
+        # feedparser choked on malformed XML — try raw regex fallback
+        logger.info(
+            "State Dept RSS: feedparser parse error (%s), attempting raw fallback",
+            parsed.get("bozo_exception"),
+        )
+        entries = await _fetch_state_dept_rss_fallback(url)
+        if not entries:
+            logger.warning("State Dept RSS: fallback also returned no entries")
+            return 0
 
     new_count = 0
-    for entry in parsed.entries:
+    for entry in entries:
         try:
             guid = entry.get("id") or entry.get("link", "")
             if not guid:
@@ -526,11 +601,20 @@ async def _collect_opec_press() -> int:
         async with httpx.AsyncClient(
             timeout=30.0,
             follow_redirects=True,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; Orthanc/1.0)"},
+            headers=_BROWSER_HEADERS,
         ) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             html = resp.text
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 403:
+            logger.warning(
+                "OPEC press releases: 403 Forbidden — site may require alternative approach "
+                "(JS rendering or API). Skipping this poll cycle."
+            )
+        else:
+            logger.error("OPEC press releases fetch error: %s", exc)
+        return 0
     except httpx.HTTPError as exc:
         logger.error("OPEC press releases fetch error: %s", exc)
         return 0

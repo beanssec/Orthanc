@@ -19,6 +19,13 @@ from app.routers.feed import broadcast_post
 from app.services.collector_manager import collector_manager
 from app.services.entity_extractor import entity_extractor
 from app.services.geo_extractor import geo_extractor
+from app.services.x_api_client import (
+    XApiAuthError,
+    XApiClient,
+    XApiError,
+    XApiNotFoundError,
+    XApiRateLimitError,
+)
 
 logger = logging.getLogger("orthanc.collectors.x")
 
@@ -31,6 +38,10 @@ SYSTEM_PROMPT = (
     "from the specified account. Each tweet should have: id, text, author, created_at. "
     "No commentary."
 )
+
+# Source-of-truth tag stored in Post.raw_json["_source_method"]
+SOURCE_METHOD_X_API = "x_api"
+SOURCE_METHOD_XAI = "xai"
 
 
 def _parse_tweet_timestamp(created_at: Optional[str]) -> Optional[datetime]:
@@ -56,23 +67,48 @@ def _parse_tweet_timestamp(created_at: Optional[str]) -> Optional[datetime]:
 
 
 class XCollector:
-    """Polls X (Twitter) accounts via xAI/Grok and persists tweets as Posts."""
+    """Polls X (Twitter) accounts and persists tweets as Posts.
+
+    Preferred path: X API v2 (real structured data, no hallucinations).
+    Fallback path:  xAI/Grok chat completion (legacy).
+
+    Key selection logic:
+      - If ``x_api_bearer_token`` is present in the stored "x" keys → use X API v2
+      - Else if ``api_key`` (xAI key) is present → fall back to Grok approach
+    """
 
     def __init__(self, poll_interval: int = DEFAULT_POLL_INTERVAL):
         self._poll_interval = poll_interval
         self._tasks: dict[str, asyncio.Task] = {}  # source.id -> task
+        # Track sources that had an unrecoverable auth error on X API v2
+        # to avoid spamming error logs on every poll cycle.
+        self._x_api_disabled_sources: set[str] = set()
 
     async def start(self, user_id: str, sources: list[Source]) -> None:
-        """Begin polling X accounts for a user (uses their stored xAI API key)."""
+        """Begin polling X accounts for a user."""
         keys = await collector_manager.get_keys(user_id, "x")
         if not keys:
-            logger.warning("No X/xAI keys found for user %s — skipping X collector", user_id)
+            logger.warning("No X keys found for user %s — skipping X collector", user_id)
             return
 
-        api_key: str = keys.get("api_key", "")
-        if not api_key:
-            logger.warning("X keys for user %s missing 'api_key' field", user_id)
+        x_api_bearer_token: str = keys.get("x_api_bearer_token", "")
+        xai_api_key: str = keys.get("api_key", "")
+
+        if not x_api_bearer_token and not xai_api_key:
+            logger.warning(
+                "X keys for user %s have neither 'x_api_bearer_token' nor 'api_key' — "
+                "skipping X collector",
+                user_id,
+            )
             return
+
+        method = SOURCE_METHOD_X_API if x_api_bearer_token else SOURCE_METHOD_XAI
+        logger.info(
+            "Starting X collector for user %s using method=%s (%d sources)",
+            user_id,
+            method,
+            len(sources),
+        )
 
         for source in sources:
             source_id = str(source.id)
@@ -80,7 +116,13 @@ class XCollector:
                 continue
             logger.info("Starting X poller for %s (source %s)", source.handle, source_id)
             task = asyncio.create_task(
-                self._poll_loop(user_id, source_id, source.handle, api_key),
+                self._poll_loop(
+                    user_id,
+                    source_id,
+                    source.handle,
+                    x_api_bearer_token=x_api_bearer_token,
+                    xai_api_key=xai_api_key,
+                ),
                 name=f"x_poll_{source_id}",
             )
             self._tasks[source_id] = task
@@ -95,20 +137,39 @@ class XCollector:
         self._tasks.clear()
 
     async def _poll_loop(
-        self, user_id: str, source_id: str, handle: str, api_key: str
+        self,
+        user_id: str,
+        source_id: str,
+        handle: str,
+        *,
+        x_api_bearer_token: str,
+        xai_api_key: str,
     ) -> None:
         """Continuous polling loop for a single X account."""
         backoff = self._poll_interval
         while True:
             try:
-                await self._poll_once(user_id, source_id, handle, api_key)
-                backoff = self._poll_interval  # reset backoff on success
+                await self._poll_once(
+                    user_id,
+                    source_id,
+                    handle,
+                    x_api_bearer_token=x_api_bearer_token,
+                    xai_api_key=xai_api_key,
+                )
+                backoff = self._poll_interval  # reset on success
             except asyncio.CancelledError:
                 logger.info("X poller cancelled for @%s", handle)
                 raise
             except _RateLimitError as e:
                 logger.warning("X rate limit for @%s — backing off %ds", handle, e.retry_after)
                 backoff = e.retry_after
+            except _SourceDisabledError:
+                logger.error(
+                    "X poller permanently disabled for @%s (source %s) due to auth error",
+                    handle,
+                    source_id,
+                )
+                return  # exit loop — don't retry invalid credentials
             except Exception as exc:
                 logger.exception("X poll error for @%s: %s", handle, exc)
 
@@ -119,12 +180,28 @@ class XCollector:
                 raise
 
     async def _poll_once(
-        self, user_id: str, source_id: str, handle: str, api_key: str
+        self,
+        user_id: str,
+        source_id: str,
+        handle: str,
+        *,
+        x_api_bearer_token: str,
+        xai_api_key: str,
     ) -> None:
         """Fetch and persist new tweets for one account."""
         logger.debug("Polling X account @%s", handle)
 
-        tweets = await self._fetch_tweets(handle, api_key)
+        if x_api_bearer_token and source_id not in self._x_api_disabled_sources:
+            tweets, source_method = await self._fetch_tweets_x_api(
+                handle, x_api_bearer_token, source_id
+            )
+        elif xai_api_key:
+            tweets = await self._fetch_tweets_xai(handle, xai_api_key)
+            source_method = SOURCE_METHOD_XAI
+        else:
+            logger.warning("No usable API key for @%s (source %s)", handle, source_id)
+            return
+
         if not tweets:
             logger.debug("No tweets returned for @%s", handle)
             return
@@ -150,12 +227,16 @@ class XCollector:
                 text = tweet.get("text", "")
                 ts = _parse_tweet_timestamp(tweet.get("created_at"))
 
+                # Annotate raw JSON with which method produced this tweet
+                raw = dict(tweet)
+                raw["_source_method"] = source_method
+
                 post = Post(
                     source_type="x",
                     source_id=tweet_id,
                     author=author,
                     content=text,
-                    raw_json=tweet,
+                    raw_json=raw,
                     timestamp=ts,
                 )
                 session.add(post)
@@ -227,19 +308,63 @@ class XCollector:
             source_result = await session.execute(
                 select(Source).where(Source.id == source_id)
             )
-            source = source_result.scalars().first()
-            if source:
-                source.last_polled = datetime.now(tz=timezone.utc)
+            source_obj = source_result.scalars().first()
+            if source_obj:
+                source_obj.last_polled = datetime.now(tz=timezone.utc)
 
             await session.commit()
 
         if new_count:
-            logger.info("X @%s: inserted %d new posts", handle, new_count)
+            logger.info(
+                "X @%s [%s]: inserted %d new posts", handle, source_method, new_count
+            )
         else:
             logger.debug("X @%s: no new tweets", handle)
 
-    async def _fetch_tweets(self, handle: str, api_key: str) -> list[dict]:
-        """Call xAI Grok to retrieve recent tweets for a handle."""
+    # -------------------------------------------------------------------------
+    # X API v2 path
+    # -------------------------------------------------------------------------
+
+    async def _fetch_tweets_x_api(
+        self, handle: str, bearer_token: str, source_id: str
+    ) -> tuple[list[dict], str]:
+        """Fetch tweets via X API v2.  Returns (tweets, source_method)."""
+        client = XApiClient(bearer_token)
+        try:
+            tweets = await client.resolve_and_fetch(handle, max_results=10)
+            return tweets, SOURCE_METHOD_X_API
+        except XApiAuthError as exc:
+            # Unrecoverable — bad token. Disable this source from X API v2.
+            logger.error(
+                "X API v2 auth error for @%s (source %s): %s. "
+                "Disabling X API v2 for this source.",
+                handle,
+                source_id,
+                exc,
+            )
+            self._x_api_disabled_sources.add(source_id)
+            raise _SourceDisabledError(str(exc)) from exc
+        except XApiNotFoundError as exc:
+            logger.warning("X API v2: @%s not found — skipping: %s", handle, exc)
+            return [], SOURCE_METHOD_X_API
+        except XApiRateLimitError as exc:
+            logger.warning(
+                "X API v2 rate limit for @%s — retry after %ds", handle, exc.retry_after
+            )
+            raise _RateLimitError(exc.retry_after) from exc
+        except XApiError as exc:
+            logger.error("X API v2 error for @%s: %s", handle, exc)
+            return [], SOURCE_METHOD_X_API
+        except httpx.RequestError as exc:
+            logger.warning("X API v2 network error for @%s: %s — will retry", handle, exc)
+            return [], SOURCE_METHOD_X_API
+
+    # -------------------------------------------------------------------------
+    # xAI / Grok fallback path (unchanged from original implementation)
+    # -------------------------------------------------------------------------
+
+    async def _fetch_tweets_xai(self, handle: str, api_key: str) -> list[dict]:
+        """Call xAI Grok to retrieve recent tweets for a handle (legacy fallback)."""
         handle = handle.lstrip("@")  # normalize — avoid @@handle
         payload = {
             "model": XAI_MODEL,
@@ -288,3 +413,7 @@ class _RateLimitError(Exception):
     def __init__(self, retry_after: int = 60):
         self.retry_after = retry_after
         super().__init__(f"Rate limited — retry after {retry_after}s")
+
+
+class _SourceDisabledError(Exception):
+    """Raised when a source should be permanently disabled due to auth failure."""

@@ -209,6 +209,13 @@ class GeoExtractor:
         if location_name in COUNTRY_NAMES:
             return None
 
+        return await self._geocode_via_queue(location_name)
+
+    async def _geocode_via_queue(self, location_name: str) -> tuple[float, float, str, str] | None:
+        """Internal: submit a geocode request to the rate-limited queue worker.
+
+        Unlike geocode(), this does NOT skip COUNTRY_NAMES — used for country centroid lookups.
+        """
         if not self._is_plausible_location(location_name):
             return None
 
@@ -221,17 +228,20 @@ class GeoExtractor:
         _ensure_geocode_worker()
         if _geocode_queue is None or _geocode_queue.full():
             # Queue full — skip rather than block
+            log.debug("Geocode queue full, skipping %r", location_name)
             return None
 
         loop = asyncio.get_event_loop()
         fut: asyncio.Future = loop.create_future()
         await _geocode_queue.put((location_name, fut))
+        log.debug("Geocode queued for %r (queue size ~%d)", location_name, _geocode_queue.qsize())
 
         try:
             result = await asyncio.wait_for(asyncio.shield(fut), timeout=30.0)
             self._geocode_cache[location_name] = result
             return result
         except asyncio.TimeoutError:
+            log.debug("Geocode timeout for %r", location_name)
             self._geocode_cache[location_name] = None
             return None
 
@@ -250,37 +260,20 @@ class GeoExtractor:
 
         events: list[dict] = []
         for loc_name in locations[:3]:
-            # Check if it's just a country name
+            # Check if it's just a country name — route through the shared queue
+            # (previously used direct httpx calls here, causing 429 bursts on Nominatim)
             if loc_name in COUNTRY_NAMES:
-                # Still geocode to get centroid, but mark as country-level
-                import asyncio, httpx, time as _time  # noqa: PLC0415
-                # Quick geocode without the skip
-                now = _time.monotonic()
-                elapsed = now - self._last_geocode_time
-                if elapsed < 1.1:
-                    await asyncio.sleep(1.1 - elapsed)
-                self._last_geocode_time = _time.monotonic()
-                try:
-                    async with httpx.AsyncClient() as client:
-                        resp = await client.get(
-                            "https://nominatim.openstreetmap.org/search",
-                            params={"q": loc_name, "format": "json", "limit": 1},
-                            headers={"User-Agent": "Orthanc-OSINT/1.0"},
-                            timeout=10.0,
-                        )
-                        resp.raise_for_status()
-                        data = resp.json()
-                        if data:
-                            events.append({
-                                "lat": float(data[0]["lat"]),
-                                "lng": float(data[0]["lon"]),
-                                "place_name": data[0].get("display_name", loc_name),
-                                "confidence": 0.4,
-                                "precision": "country",
-                                "post_id": post_id,
-                            })
-                except Exception as exc:
-                    log.warning("Country geocode failed for %r: %s", loc_name, exc)
+                result = await self._geocode_via_queue(loc_name)
+                if result:
+                    lat, lng, display_name, _ = result
+                    events.append({
+                        "lat": lat,
+                        "lng": lng,
+                        "place_name": display_name,
+                        "confidence": 0.4,
+                        "precision": "country",
+                        "post_id": post_id,
+                    })
                 continue
 
             result = await self.geocode(loc_name)

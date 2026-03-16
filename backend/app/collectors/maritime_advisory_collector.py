@@ -37,6 +37,9 @@ logger = logging.getLogger("orthanc.collectors.maritime_advisory")
 
 POLL_INTERVAL = 1800  # 30 minutes
 
+# Track sources that returned 403 so we log once instead of every poll cycle
+_blocked_sources: set[str] = set()
+
 MARAD_URL = "https://www.maritime.dot.gov/msci-advisories"
 UKMTO_URL = "https://www.ukmto.org/ukmto-products/warnings"
 
@@ -271,7 +274,17 @@ class MaritimeAdvisoryCollector:
             logger.warning("Timeout fetching %s", url)
             return
         except httpx.HTTPStatusError as exc:
-            logger.warning("HTTP %s fetching %s: %s", exc.response.status_code, url, exc)
+            if exc.response.status_code == 403:
+                if url not in _blocked_sources:
+                    _blocked_sources.add(url)
+                    logger.warning(
+                        "HTTP 403 fetching %s — site requires alternative approach "
+                        "(browser headers may not be sufficient). Suppressing further 403 logs for this source.",
+                        url,
+                    )
+                # else: silently skip to avoid log spam
+            else:
+                logger.warning("HTTP %s fetching %s: %s", exc.response.status_code, url, exc)
             return
         except Exception as exc:
             logger.warning("Error fetching %s: %s", url, exc)

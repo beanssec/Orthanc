@@ -56,7 +56,7 @@ const TASK_LABELS: Record<string, string> = {
   embedding: 'Embeddings',
   summarisation: 'Summarisation',
   entity_enrichment: 'Entity Enrichment',
-  image_analysis: 'Image Analysis',
+  image_analysis: 'Image/Media Analysis',
   narrative_title: 'Narrative Titles',
   narrative_label: 'Narrative Canonical Labels',
   narrative_confirmation: 'Narrative Confirmation',
@@ -83,11 +83,49 @@ function fmtCost(n: number | null | undefined): string {
   return `$${n.toFixed(2)}`;
 }
 
+/* ── Model filtering by task type ── */
+
+/** Model ID substrings that indicate an embedding-only model */
+const EMBED_MODEL_HINTS = ['embed', 'nomic', 'mxbai', 'minilm'];
+/** Model ID substrings that indicate vision capability */
+const VISION_MODEL_HINTS = [
+  'gpt-4o', 'gpt-4-turbo', 'gpt-4-vision',
+  'claude-sonnet', 'claude-opus', 'claude-3',
+  'gemini', 'llava', 'bakllava', 'moondream',
+  'llama3.2-vision', 'llama-3.2-vision', 'llama4', 'llama-4',
+  'mistral-small', 'pixtral', 'qwen2-vl', 'qwen-vl',
+];
+/** Model ID substrings to exclude from embedding/vision picks */
+const EMBED_EXCLUDE_HINTS = ['grok-3-mini', 'grok-3-fast', 'grok-2-mini'];
+
+function filterModelsForTask(models: ModelInfo[], taskKey: string): ModelInfo[] {
+  if (taskKey === 'embedding') {
+    return models.filter((m) => {
+      const id = (m.id || '').toLowerCase();
+      return EMBED_MODEL_HINTS.some((hint) => id.includes(hint))
+        && !EMBED_EXCLUDE_HINTS.some((exc) => id.includes(exc));
+    });
+  }
+  if (taskKey === 'image_analysis') {
+    return models.filter((m) => {
+      const id = (m.id || '').toLowerCase();
+      return VISION_MODEL_HINTS.some((hint) => id.includes(hint));
+    });
+  }
+  // Regular chat tasks: exclude embedding-only models
+  return models.filter((m) => {
+    const id = (m.id || '').toLowerCase();
+    return !EMBED_MODEL_HINTS.some((hint) => id.includes(hint));
+  });
+}
+
 function guessProvider(modelId: string): string {
   if (!modelId) return '—';
   if (modelId.includes('grok')) return 'xAI';
   if (modelId.includes('gpt') || modelId.includes('openai')) return 'OpenRouter';
   if (modelId.includes('claude')) return 'OpenRouter';
+  if (modelId.includes('text-embedding')) return 'OpenRouter';
+  if (modelId.includes('nomic') || modelId.includes('llava') || modelId.includes('bakllava') || modelId.includes('moondream')) return 'Ollama';
   if (modelId.includes('hash') || modelId.includes('local')) return 'Built-in';
   return '—';
 }
@@ -314,6 +352,7 @@ function TasksSection() {
                 const currentModel = tasks[key] ?? '';
                 const saveState = saveStates[key];
                 const providerGuess = guessProvider(currentModel);
+                const filteredModels = filterModelsForTask(models, key);
 
                 return (
                   <tr key={key}>
@@ -326,18 +365,18 @@ function TasksSection() {
                           className="models-select"
                           value={currentModel}
                           onChange={(e) => handleChange(key, e.target.value)}
-                          disabled={models.length === 0}
+                          disabled={filteredModels.length === 0}
                         >
-                          {currentModel && !models.find((m) => m.id === currentModel) && (
-                            <option value={currentModel}>{currentModel}</option>
+                          {currentModel && !filteredModels.find((m) => m.id === currentModel) && (
+                            <option value={currentModel}>{currentModel} (incompatible)</option>
                           )}
-                          {models.map((m) => (
+                          {filteredModels.map((m) => (
                             <option key={m.id} value={m.id}>
                               {m.name ?? m.id}
                             </option>
                           ))}
-                          {models.length === 0 && (
-                            <option value="">No models available</option>
+                          {filteredModels.length === 0 && (
+                            <option value="">No matching models</option>
                           )}
                         </select>
                         {saveState === 'saving' && (
