@@ -315,3 +315,36 @@
 - Canonical alembic head verified as `024_entity_aliases_and_overrides`
 - Current chain in active history: `020_entity_relationships` → `021_entity_relationship_metadata` → `022_timeline_perf_indexes` → `023_narrative_trackers` → `024_entity_aliases_and_overrides`
 - No duplicate heads present at audit time
+
+## 2026-03-17: Stability & Intelligence Brief Overhaul ✅
+
+### Bug Fixes
+- **Postgres deadlock in entity extraction**: Created shared `entity_persistence.py` with `session.no_autoflush` — updated all 12 collectors
+- **Shodan 403 not persisting disable**: Fixed exception swallowing — `_ShodanQueryDisabled` now propagates correctly
+- **Dead Telegram channels retrying forever**: Added `_resolve_failures` tracker, auto-skips after 3 consecutive failures
+- **Frontend SIGTERM crash loop**: Removed source volume mount from docker-compose.yml, fixed Dockerfile CMD to use `node_modules/.bin/vite`
+- **Backend `.dockerignore`**: Excluded 1.5GB `data/` dir from Docker builds
+
+### Smart Post Selector (`brief_post_selector.py`)
+- Replaced naive `ORDER BY timestamp DESC LIMIT 500` with 5-tier intelligent selection:
+  - Tier 1 (~10%): Fired alerts (correlation triggers, velocity spikes)
+  - Tier 2 (~20%): Fusion events (multi-source corroborated)
+  - Tier 3 (~30%): Narrative representatives (best post per active narrative)
+  - Tier 4 (~15%): Trending entities (mention spike detection)
+  - Tier 5 (remainder): Time-sliced temporal fill (even coverage across window)
+- Posts tagged with selection reason for LLM context (`[ALERT: ...]`, `[FUSION: ...]`, etc.)
+- ID-based deduplication between tiers
+
+### Enhanced Brief System
+- Schema expanded: added `regional_breakdown` and `risks_and_outlook` sections
+- Executive summary: 4-6 sentences (was 2-3), key developments: 8-15 items with specifics
+- Entity watch now includes `role` field
+- Context window scaling: 500 posts for 1M+ ctx, 350 for 500K+, 200 for 200K+, 150 for 128K, 80 for smaller
+- OpenRouter live model cache for automatic context window detection
+- Fixed API response sending only executive_summary — now sends full structured JSON
+- Frontend structured JSON renderer with all 7 sections
+- PDF export renders structured sections instead of dumping raw JSON
+
+### Frontline Map Sources
+- Snapshot scheduler now iterates ALL 6 configured sources every 6 hours (was only DeepState)
+- Active sources: DeepState, AMK Mapping, Suriyakmaps, UA Control Map, Playfra, Radov
