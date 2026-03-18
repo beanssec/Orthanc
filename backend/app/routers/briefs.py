@@ -17,7 +17,7 @@ from app.models import User
 from app.models.brief import Brief
 from app.services.brief_generator import brief_generator
 from app.services.brief_scheduler import brief_scheduler
-from app.services.ai_models import AI_MODELS, fetch_live_openrouter_models, merge_brief_models
+from app.services.ai_models import AI_MODELS, fetch_live_openrouter_models, merge_brief_models, cache_live_models
 from app.services.collector_manager import collector_manager
 from sqlalchemy import select, delete
 
@@ -104,6 +104,9 @@ async def list_models(
     live_or_models: list[dict] = []
     if or_keys and or_keys.get("api_key"):
         live_or_models = await fetch_live_openrouter_models(or_keys["api_key"])
+        # Cache for make_fallback_model_config to look up context_window at generation time
+        if live_or_models:
+            cache_live_models(live_or_models)
 
     # Merge static registry + live models; apply availability flags
     merged = merge_brief_models(live_or_models, configured)

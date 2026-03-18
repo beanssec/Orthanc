@@ -62,6 +62,7 @@ const TASK_LABELS: Record<string, string> = {
   narrative_confirmation: 'Narrative Confirmation',
   tracked_narrative_match: 'Tracked Narrative Matching',
   entity_resolution_assist: 'Entity Resolution Assist',
+  claim_extraction: 'Claim Extraction',
 };
 
 const PROVIDER_LABELS: Record<string, string> = {

@@ -458,6 +458,7 @@ class ModelRouter:
     TASK_NARRATIVE_CONFIRMATION = "narrative_confirmation"
     TASK_TRACKED_NARRATIVE_MATCH = "tracked_narrative_match"
     TASK_ENTITY_RESOLUTION_ASSIST = "entity_resolution_assist"
+    TASK_CLAIM_EXTRACTION = "claim_extraction"
 
     # Default task-to-model mapping
     DEFAULT_TASK_MODELS: dict[str, str] = {
@@ -473,6 +474,7 @@ class ModelRouter:
         TASK_NARRATIVE_CONFIRMATION: "grok-3-mini",
         TASK_TRACKED_NARRATIVE_MATCH: "grok-3-mini",
         TASK_ENTITY_RESOLUTION_ASSIST: "grok-3-mini",
+        TASK_CLAIM_EXTRACTION: "grok-3-mini",
     }
 
     def __init__(self) -> None:

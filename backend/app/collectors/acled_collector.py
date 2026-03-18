@@ -12,6 +12,7 @@ from sqlalchemy import select
 from app.db import AsyncSessionLocal
 from app.models.event import Event
 from app.models.post import Post
+from app.services.entity_persistence import persist_entities
 
 logger = logging.getLogger("orthanc.collectors.acled")
 
@@ -202,40 +203,7 @@ class ACLEDCollector:
                         session.add(geo_event)
 
                     # Entity extraction (non-blocking)
-                    try:
-                        from app.services.entity_extractor import entity_extractor
-                        from app.models.entity import Entity, EntityMention
-                        text_for_ner = content
-                        extracted_ents = await entity_extractor.extract_entities_async(text_for_ner)
-                        for ent in extracted_ents:
-                            canonical = entity_extractor.canonical_name(ent["name"])
-                            existing_ent = await session.execute(
-                                select(Entity).where(
-                                    Entity.canonical_name == canonical,
-                                    Entity.type == ent["type"],
-                                )
-                            )
-                            entity = existing_ent.scalars().first()
-                            if entity:
-                                entity.mention_count += 1
-                                entity.last_seen = datetime.now(tz=timezone.utc)
-                            else:
-                                entity = Entity(
-                                    name=ent["name"],
-                                    type=ent["type"],
-                                    canonical_name=canonical,
-                                    mention_count=1,
-                                )
-                                session.add(entity)
-                                await session.flush()
-                            mention = EntityMention(
-                                entity_id=entity.id,
-                                post_id=post.id,
-                                context_snippet=ent["context_snippet"],
-                            )
-                            session.add(mention)
-                    except Exception as ent_exc:
-                        logger.debug("Entity extraction failed for ACLED post %s: %s", acled_id, ent_exc)
+                    await persist_entities(session, post.id, content, log_label="acled")
 
                     new_count += 1
 

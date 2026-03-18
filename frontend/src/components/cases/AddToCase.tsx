@@ -40,7 +40,9 @@ export function AddToCase({ itemType, itemId, title, content, lat, lng }: Props)
         .then((r) => {
           // Also fetch active
           return api.get('/cases/?status=active').then((r2) => {
-            const combined = [...(r.data as CaseSummary[]), ...(r2.data as CaseSummary[])]
+            const d1 = Array.isArray(r.data) ? r.data : r.data.items || [];
+            const d2 = Array.isArray(r2.data) ? r2.data : r2.data.items || [];
+            const combined = [...(d1 as CaseSummary[]), ...(d2 as CaseSummary[])]
             // Deduplicate
             const seen = new Set<string>()
             setCases(combined.filter((c) => {

@@ -34,6 +34,7 @@ async def list_narratives(
     offset: int = Query(0, ge=0),
     min_divergence: float = Query(None, ge=0, le=1),
     min_posts: int = Query(None, ge=1),
+    triage_status: str = Query(None, description="Filter by triage_status: detected, under_review, confirmed, contradicted, archived"),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -45,6 +46,8 @@ async def list_narratives(
         query = query.where(Narrative.divergence_score >= min_divergence)
     if min_posts is not None:
         query = query.where(Narrative.post_count >= min_posts)
+    if triage_status is not None:
+        query = query.where(Narrative.triage_status == triage_status)
 
     # Count total
     count_query = select(func.count()).select_from(query.subquery())
@@ -309,7 +312,10 @@ async def get_narrative(
     # Get stance distribution by source group
     stance_by_group = await _get_stance_by_group(db, narrative.id)
 
-    detail = _serialize_narrative(narrative)
+    # Compute evidence classification counts for this narrative
+    evidence_counts = await _get_evidence_counts(db, narrative.id)
+
+    detail = _serialize_narrative(narrative, evidence_counts=evidence_counts)
     detail["posts"] = [
         {
             "id": str(post.id),
@@ -320,6 +326,9 @@ async def get_narrative(
             "stance": np_row.stance,
             "stance_confidence": np_row.stance_confidence,
             "stance_summary": np_row.stance_summary,
+            # Evidence classification (Sprint Claim Extraction CP2)
+            "evidence_role": np_row.evidence_role,
+            "evidence_confidence": np_row.evidence_confidence,
         }
         for np_row, post in posts
     ]
@@ -427,6 +436,87 @@ async def refresh_narrative(
 ):
     """Force re-cluster and re-classify a narrative (placeholder)."""
     return {"status": "refresh queued", "narrative_id": narrative_id}
+
+
+# ─── Triage endpoints (Sprint Claim Extraction CP3) ───────────────────────────
+
+_VALID_TRIAGE_STATUSES = {"detected", "under_review", "confirmed", "contradicted", "archived"}
+
+
+async def _get_narrative_or_404(db: AsyncSession, narrative_id: uuid.UUID) -> Narrative:
+    result = await db.execute(select(Narrative).where(Narrative.id == narrative_id))
+    narrative = result.scalars().first()
+    if not narrative:
+        raise HTTPException(404, "Narrative not found")
+    return narrative
+
+
+@router.post("/{narrative_id:uuid}/triage")
+async def triage_narrative(
+    narrative_id: uuid.UUID,
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Set triage status and optional analyst notes for a narrative.
+
+    Body: {"status": "under_review"|"confirmed"|"contradicted"|"archived"|"detected", "notes": "..."}
+    """
+    status = payload.get("status")
+    if not status or status not in _VALID_TRIAGE_STATUSES:
+        raise HTTPException(
+            400,
+            f"Invalid triage status. Must be one of: {', '.join(sorted(_VALID_TRIAGE_STATUSES))}",
+        )
+
+    narrative = await _get_narrative_or_404(db, narrative_id)
+    narrative.triage_status = status
+    if "notes" in payload:
+        narrative.triage_notes = payload["notes"] or None
+    await db.commit()
+    return _serialize_narrative(narrative)
+
+
+@router.post("/{narrative_id:uuid}/confirm-claim")
+async def confirm_claim(
+    narrative_id: uuid.UUID,
+    payload: dict = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Convenience endpoint: set triage_status to 'confirmed'.
+
+    Body (optional): {"notes": "..."}
+    """
+    if payload is None:
+        payload = {}
+    narrative = await _get_narrative_or_404(db, narrative_id)
+    narrative.triage_status = "confirmed"
+    if "notes" in payload:
+        narrative.triage_notes = payload["notes"] or None
+    await db.commit()
+    return _serialize_narrative(narrative)
+
+
+@router.post("/{narrative_id:uuid}/contradict-claim")
+async def contradict_claim(
+    narrative_id: uuid.UUID,
+    payload: dict = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Convenience endpoint: set triage_status to 'contradicted'.
+
+    Body (optional): {"notes": "..."}
+    """
+    if payload is None:
+        payload = {}
+    narrative = await _get_narrative_or_404(db, narrative_id)
+    narrative.triage_status = "contradicted"
+    if "notes" in payload:
+        narrative.triage_notes = payload["notes"] or None
+    await db.commit()
+    return _serialize_narrative(narrative)
 
 
 # ─── Tracker APIs (FEAT-001) ──────────────────────────────────────────────────
@@ -1229,7 +1319,11 @@ async def recompute_tracker(
 
 # ─── Helper functions ──────────────────────────────────────────────────────────
 
-def _serialize_narrative(n: Narrative) -> dict:
+def _serialize_narrative(
+    n: Narrative,
+    evidence_counts: dict | None = None,
+) -> dict:
+    ev = evidence_counts or {}
     return {
         "id": str(n.id),
         "title": n.title,
@@ -1250,7 +1344,33 @@ def _serialize_narrative(n: Narrative) -> dict:
         "narrative_type": n.narrative_type,
         "label_confidence": n.label_confidence,
         "confirmation_status": n.confirmation_status,
+        # Claim extraction fields (Sprint Claim Extraction CP1)
+        "claim_text": n.claim_text,
+        "claimant": n.claimant,
+        "claim_type": n.claim_type,
+        "claim_confidence": n.claim_confidence,
+        "claim_extracted_at": n.claim_extracted_at.isoformat() if n.claim_extracted_at else None,
+        # Triage workflow (Sprint Claim Extraction CP3)
+        "triage_status": n.triage_status,
+        "triage_notes": n.triage_notes,
+        # Evidence classification counts (Sprint Claim Extraction CP2)
+        "evidence_supports": ev.get("supports", 0),
+        "evidence_contradicts": ev.get("contradicts", 0),
+        "evidence_contextual": ev.get("contextual", 0),
     }
+
+
+async def _get_evidence_counts(db: AsyncSession, narrative_id) -> dict:
+    """Return a dict of evidence_role → count for a narrative's classified posts."""
+    result = await db.execute(
+        select(NarrativePost.evidence_role, func.count().label("cnt"))
+        .where(
+            NarrativePost.narrative_id == narrative_id,
+            NarrativePost.evidence_role.isnot(None),
+        )
+        .group_by(NarrativePost.evidence_role)
+    )
+    return {row[0]: row[1] for row in result.all()}
 
 
 async def _get_stance_by_group(db: AsyncSession, narrative_id) -> dict:

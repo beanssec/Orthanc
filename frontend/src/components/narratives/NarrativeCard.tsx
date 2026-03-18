@@ -28,6 +28,12 @@ export function NarrativeCard({ narrative, selected, onClick }: NarrativeCardPro
   const divClass = divergenceClass(narrative.divergence_score);
   // Prefer canonical_title when available; fall back to legacy title
   const displayTitle = narrative.canonical_title ?? narrative.title;
+  // Truncate claim_text to ~80 chars for the card subtitle
+  const claimPreview = narrative.claim_text
+    ? narrative.claim_text.length > 80
+      ? narrative.claim_text.slice(0, 79) + '…'
+      : narrative.claim_text
+    : null;
 
   return (
     <div
@@ -39,9 +45,23 @@ export function NarrativeCard({ narrative, selected, onClick }: NarrativeCardPro
     >
       <div className="narrative-card-title">{displayTitle}</div>
 
+      {/* Claim info — shown when claim extraction has run */}
+      {claimPreview && (
+        <div className="narrative-card-claim">
+          <span className="narrative-card-claim__text">{claimPreview}</span>
+          {narrative.claimant && (
+            <span className="narrative-card-claim__claimant">{narrative.claimant}</span>
+          )}
+        </div>
+      )}
+
       <div className="narrative-card-meta">
-        <span>{narrative.post_count} posts</span>
-        <span>{narrative.source_count} sources</span>
+        <span>
+          {narrative.post_count} posts
+          {narrative.source_count != null && narrative.source_count > 0 && (
+            <> · {narrative.source_count} sources</>
+          )}
+        </span>
         <NarrativeTypePill type={narrative.narrative_type} />
       </div>
 
@@ -76,7 +96,7 @@ export function NarrativeCard({ narrative, selected, onClick }: NarrativeCardPro
           <span className="narrative-card-time">Updated {timeAgo(narrative.last_updated)}</span>
           <ConfidenceDot confidence={narrative.label_confidence} />
         </div>
-        <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
           {/* Prefer confirmation_status; fall back to legacy consensus. Never show "pending". */}
           {narrative.confirmation_status && narrative.confirmation_status !== 'pending' && (
             <span className={`confirmation-badge ${narrative.confirmation_status}`}>
@@ -86,6 +106,11 @@ export function NarrativeCard({ narrative, selected, onClick }: NarrativeCardPro
           {!narrative.confirmation_status && narrative.consensus && (
             <span className={`consensus-badge ${narrative.consensus}`}>
               {narrative.consensus}
+            </span>
+          )}
+          {narrative.triage_status && (
+            <span className={`triage-badge triage-badge--${narrative.triage_status.replace(/_/g, '-')}`}>
+              {narrative.triage_status.replace(/_/g, ' ')}
             </span>
           )}
           <span className={`narrative-status-badge ${narrative.status}`}>

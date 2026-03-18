@@ -500,12 +500,22 @@ class FrontlineService:
         logger.info("Frontline snapshot scheduler started (interval: 6h)")
 
     async def _snapshot_loop(self) -> None:
-        """Poll every 6 hours and store a snapshot if the frontline changed."""
+        """Poll every 6 hours and store a snapshot for ALL configured sources."""
         while True:
-            try:
-                await self.take_snapshot()
-            except Exception as exc:
-                logger.error("Frontline snapshot loop error: %s", exc)
+            for source_id in SOURCES:
+                try:
+                    result = await self.take_snapshot(source_id)
+                    status = result.get("status", "unknown")
+                    if status == "saved":
+                        logger.info("Frontline snapshot saved for %s", source_id)
+                    elif status == "unchanged":
+                        logger.debug("Frontline snapshot unchanged for %s", source_id)
+                    elif status == "error":
+                        logger.warning("Frontline snapshot failed for %s: %s", source_id, result.get("detail"))
+                except Exception as exc:
+                    logger.error("Frontline snapshot error for %s: %s", source_id, exc)
+                # Brief pause between sources to avoid hammering external APIs
+                await asyncio.sleep(5)
             await asyncio.sleep(6 * 3600)
 
     async def take_snapshot(self, source_id: str = "deepstate") -> dict:

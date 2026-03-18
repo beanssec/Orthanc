@@ -107,10 +107,10 @@ async def create_source(
     return _to_response(source)
 
 
-@router.get("/", response_model=List[SourceResponse])
+@router.get("/")
 async def list_sources(
     type: Optional[str] = Query(default=None),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=200, alias='limit'),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),

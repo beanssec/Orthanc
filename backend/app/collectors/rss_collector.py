@@ -219,38 +219,44 @@ class RSSCollector:
                 except Exception as geo_exc:  # noqa: BLE001
                     logger.warning("Geo extraction failed for post %s: %s", post.id, geo_exc)
 
-                # Run entity extraction
+                # Run entity extraction (use no_autoflush to prevent deadlocks
+                # when multiple collectors write entities concurrently)
                 try:
                     extracted_ents = await entity_extractor.extract_entities_async(post.content or "")
-                    for ent in extracted_ents:
-                        canonical = entity_extractor.canonical_name(ent["name"])
-                        existing_ent = await session.execute(
-                            select(Entity).where(
-                                Entity.canonical_name == canonical,
-                                Entity.type == ent["type"],
+                    with session.no_autoflush:
+                        for ent in extracted_ents:
+                            canonical = entity_extractor.canonical_name(ent["name"])
+                            existing_ent = await session.execute(
+                                select(Entity).where(
+                                    Entity.canonical_name == canonical,
+                                    Entity.type == ent["type"],
+                                )
                             )
-                        )
-                        entity = existing_ent.scalars().first()
-                        if entity:
-                            entity.mention_count += 1
-                            entity.last_seen = datetime.now(tz=timezone.utc)
-                        else:
-                            entity = Entity(
-                                name=ent["name"],
-                                type=ent["type"],
-                                canonical_name=canonical,
-                                mention_count=1,
+                            entity = existing_ent.scalars().first()
+                            if entity:
+                                entity.mention_count += 1
+                                entity.last_seen = datetime.now(tz=timezone.utc)
+                            else:
+                                entity = Entity(
+                                    name=ent["name"],
+                                    type=ent["type"],
+                                    canonical_name=canonical,
+                                    mention_count=1,
+                                )
+                                session.add(entity)
+                                await session.flush()
+                            mention = EntityMention(
+                                entity_id=entity.id,
+                                post_id=post.id,
+                                context_snippet=ent["context_snippet"],
                             )
-                            session.add(entity)
-                            await session.flush()
-                        mention = EntityMention(
-                            entity_id=entity.id,
-                            post_id=post.id,
-                            context_snippet=ent["context_snippet"],
-                        )
-                        session.add(mention)
+                            session.add(mention)
                 except Exception as ent_exc:
                     logger.warning("Entity extraction failed for post %s: %s", post.id, ent_exc)
+                    try:
+                        await session.rollback()
+                    except Exception:
+                        pass
 
                 new_count += 1
 

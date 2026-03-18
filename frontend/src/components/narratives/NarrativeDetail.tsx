@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import type { NarrativeDetail as NarrativeDetailType, NarrativePost, Claim } from './types';
@@ -460,6 +460,136 @@ function TimelineTab({ posts }: { posts: NarrativePost[] }) {
   );
 }
 
+// ── Claim Section + Triage Buttons ────────────────────────
+
+function ClaimSection({
+  detail,
+  onTriageChange,
+}: {
+  detail: NarrativeDetailType;
+  onTriageChange: () => void;
+}) {
+  const [triaging, setTriaging] = useState(false);
+  const [triageError, setTriageError] = useState<string | null>(null);
+
+  if (!detail.claim_text) return null;
+
+  const doTriage = async (status: string) => {
+    setTriaging(true);
+    setTriageError(null);
+    try {
+      await api.post(`/narratives/${detail.id}/triage`, { status });
+      onTriageChange();
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Triage failed';
+      setTriageError(msg);
+    } finally {
+      setTriaging(false);
+    }
+  };
+
+  const doConfirm = async () => {
+    setTriaging(true);
+    setTriageError(null);
+    try {
+      await api.post(`/narratives/${detail.id}/confirm-claim`);
+      onTriageChange();
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Failed to confirm claim';
+      setTriageError(msg);
+    } finally {
+      setTriaging(false);
+    }
+  };
+
+  const doContradict = async () => {
+    setTriaging(true);
+    setTriageError(null);
+    try {
+      await api.post(`/narratives/${detail.id}/contradict-claim`);
+      onTriageChange();
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Failed to contradict claim';
+      setTriageError(msg);
+    } finally {
+      setTriaging(false);
+    }
+  };
+
+  const confPct = detail.claim_confidence != null
+    ? Math.round(detail.claim_confidence * 100)
+    : null;
+
+  return (
+    <div className="narrative-claim-section">
+      <div className="narrative-claim-section__header">
+        <span className="narrative-claim-section__label">Extracted Claim</span>
+        {detail.claim_type && (
+          <span className="narrative-claim-type-badge">{detail.claim_type.replace(/_/g, ' ')}</span>
+        )}
+        {confPct != null && (
+          <span className="narrative-claim-confidence" title={`Extraction confidence: ${confPct}%`}>
+            {confPct}% confidence
+          </span>
+        )}
+        {detail.triage_status && (
+          <span className={`triage-badge triage-badge--${detail.triage_status.replace(/_/g, '-')}`}>
+            {detail.triage_status.replace(/_/g, ' ')}
+          </span>
+        )}
+      </div>
+
+      <div className="narrative-claim-section__text">{detail.claim_text}</div>
+
+      {detail.claimant && (
+        <div className="narrative-claim-section__claimant">
+          <span className="narrative-claim-section__claimant-label">Claimant:</span>
+          <span className="narrative-claim-section__claimant-value">{detail.claimant}</span>
+        </div>
+      )}
+
+      <div className="narrative-claim-section__actions">
+        <button
+          className="btn btn-xs btn-ghost"
+          disabled={triaging}
+          onClick={() => doTriage('under_review')}
+          title="Mark this claim for analyst review"
+        >
+          🔍 Under Review
+        </button>
+        <button
+          className="btn btn-xs btn-success"
+          disabled={triaging}
+          onClick={doConfirm}
+          title="Confirm this claim as verified"
+        >
+          ✓ Confirm
+        </button>
+        <button
+          className="btn btn-xs btn-danger"
+          disabled={triaging}
+          onClick={doContradict}
+          title="Mark this claim as contradicted by evidence"
+        >
+          ✗ Contradict
+        </button>
+        <button
+          className="btn btn-xs btn-ghost"
+          disabled={triaging}
+          onClick={() => doTriage('archived')}
+          title="Archive this claim"
+        >
+          📦 Archive
+        </button>
+      </div>
+
+      {triageError && (
+        <div className="narrative-claim-section__error">{triageError}</div>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ──────────────────────────────────────────
 
 export function NarrativeDetail({ narrativeId }: NarrativeDetailProps) {
@@ -474,15 +604,14 @@ export function NarrativeDetail({ narrativeId }: NarrativeDetailProps) {
   const [relatedNarratives, setRelatedNarratives] = useState<Array<NarrativeListItem & { sharedCount: number }>>([]);
   const [relatedNarrativesLoading, setRelatedNarrativesLoading] = useState(false);
 
-  useEffect(() => {
-    if (!narrativeId) return;
+  const loadDetail = useCallback((id: string) => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     setDetail(null);
 
     api
-      .get(`/narratives/${narrativeId}`)
+      .get(`/narratives/${id}`)
       .then((res) => {
         if (!cancelled) setDetail(res.data);
       })
@@ -494,7 +623,12 @@ export function NarrativeDetail({ narrativeId }: NarrativeDetailProps) {
       });
 
     return () => { cancelled = true; };
-  }, [narrativeId]);
+  }, []);
+
+  useEffect(() => {
+    if (!narrativeId) return;
+    return loadDetail(narrativeId);
+  }, [narrativeId, loadDetail]);
 
   // TASK-69: Load related narratives once detail is available
   useEffect(() => {
@@ -626,6 +760,12 @@ export function NarrativeDetail({ narrativeId }: NarrativeDetailProps) {
           <div className="narrative-detail-summary">{detail.summary}</div>
         )}
       </div>
+
+      {/* Claim section with triage buttons — shown when claim extraction has run */}
+      <ClaimSection
+        detail={detail}
+        onTriageChange={() => loadDetail(narrativeId)}
+      />
 
       <div className="narrative-tabs">
         {tabs.map((t) => (

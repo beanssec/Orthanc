@@ -10,13 +10,12 @@ import httpx
 from sqlalchemy import select
 
 from app.db import AsyncSessionLocal
-from app.models.entity import Entity, EntityMention
 from app.models.event import Event
 from app.models.post import Post
 from app.models.source import Source
 from app.routers.feed import broadcast_post
 from app.services.collector_manager import collector_manager
-from app.services.entity_extractor import entity_extractor
+from app.services.entity_persistence import persist_entities
 
 logger = logging.getLogger("orthanc.collectors.shodan")
 
@@ -139,6 +138,8 @@ class ShodanCollector:
                     raise _ShodanQueryDisabled(f"403 Forbidden (plan restriction) for query {query!r}")
                 resp.raise_for_status()
                 data = resp.json()
+        except _ShodanQueryDisabled:
+            raise  # Let _poll_loop handle permanent disable
         except httpx.HTTPStatusError as e:
             logger.warning("Shodan HTTP error for query %r: %s", query, e)
             return
@@ -227,37 +228,7 @@ class ShodanCollector:
                         logger.warning("Failed to create event for Shodan match %s: %s", source_id_key, evt_exc)
 
                 # Entity extraction
-                try:
-                    extracted_ents = await entity_extractor.extract_entities_async(content or "")
-                    for ent in extracted_ents:
-                        canonical = entity_extractor.canonical_name(ent["name"])
-                        existing_ent = await session.execute(
-                            select(Entity).where(
-                                Entity.canonical_name == canonical,
-                                Entity.type == ent["type"],
-                            )
-                        )
-                        entity_obj = existing_ent.scalars().first()
-                        if entity_obj:
-                            entity_obj.mention_count += 1
-                            entity_obj.last_seen = datetime.now(timezone.utc)
-                        else:
-                            entity_obj = Entity(
-                                name=ent["name"],
-                                type=ent["type"],
-                                canonical_name=canonical,
-                                mention_count=1,
-                            )
-                            session.add(entity_obj)
-                            await session.flush()
-                        mention = EntityMention(
-                            entity_id=entity_obj.id,
-                            post_id=post.id,
-                            context_snippet=ent.get("context_snippet"),
-                        )
-                        session.add(mention)
-                except Exception as ent_exc:
-                    logger.warning("Entity extraction failed for shodan post %s: %s", post.id, ent_exc)
+                await persist_entities(session, post.id, content or "", log_label="shodan")
 
                 new_count += 1
 

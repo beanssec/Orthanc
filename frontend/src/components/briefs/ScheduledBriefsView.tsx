@@ -165,7 +165,7 @@ export function ScheduledBriefsView() {
     setError(null);
     try {
       const res = await api.get('/scheduled-briefs/');
-      setSchedules(res.data);
+      setSchedules(Array.isArray(res.data) ? res.data : res.data.items || []);
     } catch (e: unknown) {
       setError((e as { message?: string })?.message ?? 'Failed to load schedules');
     } finally {

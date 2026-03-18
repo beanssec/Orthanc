@@ -44,6 +44,7 @@ _VALID_TASKS = frozenset([
     model_router.TASK_NARRATIVE_CONFIRMATION,
     model_router.TASK_TRACKED_NARRATIVE_MATCH,
     model_router.TASK_ENTITY_RESOLUTION_ASSIST,
+    model_router.TASK_CLAIM_EXTRACTION,
 ])
 
 

@@ -12,6 +12,9 @@ export function NarrativesView() {
   const [total, setTotal] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('active');
+  const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [triageFilter, setTriageFilter] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<string>('last_updated');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showCompass, setShowCompass] = useState(false);
@@ -127,6 +130,39 @@ export function NarrativesView() {
     }
   };
 
+  // Client-side filter + sort
+  const displayedNarratives = (() => {
+    let list = narratives;
+    if (typeFilter !== 'all') {
+      list = list.filter((n) => n.narrative_type === typeFilter);
+    }
+    if (triageFilter !== 'all') {
+      if (triageFilter === 'none') {
+        list = list.filter((n) => !n.triage_status);
+      } else {
+        list = list.filter((n) => n.triage_status === triageFilter);
+      }
+    }
+    const sorted = [...list];
+    switch (sortBy) {
+      case 'post_count':
+        sorted.sort((a, b) => b.post_count - a.post_count);
+        break;
+      case 'divergence':
+        sorted.sort((a, b) => b.divergence_score - a.divergence_score);
+        break;
+      case 'confidence':
+        sorted.sort((a, b) => (b.label_confidence ?? 0) - (a.label_confidence ?? 0));
+        break;
+      case 'source_count':
+        sorted.sort((a, b) => b.source_count - a.source_count);
+        break;
+      default: // last_updated
+        sorted.sort((a, b) => new Date(b.last_updated).getTime() - new Date(a.last_updated).getTime());
+    }
+    return sorted;
+  })();
+
   const handleRecomputeTracker = async (trackerId: string) => {
     try {
       await api.post(`/narratives/trackers/${trackerId}/recompute`);
@@ -155,6 +191,50 @@ export function NarrativesView() {
             <option value="active">Active</option>
             <option value="stale">Stale</option>
             <option value="resolved">Resolved</option>
+          </select>
+
+          <select
+            value={typeFilter}
+            onChange={(e) => {
+              setTypeFilter(e.target.value);
+              setSelectedId(null);
+            }}
+          >
+            <option value="all">All Types</option>
+            <option value="state_action">State Action</option>
+            <option value="military">Military</option>
+            <option value="diplomatic">Diplomatic</option>
+            <option value="economic">Economic</option>
+            <option value="humanitarian">Humanitarian</option>
+            <option value="cyber">Cyber</option>
+            <option value="other">Other</option>
+          </select>
+
+          <select
+            value={triageFilter}
+            onChange={(e) => {
+              setTriageFilter(e.target.value);
+              setSelectedId(null);
+            }}
+          >
+            <option value="all">All Triage</option>
+            <option value="none">Not Triaged</option>
+            <option value="detected">Detected</option>
+            <option value="under_review">Under Review</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="contradicted">Contradicted</option>
+            <option value="archived">Archived</option>
+          </select>
+
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+          >
+            <option value="last_updated">Last Updated</option>
+            <option value="post_count">Post Count ↓</option>
+            <option value="divergence">Divergence ↓</option>
+            <option value="confidence">Confidence ↓</option>
+            <option value="source_count">Source Count ↓</option>
           </select>
 
           <button onClick={() => setShowCompass((v) => !v)}>
@@ -251,14 +331,14 @@ export function NarrativesView() {
           {error && (
             <div className="narratives-error">{error}</div>
           )}
-          {!loading && !error && narratives.length === 0 && (
+          {!loading && !error && displayedNarratives.length === 0 && (
             <div className="narratives-empty">
-              No narratives found.
+              {narratives.length > 0 ? 'No narratives match the current filters.' : 'No narratives found.'}
               <br />
               <span style={{ fontSize: '0.75rem' }}>Narratives are generated as sources ingest conflicting reports.</span>
             </div>
           )}
-          {narratives.map((n) => (
+          {displayedNarratives.map((n) => (
             <NarrativeCard
               key={n.id}
               narrative={n}

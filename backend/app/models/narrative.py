@@ -38,6 +38,19 @@ class Narrative(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
+    # Triage workflow (Sprint Claim Extraction CP3)
+    # Analyst triage status for extracted claims. Default: None (not yet triaged).
+    # Valid values: detected, under_review, confirmed, contradicted, archived
+    triage_status: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    triage_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Claim extraction fields (Sprint Claim Extraction CP1)
+    claim_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    claimant: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    claim_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    claim_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    claim_extracted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # Duplicate / merge detection (TASK-71)
     # When two narratives share >60% of their posts the smaller one gets
     # merged_into pointing at the canonical (larger) narrative.
@@ -78,6 +91,12 @@ class NarrativePost(Base):
     assigned_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
+
+    # Evidence classification (Sprint Claim Extraction CP2)
+    # values: supports, contradicts, contextual, unclear
+    evidence_role: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    evidence_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    evidence_classified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     narrative: Mapped["Narrative"] = relationship(back_populates="narrative_posts")

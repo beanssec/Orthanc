@@ -958,3 +958,160 @@
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+/* ── Narrative Card Claim Preview ──────────────────────────── */
+
+.narrative-card-claim {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin: 0.2rem 0 0.4rem;
+  flex-wrap: wrap;
+}
+
+.narrative-card-claim__text {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  font-style: italic;
+  line-height: 1.3;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.narrative-card-claim__claimant {
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(16,185,129,0.1);
+  color: #10b981;
+  border: 1px solid rgba(16,185,129,0.2);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ── Triage Badges ─────────────────────────────────────────── */
+
+.triage-badge {
+  font-size: 0.65rem;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.triage-badge--detected      { background: rgba(245,158,11,0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
+.triage-badge--under-review  { background: rgba(59,130,246,0.15); color: #3b82f6; border: 1px solid rgba(59,130,246,0.3); }
+.triage-badge--confirmed     { background: rgba(16,185,129,0.15); color: #10b981; border: 1px solid rgba(16,185,129,0.3); }
+.triage-badge--contradicted  { background: rgba(239,68,68,0.15);  color: #ef4444; border: 1px solid rgba(239,68,68,0.3); }
+.triage-badge--archived      { background: rgba(107,114,128,0.15); color: #6b7280; border: 1px solid rgba(107,114,128,0.3); }
+
+/* ── Narrative Claim Section (NarrativeDetail) ─────────────── */
+
+.narrative-claim-section {
+  background: rgba(99,102,241,0.06);
+  border: 1px solid rgba(99,102,241,0.2);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  margin: 0.75rem 0;
+}
+
+.narrative-claim-section__header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.narrative-claim-section__label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.narrative-claim-type-badge {
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: rgba(99,102,241,0.15);
+  color: var(--accent, #6366f1);
+  border: 1px solid rgba(99,102,241,0.3);
+  text-transform: capitalize;
+}
+
+.narrative-claim-confidence {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.narrative-claim-section__text {
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.4;
+  margin-bottom: 0.5rem;
+}
+
+.narrative-claim-section__claimant {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.77rem;
+  margin-bottom: 0.6rem;
+}
+
+.narrative-claim-section__claimant-label {
+  color: var(--text-muted);
+}
+
+.narrative-claim-section__claimant-value {
+  color: #10b981;
+  font-weight: 500;
+}
+
+.narrative-claim-section__actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.narrative-claim-section__error {
+  font-size: 0.75rem;
+  color: var(--danger, #ef4444);
+  margin-top: 0.4rem;
+}
+
+/* Inline button size variants */
+.btn-xs {
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  border-radius: 5px;
+}
+
+.btn-success {
+  background: rgba(16,185,129,0.15);
+  color: #10b981;
+  border: 1px solid rgba(16,185,129,0.3);
+}
+
+.btn-success:hover:not(:disabled) {
+  background: rgba(16,185,129,0.25);
+}
+
+.btn-danger {
+  background: rgba(239,68,68,0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239,68,68,0.3);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: rgba(239,68,68,0.25);
+}

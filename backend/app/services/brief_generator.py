@@ -17,7 +17,7 @@ from typing import Any, Optional
 from app.db import AsyncSessionLocal
 from app.models.post import Post
 from app.models.brief import Brief
-from app.services.ai_models import get_model, AI_MODELS, make_fallback_model_config
+from app.services.ai_models import get_model, AI_MODELS, make_fallback_model_config, cache_live_models, fetch_live_openrouter_models
 from app.services.model_router import model_router
 from app.services.brief_confidence import compute_brief_confidence, confidence_context_block
 from sqlalchemy import select, func, text
@@ -27,21 +27,36 @@ logger = logging.getLogger("orthanc.brief_generator")
 # ── TASK-75: Structured output schema ─────────────────────────────────────────
 
 BRIEF_JSON_SCHEMA = """{
-  "executive_summary": "<2-3 sentence overview of the key intelligence picture>",
-  "key_developments": ["<development 1>", "<development 2>", "..."],
-  "entity_watch": [
-    {"entity": "<name>", "note": "<why they are significant>"}
+  "executive_summary": "<comprehensive 4-6 sentence overview of the key intelligence picture, covering major theatres and themes>",
+  "key_developments": ["<detailed development with specifics — who, what, where, when, sourcing>", "..."],
+  "regional_breakdown": [
+    {"region": "<region/theatre name>", "summary": "<2-3 sentence assessment of developments in this region>"}
   ],
-  "narrative_shifts": ["<shift or new angle 1>", "..."],
-  "recommendations": ["<analyst recommendation 1>", "..."]
+  "entity_watch": [
+    {"entity": "<name>", "role": "<current role/posture>", "note": "<detailed assessment of their significance, actions, and trajectory>"}
+  ],
+  "narrative_shifts": ["<detailed shift with context on what changed and why it matters>", "..."],
+  "risks_and_outlook": ["<forward-looking risk or projection based on current intelligence>", "..."],
+  "recommendations": ["<specific, actionable analyst recommendation with collection focus>", "..."]
 }"""
 
 SYSTEM_PROMPT = (
-    "You are an OSINT intelligence analyst. Generate a structured intelligence brief from the "
-    "following recent posts.\n\n"
+    "You are a senior OSINT intelligence analyst producing a comprehensive intelligence brief. "
+    "Analyze ALL provided posts thoroughly — do not skip or summarize away important developments.\n\n"
+    "Posts are tagged with their selection reason (ALERT, FUSION, NARRATIVE, TRENDING, TEMPORAL) "
+    "indicating why they were flagged as significant. Weight ALERT and FUSION posts highest.\n\n"
     "Return ONLY a valid JSON object matching this schema (no markdown fences, no explanation):\n"
     f"{BRIEF_JSON_SCHEMA}\n\n"
-    "Be concise, analytical, and professional. Avoid speculation beyond the available data."
+    "Requirements:\n"
+    "- executive_summary: 4-6 sentences covering all major themes\n"
+    "- key_developments: 8-15 items with specific details (names, numbers, locations, dates)\n"
+    "- regional_breakdown: group developments by geographic theatre (e.g., Middle East, Europe, Indo-Pacific)\n"
+    "- entity_watch: 6-10 key actors with detailed assessments\n"
+    "- narrative_shifts: identify how narratives are evolving, not just what happened\n"
+    "- risks_and_outlook: forward-looking analysis based on observed patterns\n"
+    "- recommendations: specific collection priorities and monitoring guidance\n\n"
+    "Be thorough, analytical, and professional. Cite specifics from the source material. "
+    "Avoid vague summaries — this brief should give a reader full situational awareness."
 )
 
 DEFAULT_MODEL = "grok-3-mini"
@@ -211,13 +226,92 @@ def _parse_brief_json(raw: str) -> Optional[dict]:
     if not isinstance(data, dict):
         return None
 
-    # Validate required keys
-    required = {"executive_summary", "key_developments", "entity_watch",
-                "narrative_shifts", "recommendations"}
-    if not required.issubset(data.keys()):
+    # Validate required keys — need at least executive_summary + one other section
+    if "executive_summary" not in data:
+        return None
+    optional_sections = {"key_developments", "entity_watch", "narrative_shifts",
+                         "recommendations", "regional_breakdown", "risks_and_outlook"}
+    if not optional_sections.intersection(data.keys()):
         return None
 
     return data
+
+
+async def _build_claims_context(hours: int) -> str:
+    """
+    Sprint Claim Extraction CP4: Fetch active narratives with claim_text
+    and build a claims context block for the brief prompt.
+    """
+    try:
+        from app.models.narrative import Narrative as NarrativeModel, NarrativePost as NarrativePostModel  # noqa: PLC0415
+        from sqlalchemy import func as sqlfunc  # noqa: PLC0415
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(NarrativeModel)
+                .where(
+                    NarrativeModel.claim_text.isnot(None),
+                    NarrativeModel.status == "active",
+                    NarrativeModel.last_updated >= cutoff,
+                )
+                .order_by(NarrativeModel.post_count.desc())
+                .limit(10)
+            )
+            narratives_with_claims = result.scalars().all()
+
+            if not narratives_with_claims:
+                return ""
+
+            # Compute evidence counts per narrative (supports / contradicts)
+            evidence_rows: dict[str, dict] = {}
+            for narr in narratives_with_claims:
+                try:
+                    ev_result = await session.execute(
+                        select(NarrativePostModel.evidence_role, sqlfunc.count())
+                        .where(
+                            NarrativePostModel.narrative_id == narr.id,
+                            NarrativePostModel.evidence_role.isnot(None),
+                        )
+                        .group_by(NarrativePostModel.evidence_role)
+                    )
+                    counts: dict = {}
+                    for role, cnt in ev_result.all():
+                        counts[role] = cnt
+                    evidence_rows[str(narr.id)] = counts
+                except Exception:
+                    evidence_rows[str(narr.id)] = {}
+
+        if not narratives_with_claims:
+            return ""
+
+        lines = ["ACTIVE CLAIMS CONTEXT (from narrative intelligence, last window):"]
+        contradicted_claims = []
+
+        for narr in narratives_with_claims:
+            ev = evidence_rows.get(str(narr.id), {})
+            supports = ev.get("supports", 0)
+            contradicts = ev.get("contradicts", 0)
+            claimant_str = f" [by {narr.claimant}]" if narr.claimant else ""
+            ev_str = f" | Evidence: ✓{supports} ✗{contradicts}" if (supports or contradicts) else ""
+            claim_type_str = f" ({narr.claim_type})" if narr.claim_type else ""
+            lines.append(
+                f"  • {narr.claim_text[:200]}{claimant_str}{claim_type_str}{ev_str}"
+            )
+            if narr.triage_status == "contradicted":
+                contradicted_claims.append(narr.claim_text[:100])
+
+        if contradicted_claims:
+            lines.append("\n  ⚠ CONTRADICTED CLAIMS (flagged by analysts):")
+            for c in contradicted_claims:
+                lines.append(f"    - {c}")
+
+        return "\n".join(lines)
+
+    except Exception as exc:
+        logger.debug("_build_claims_context: failed (non-fatal): %s", exc)
+        return ""
 
 
 class BriefGenerator:
@@ -244,29 +338,56 @@ class BriefGenerator:
         model_config = get_model(model_id)
         if not model_config:
             if "/" in model_id or model_id not in {m["id"] for m in AI_MODELS}:
-                logger.info(
-                    "Model '%s' not in static registry; using fallback config for brief generation.",
-                    model_id,
-                )
+                # Try to populate cache from OpenRouter API if not already cached
+                from app.services.collector_manager import collector_manager as _cm
+                try:
+                    or_keys = await _cm.get_keys(user_id, "openrouter")
+                    if or_keys and or_keys.get("api_key"):
+                        live_models = await fetch_live_openrouter_models(or_keys["api_key"])
+                        if live_models:
+                            cache_live_models(live_models)
+                            logger.info("Populated live model cache with %d models", len(live_models))
+                except Exception as exc:
+                    logger.debug("Failed to fetch live models for cache: %s", exc)
+
                 model_config = make_fallback_model_config(model_id)
+                logger.info(
+                    "Model '%s' resolved with context_window=%d",
+                    model_id, model_config.get("context_window", 128000),
+                )
             else:
                 return {"error": f"Unknown model: {model_id}. Available: {[m['id'] for m in AI_MODELS]}"}
 
-        # Fetch recent posts with optional filters
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-        async with AsyncSessionLocal() as session:
-            query = select(Post).where(Post.timestamp >= cutoff)
+        from app.services.brief_post_selector import select_posts_for_brief
 
-            if source_types:
-                query = query.where(Post.source_type.in_(source_types))
+        # Determine context window limits early so we can pass budget to the selector
+        # Scale post budget and content length based on model's context window
+        context_window = model_config.get("context_window", 128000)
+        if context_window >= 1000000:    # 1M+ (Gemini Pro, etc.)
+            max_posts = 500
+            max_chars = 1000
+        elif context_window >= 500000:   # 500K+
+            max_posts = 350
+            max_chars = 800
+        elif context_window >= 200000:   # 200K+ (Claude, GPT-4o)
+            max_posts = 200
+            max_chars = 600
+        elif context_window >= 128000:   # 128K
+            max_posts = 150
+            max_chars = 500
+        else:                            # smaller models
+            max_posts = 80
+            max_chars = 350
 
-            if topic and topic.strip():
-                keyword = f"%{topic.strip()}%"
-                query = query.where(Post.content.ilike(keyword))
-
-            query = query.order_by(Post.timestamp.desc()).limit(200)
-            result = await session.execute(query)
-            posts = result.scalars().all()
+        # Smart post selection — pulls from alerts, fusion events, narratives, entities,
+        # and temporal fill to ensure broad, intelligence-relevant coverage.
+        selected = await select_posts_for_brief(
+            hours=hours,
+            budget=max_posts,
+            source_types=source_types,
+            topic=topic,
+        )
+        posts = [s["post"] for s in selected]
 
         if not posts:
             return {
@@ -317,16 +438,13 @@ class BriefGenerator:
         except Exception as exc:
             logger.debug("entity_pair_context: failed (non-fatal): %s", exc)
 
-        # Use more posts for large-context models
-        context_window = model_config.get("context_window", 128000)
-        max_posts = 100 if context_window >= 500000 else 50
-        max_chars = 500 if context_window >= 500000 else 300
-
         post_texts = []
-        for p in posts[:max_posts]:
+        for item in selected[:max_posts]:
+            p = item["post"]
+            reason = item["selection_reason"]
             ts_str = p.timestamp.strftime("%Y-%m-%d %H:%M UTC") if p.timestamp else "unknown time"
             text_body = (p.content or "")[:max_chars]
-            post_texts.append(f"[{p.source_type.upper()}] [{ts_str}] {p.author}: {text_body}")
+            post_texts.append(f"[{reason}] [{p.source_type.upper()}] [{ts_str}] {p.author}: {text_body}")
 
         context = "\n---\n".join(post_texts)
 
@@ -361,6 +479,11 @@ class BriefGenerator:
             pairs_note = _format_entity_pairs_note(entity_pairs)
             if pairs_note:
                 user_message += "\n\n" + pairs_note
+
+        # ── Claims context (Sprint Claim Extraction CP4) ──────────────────────
+        claims_note = await _build_claims_context(hours)
+        if claims_note:
+            user_message += "\n\n" + claims_note
 
         logger.info(
             "Generating brief: user=%s model=%s posts=%d hours=%d topic=%s sources=%s "
@@ -437,7 +560,7 @@ class BriefGenerator:
 
         response: dict[str, Any] = {
             "id": brief_id,
-            "summary": brief_text,
+            "summary": brief_raw,
             "post_count": len(posts),
             "time_range_hours": hours,
             "model": model_id,

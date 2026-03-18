@@ -71,6 +71,16 @@ function briefHours(b: SavedBrief): number {
 }
 
 function getPreview(content: string): string {
+  // Try JSON first
+  const jsonText = content.replace(/```(?:json)?/g, '').trim().replace(/`+$/, '').trim();
+  try {
+    const parsed = JSON.parse(jsonText);
+    if (parsed && typeof parsed === 'object' && parsed.executive_summary) {
+      return (parsed.executive_summary as string).substring(0, 150);
+    }
+  } catch {
+    // fall through to markdown
+  }
   // Skip numbered section headers (e.g. "1. Executive Summary") and get first real content line
   const lines = content.split('\n').filter(
     (l) => l.trim() && !l.match(/^#+\s/) && !l.match(/^\d+\.\s/)
@@ -83,6 +93,18 @@ function extractBriefTitle(brief: SavedBrief): string {
     return (brief as unknown as { title: string }).title;
   }
   if (brief.summary) {
+    // Try JSON first
+    const jsonText = brief.summary.replace(/```(?:json)?/g, '').trim().replace(/`+$/, '').trim();
+    try {
+      const parsed = JSON.parse(jsonText);
+      if (parsed && typeof parsed === 'object' && parsed.executive_summary) {
+        const summary = parsed.executive_summary as string;
+        const firstSentence = summary.split(/[.!?]/)[0]?.trim() || summary;
+        return firstSentence.length > 80 ? firstSentence.slice(0, 80) + '…' : firstSentence;
+      }
+    } catch {
+      // fall through to markdown
+    }
     const lines = brief.summary.split('\n');
     for (const line of lines) {
       const stripped = line.trim();
@@ -119,8 +141,144 @@ function nextScheduledTime(hourUtc: number): string {
   return `${String(hourUtc).padStart(2, '0')}:00 UTC — ${target.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' })}`;
 }
 
+// ── Structured JSON brief renderer ───────────────────────
+interface BriefStructured {
+  executive_summary?: string;
+  key_developments?: string[];
+  regional_breakdown?: Array<{ region: string; summary: string }>;
+  entity_watch?: Array<{ entity: string; role?: string; note: string }>;
+  narrative_shifts?: string[];
+  risks_and_outlook?: string[];
+  recommendations?: string[];
+}
+
+function renderStructuredBrief(data: BriefStructured): React.ReactNode {
+  const sections: React.ReactNode[] = [];
+  let key = 0;
+
+  if (data.executive_summary) {
+    sections.push(
+      <div key={key++} className="brief-section brief-section--executive">
+        <h3 className="brief-section__heading">Executive Summary</h3>
+        <p className="brief-section__lead">{data.executive_summary}</p>
+      </div>
+    );
+  }
+
+  if (data.key_developments && data.key_developments.length > 0) {
+    sections.push(
+      <div key={key++} className="brief-section">
+        <h3 className="brief-section__heading">Key Developments</h3>
+        <ul className="brief-section__list">
+          {data.key_developments.map((item, i) => (
+            <li key={i}>{item}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  if (data.regional_breakdown && data.regional_breakdown.length > 0) {
+    sections.push(
+      <div key={key++} className="brief-section">
+        <h3 className="brief-section__heading">Regional Breakdown</h3>
+        <ul className="brief-section__list brief-section__list--regions">
+          {data.regional_breakdown.map((item, i) => (
+            <li key={i}>
+              <strong className="brief-region__name">{item.region}</strong>
+              <span className="brief-region__summary"> — {item.summary}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  if (data.entity_watch && data.entity_watch.length > 0) {
+    sections.push(
+      <div key={key++} className="brief-section">
+        <h3 className="brief-section__heading">Entity Watch</h3>
+        <ul className="brief-section__list brief-section__list--entities">
+          {data.entity_watch.map((item, i) => (
+            <li key={i}>
+              <strong className="brief-entity__name">{item.entity}</strong>
+              {item.role && <span className="brief-entity__role"> ({item.role})</span>}
+              {item.note && <span className="brief-entity__note"> — {item.note}</span>}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  if (data.narrative_shifts && data.narrative_shifts.length > 0) {
+    sections.push(
+      <div key={key++} className="brief-section">
+        <h3 className="brief-section__heading">Narrative Shifts</h3>
+        <ul className="brief-section__list">
+          {data.narrative_shifts.map((item, i) => (
+            <li key={i}>{item}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  if (data.risks_and_outlook && data.risks_and_outlook.length > 0) {
+    sections.push(
+      <div key={key++} className="brief-section">
+        <h3 className="brief-section__heading">Risks &amp; Outlook</h3>
+        <ul className="brief-section__list brief-section__list--risks">
+          {data.risks_and_outlook.map((item, i) => (
+            <li key={i}>{item}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  if (data.recommendations && data.recommendations.length > 0) {
+    sections.push(
+      <div key={key++} className="brief-section">
+        <h3 className="brief-section__heading">Recommendations</h3>
+        <ul className="brief-section__list brief-section__list--recommendations">
+          {data.recommendations.map((item, i) => (
+            <li key={i}>{item}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  return <div className="brief-structured">{sections}</div>;
+}
+
 // ── Markdown-like renderer ────────────────────────────────
 function renderBriefContent(text: string, navigate: (path: string) => void): React.ReactNode {
+  // 1. Try JSON parse first
+  const jsonText = text.replace(/```(?:json)?/g, '').trim().replace(/`+$/, '').trim();
+  try {
+    const parsed = JSON.parse(jsonText);
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      (
+        parsed.executive_summary !== undefined ||
+        parsed.key_developments !== undefined ||
+        parsed.entity_watch !== undefined ||
+        parsed.narrative_shifts !== undefined ||
+        parsed.recommendations !== undefined ||
+        parsed.regional_breakdown !== undefined ||
+        parsed.risks_and_outlook !== undefined
+      )
+    ) {
+      return renderStructuredBrief(parsed as BriefStructured);
+    }
+  } catch {
+    // fall through to markdown renderer
+  }
+
+  // 2. Markdown fallback
   const lines = text.split('\n');
   const elements: React.ReactNode[] = [];
   let listItems: string[] = [];
@@ -239,7 +397,7 @@ export function BriefsView() {
     setBriefsLoading(true);
     try {
       const res = await api.get('/briefs/');
-      setBriefs(res.data);
+      setBriefs(Array.isArray(res.data) ? res.data : res.data.items || []);
     } catch {
       // silently fail
     } finally {

@@ -43,8 +43,8 @@ export function TelegramSetup() {
     };
     checkStatus();
     // Fetch Telegram source count
-    api.get('/sources/').then((res) => {
-      const sources = res.data as Array<{ type: string }>;
+    api.get('/sources/?limit=200').then((res) => {
+      const sources = (Array.isArray(res.data) ? res.data : res.data.items || []) as Array<{ type: string }>;
       setTelegramSourceCount(sources.filter((s) => s.type === 'telegram').length);
     }).catch(() => {});
   }, []);

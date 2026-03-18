@@ -256,11 +256,37 @@ def merge_brief_models(
     return result
 
 
-def make_fallback_model_config(model_id: str) -> dict:
-    """Return a minimal safe model config for a model not in the static registry.
+# ---------------------------------------------------------------------------
+# Live model cache — populated by fetch_live_openrouter_models / briefs router
+# ---------------------------------------------------------------------------
+_live_model_cache: dict[str, dict] = {}  # model_id -> model config
 
-    Used by brief_generator when a live-discovered OpenRouter model is selected.
+
+def cache_live_models(models: list[dict]) -> None:
+    """Store live-fetched models so make_fallback_model_config can look them up."""
+    for m in models:
+        _live_model_cache[m["id"]] = m
+
+
+def make_fallback_model_config(model_id: str) -> dict:
+    """Return a model config for a model not in the static registry.
+
+    Checks the live model cache first (populated from OpenRouter API),
+    falls back to safe defaults if not cached.
     """
+    # Check live cache for real context_window / pricing
+    cached = _live_model_cache.get(model_id)
+    if cached:
+        logger.info(
+            "Using cached live model config for %s (context_window=%d)",
+            model_id, cached.get("context_window", 128000),
+        )
+        return {**cached}
+
+    logger.info(
+        "No cached config for model %s — using default 128K context_window",
+        model_id,
+    )
     return {
         "id": model_id,
         "provider": "openrouter",

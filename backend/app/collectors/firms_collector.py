@@ -16,7 +16,7 @@ from app.models.event import Event
 from app.models.post import Post
 from app.models.source import Source
 from app.routers.feed import broadcast_post
-from app.services.entity_extractor import entity_extractor
+from app.services.entity_persistence import persist_entities
 from app.services.geo_extractor import geo_extractor
 
 logger = logging.getLogger("orthanc.collectors.firms")
@@ -208,38 +208,7 @@ class FIRMSCollector:
                         logger.warning("FIRMS event creation failed for %s: %s", source_id, geo_exc)
 
                     # Entity extraction (picks up zone/country names from content)
-                    try:
-                        extracted_ents = await entity_extractor.extract_entities_async(content)
-                        for ent in extracted_ents:
-                            from app.models.entity import Entity, EntityMention
-                            canonical = entity_extractor.canonical_name(ent["name"])
-                            existing_ent = await session.execute(
-                                select(Entity).where(
-                                    Entity.canonical_name == canonical,
-                                    Entity.type == ent["type"],
-                                )
-                            )
-                            entity = existing_ent.scalars().first()
-                            if entity:
-                                entity.mention_count += 1
-                                entity.last_seen = datetime.now(tz=timezone.utc)
-                            else:
-                                entity = Entity(
-                                    name=ent["name"],
-                                    type=ent["type"],
-                                    canonical_name=canonical,
-                                    mention_count=1,
-                                )
-                                session.add(entity)
-                                await session.flush()
-                            mention = EntityMention(
-                                entity_id=entity.id,
-                                post_id=post.id,
-                                context_snippet=ent["context_snippet"],
-                            )
-                            session.add(mention)
-                    except Exception as ent_exc:
-                        logger.warning("Entity extraction failed for FIRMS post %s: %s", post.id, ent_exc)
+                    await persist_entities(session, post.id, content, log_label="firms")
 
                     new_count += 1
 

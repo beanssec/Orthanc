@@ -493,8 +493,8 @@ export function SourcesPage() {
 
   const fetchSources = async () => {
     try {
-      const res = await api.get('/sources/');
-      setSources(res.data);
+      const res = await api.get('/sources', { params: { limit: 200, offset: 0 } });
+      setSources(Array.isArray(res.data) ? res.data : res.data.items || []);
     } catch {
       setError('Failed to load sources.');
     } finally {

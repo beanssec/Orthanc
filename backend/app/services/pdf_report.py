@@ -1,5 +1,6 @@
 """Generate formatted PDF intelligence reports."""
 import io
+import json
 import re
 from datetime import datetime
 from reportlab.lib import colors
@@ -161,9 +162,13 @@ class OrthanIntelReport:
         story.append(Paragraph(meta_text, self.styles['MetaText']))
         story.append(HRFlowable(width="100%", color=BORDER, thickness=1, spaceAfter=8))
 
-        # Brief content — convert markdown to flowables
+        # Brief content — try structured JSON first, fall back to markdown
         content = brief.get('summary', '')
-        story.extend(self._markdown_to_flowables(content))
+        structured = self._try_parse_json(content)
+        if structured:
+            story.extend(self._structured_to_flowables(structured))
+        else:
+            story.extend(self._markdown_to_flowables(content))
 
         # Entity summary table (if provided and non-empty)
         if entities:
@@ -291,6 +296,111 @@ class OrthanIntelReport:
         canvas.setFillColor(DARK_BG)
         canvas.rect(0, 0, A4[0], A4[1], fill=True, stroke=False)
         canvas.restoreState()
+
+    def _try_parse_json(self, text: str) -> dict | None:
+        """Try to parse brief content as structured JSON."""
+        cleaned = re.sub(r'```(?:json)?', '', text).strip().rstrip('`').strip()
+        try:
+            data = json.loads(cleaned)
+            if isinstance(data, dict) and 'executive_summary' in data:
+                return data
+        except (json.JSONDecodeError, ValueError):
+            pass
+        return None
+
+    def _structured_to_flowables(self, data: dict) -> list:
+        """Convert structured JSON brief to reportlab flowables."""
+        flowables = []
+
+        # Executive Summary
+        if data.get('executive_summary'):
+            flowables.append(Paragraph("EXECUTIVE SUMMARY", self.styles['SectionHead']))
+            flowables.append(Paragraph(
+                self._inline(data['executive_summary']),
+                self.styles['BodyText_Dark'],
+            ))
+            flowables.append(Spacer(1, 4 * mm))
+
+        # Key Developments
+        if data.get('key_developments'):
+            flowables.append(Paragraph("KEY DEVELOPMENTS", self.styles['SectionHead']))
+            for item in data['key_developments']:
+                flowables.append(Paragraph(
+                    '• ' + self._inline(str(item)),
+                    self.styles['BulletText'],
+                ))
+            flowables.append(Spacer(1, 4 * mm))
+
+        # Regional Breakdown
+        if data.get('regional_breakdown'):
+            flowables.append(Paragraph("REGIONAL BREAKDOWN", self.styles['SectionHead']))
+            for region in data['regional_breakdown']:
+                if isinstance(region, dict):
+                    name = region.get('region', 'Unknown')
+                    summary = region.get('summary', '')
+                    flowables.append(Paragraph(
+                        f'<b>{self._inline(name)}</b> — {self._inline(summary)}',
+                        self.styles['BulletText'],
+                    ))
+                else:
+                    flowables.append(Paragraph(
+                        '• ' + self._inline(str(region)),
+                        self.styles['BulletText'],
+                    ))
+            flowables.append(Spacer(1, 4 * mm))
+
+        # Entity Watch
+        if data.get('entity_watch'):
+            flowables.append(Paragraph("ENTITY WATCH", self.styles['SectionHead']))
+            for entity in data['entity_watch']:
+                if isinstance(entity, dict):
+                    name = entity.get('entity', '')
+                    role = entity.get('role', '')
+                    note = entity.get('note', '')
+                    parts = [f'<b>{self._inline(name)}</b>']
+                    if role:
+                        parts.append(f' ({self._inline(role)})')
+                    if note:
+                        parts.append(f' — {self._inline(note)}')
+                    flowables.append(Paragraph(''.join(parts), self.styles['BulletText']))
+                else:
+                    flowables.append(Paragraph(
+                        '• ' + self._inline(str(entity)),
+                        self.styles['BulletText'],
+                    ))
+            flowables.append(Spacer(1, 4 * mm))
+
+        # Narrative Shifts
+        if data.get('narrative_shifts'):
+            flowables.append(Paragraph("NARRATIVE SHIFTS", self.styles['SectionHead']))
+            for item in data['narrative_shifts']:
+                flowables.append(Paragraph(
+                    '• ' + self._inline(str(item)),
+                    self.styles['BulletText'],
+                ))
+            flowables.append(Spacer(1, 4 * mm))
+
+        # Risks & Outlook
+        if data.get('risks_and_outlook'):
+            flowables.append(Paragraph("RISKS &amp; OUTLOOK", self.styles['SectionHead']))
+            for item in data['risks_and_outlook']:
+                flowables.append(Paragraph(
+                    '• ' + self._inline(str(item)),
+                    self.styles['BulletText'],
+                ))
+            flowables.append(Spacer(1, 4 * mm))
+
+        # Recommendations
+        if data.get('recommendations'):
+            flowables.append(Paragraph("RECOMMENDATIONS", self.styles['SectionHead']))
+            for item in data['recommendations']:
+                flowables.append(Paragraph(
+                    '• ' + self._inline(str(item)),
+                    self.styles['BulletText'],
+                ))
+            flowables.append(Spacer(1, 4 * mm))
+
+        return flowables
 
     def _markdown_to_flowables(self, text: str) -> list:
         """Convert markdown text to reportlab flowables."""

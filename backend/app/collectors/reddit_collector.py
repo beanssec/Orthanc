@@ -10,12 +10,11 @@ import httpx
 from sqlalchemy import select
 
 from app.db import AsyncSessionLocal
-from app.models.entity import Entity, EntityMention
 from app.models.event import Event
 from app.models.post import Post
 from app.models.source import Source
 from app.routers.feed import broadcast_post
-from app.services.entity_extractor import entity_extractor
+from app.services.entity_persistence import persist_entities
 from app.services.geo_extractor import geo_extractor
 
 logger = logging.getLogger("orthanc.collectors.reddit")
@@ -173,37 +172,7 @@ class RedditCollector:
                     logger.warning("Geo extraction failed for Reddit post %s: %s", post.id, geo_exc)
 
                 # Entity extraction
-                try:
-                    extracted_ents = await entity_extractor.extract_entities_async(content or "")
-                    for ent in extracted_ents:
-                        canonical = entity_extractor.canonical_name(ent["name"])
-                        existing_ent = await session.execute(
-                            select(Entity).where(
-                                Entity.canonical_name == canonical,
-                                Entity.type == ent["type"],
-                            )
-                        )
-                        entity_obj = existing_ent.scalars().first()
-                        if entity_obj:
-                            entity_obj.mention_count += 1
-                            entity_obj.last_seen = datetime.now(timezone.utc)
-                        else:
-                            entity_obj = Entity(
-                                name=ent["name"],
-                                type=ent["type"],
-                                canonical_name=canonical,
-                                mention_count=1,
-                            )
-                            session.add(entity_obj)
-                            await session.flush()
-                        mention = EntityMention(
-                            entity_id=entity_obj.id,
-                            post_id=post.id,
-                            context_snippet=ent.get("context_snippet"),
-                        )
-                        session.add(mention)
-                except Exception as ent_exc:
-                    logger.warning("Entity extraction failed for reddit post %s: %s", post.id, ent_exc)
+                await persist_entities(session, post.id, content or "", log_label="reddit")
 
                 new_count += 1
 

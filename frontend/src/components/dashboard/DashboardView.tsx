@@ -61,10 +61,26 @@ interface GeoHotspot {
 interface TrendingNarrative {
   id: string;
   title: string;
+  canonical_title: string | null;
   post_count: number;
   divergence_score: number;
   consensus: string | null;
   status: string;
+  narrative_type: string | null;
+  label_confidence: number | null;
+  confirmation_status: string | null;
+  // Claim extraction fields
+  claim_text: string | null;
+  claimant: string | null;
+  evidence_supports: number | null;
+  evidence_contradicts: number | null;
+}
+
+interface ClaimsStats {
+  active: number;
+  detected: number;
+  contradicted: number;
+  topClaimants: string[];
 }
 
 interface AlertEvent {
@@ -427,6 +443,8 @@ export function DashboardView() {
   const [sourceReliability, setSourceReliability] = useState<{ total: number; healthy: number; warning: number; failing: number } | null>(null);
   // TASK-35: narrative velocity
   const [narrativeVelocity, setNarrativeVelocity] = useState<{ last24h: number; last7d: number } | null>(null);
+  // Claims stats
+  const [claimsStats, setClaimsStats] = useState<ClaimsStats | null>(null);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -483,16 +501,37 @@ export function DashboardView() {
         // endpoint may not exist
       }
 
-      // TASK-35: Narrative velocity — best-effort
+      // TASK-35: Narrative velocity + Claims stats — best-effort
       try {
         const narrAllRes = await api.get('/narratives/?limit=100');
-        const narrAll = (narrAllRes.data?.items ?? narrAllRes.data ?? []) as Array<{ last_updated?: string }>;
+        const narrAll = (narrAllRes.data?.items ?? narrAllRes.data ?? []) as Array<{
+          last_updated?: string;
+          claim_text?: string | null;
+          claimant?: string | null;
+          triage_status?: string | null;
+        }>;
         const now = Date.now();
         const ms24h = 24 * 60 * 60 * 1000;
         const ms7d = 7 * 24 * 60 * 60 * 1000;
         const last24h = narrAll.filter((n) => n.last_updated && (now - new Date(n.last_updated).getTime()) < ms24h).length;
         const last7d = narrAll.filter((n) => n.last_updated && (now - new Date(n.last_updated).getTime()) < ms7d).length;
         setNarrativeVelocity({ last24h, last7d });
+
+        // Claims stats
+        const withClaim = narrAll.filter((n) => n.claim_text);
+        const detected = withClaim.filter((n) => n.triage_status === 'detected').length;
+        const contradicted = withClaim.filter((n) => n.triage_status === 'contradicted').length;
+        const claimantCounts: Record<string, number> = {};
+        withClaim.forEach((n) => {
+          if (n.claimant) {
+            claimantCounts[n.claimant] = (claimantCounts[n.claimant] ?? 0) + 1;
+          }
+        });
+        const topClaimants = Object.entries(claimantCounts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([name]) => name);
+        setClaimsStats({ active: withClaim.length, detected, contradicted, topClaimants });
       } catch {
         // endpoint may have no data yet
       }
@@ -598,9 +637,9 @@ export function DashboardView() {
       {/* ── Row 2: Source Health Strip (full width) ───── */}
       <SourceHealthStrip sourceHealth={sourceHealth} navigate={navigate} />
 
-      {/* ── Row 2b: Source Reliability + Narrative Velocity ── */}
-      {(sourceReliability || narrativeVelocity) && (
-        <div className="dashboard-row dashboard-row--5050">
+      {/* ── Row 2b: Source Reliability + Narrative Velocity + Claims ── */}
+      {(sourceReliability || narrativeVelocity || claimsStats) && (
+        <div className="dashboard-row dashboard-row--3col">
           {sourceReliability && (
             <div className="dash-card source-reliability-card">
               <div className="dash-card__header">
@@ -647,6 +686,47 @@ export function DashboardView() {
                   <span className="narr-vel-value">{narrativeVelocity.last7d}</span>
                   <span className="narr-vel-label">Active 7d</span>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {claimsStats && (
+            <div className="dash-card claims-stats-card">
+              <div className="dash-card__header">
+                <span className="dash-card__title">Claims</span>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => navigate('/narratives')}
+                >
+                  View →
+                </button>
+              </div>
+              <div className="dash-card__body claims-stats-body">
+                <div className="claims-stat">
+                  <span className="claims-stat__dot claims-stat__dot--active" />
+                  <span className="claims-stat__label">Active claims</span>
+                  <span className="claims-stat__value">{claimsStats.active}</span>
+                </div>
+                <div className="claims-stat">
+                  <span className="claims-stat__dot claims-stat__dot--detected" />
+                  <span className="claims-stat__label">Awaiting review</span>
+                  <span className="claims-stat__value">{claimsStats.detected}</span>
+                </div>
+                {claimsStats.contradicted > 0 && (
+                  <div className="claims-stat">
+                    <span className="claims-stat__dot claims-stat__dot--contradicted" />
+                    <span className="claims-stat__label">Contradicted</span>
+                    <span className="claims-stat__value">{claimsStats.contradicted}</span>
+                  </div>
+                )}
+                {claimsStats.topClaimants.length > 0 && (
+                  <div className="claims-claimants">
+                    <span className="claims-claimants__label">Top claimants:</span>
+                    {claimsStats.topClaimants.map((c) => (
+                      <span key={c} className="claims-claimants__pill">{c}</span>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -729,6 +809,13 @@ export function DashboardView() {
                   const divergenceLevel =
                     narr.divergence_score >= 0.7 ? 'high' :
                     narr.divergence_score >= 0.4 ? 'medium' : 'low';
+                  // When claim_text is present, show it instead of the raw title
+                  const displayTitle = narr.claim_text
+                    ? (narr.claim_text.length > 80 ? narr.claim_text.slice(0, 79) + '…' : narr.claim_text)
+                    : (narr.canonical_title ?? narr.title);
+                  const confCls = narr.label_confidence != null
+                    ? (narr.label_confidence > 0.7 ? 'high' : narr.label_confidence > 0.4 ? 'mid' : 'low')
+                    : null;
                   return (
                     <div
                       key={narr.id}
@@ -736,7 +823,31 @@ export function DashboardView() {
                       onClick={() => navigate(`/narratives?id=${narr.id}`)}
                     >
                       <span className={`narrative-divergence-dot ${divergenceLevel}`} />
-                      <span className="narrative-title-truncated">{narr.title}</span>
+                      <div className="dashboard-narrative-body">
+                        <div className="dashboard-narrative-top">
+                          {narr.narrative_type && (
+                            <span className="dash-narrative-type-pill">
+                              {narr.narrative_type.replace(/_/g, ' ')}
+                            </span>
+                          )}
+                          {confCls && (
+                            <span
+                              className={`dash-narrative-conf-dot ${confCls}`}
+                              title={`Confidence: ${Math.round((narr.label_confidence ?? 0) * 100)}%`}
+                            />
+                          )}
+                          {narr.claimant && (
+                            <span className="dash-narrative-claimant">{narr.claimant}</span>
+                          )}
+                        </div>
+                        <span className="narrative-title-truncated">{displayTitle}</span>
+                        {(narr.evidence_supports != null || narr.evidence_contradicts != null) && (
+                          <div className="dash-narrative-evidence">
+                            <span className="dash-narrative-evidence__supports">✓ {narr.evidence_supports ?? 0}</span>
+                            <span className="dash-narrative-evidence__contradicts">✗ {narr.evidence_contradicts ?? 0}</span>
+                          </div>
+                        )}
+                      </div>
                       <span className="narrative-post-count">{narr.post_count} posts</span>
                     </div>
                   );

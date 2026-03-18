@@ -19,6 +19,14 @@ export interface Narrative {
   narrative_type: string | null;
   label_confidence: number | null;   // 0–1 confidence in the narrative_type label
   confirmation_status: string | null;
+  // Sprint Claim Extraction — claim fields
+  claim_text: string | null;
+  claimant: string | null;
+  claim_type: string | null;
+  claim_confidence: number | null;
+  claim_extracted_at: string | null;
+  triage_status: string | null;
+  triage_notes: string | null;
 }
 
 export interface NarrativePost {

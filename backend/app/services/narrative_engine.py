@@ -327,6 +327,8 @@ class NarrativeEngine:
         await self._update_narrative_stats()
         await self._mark_stale_narratives()
         await self._detect_narrative_duplicates()
+        await self._extract_narrative_claims()
+        await self._classify_narrative_evidence()
 
     # ──────────────────────────────────────────
     # Step 1 — embed new posts
@@ -647,6 +649,205 @@ class NarrativeEngine:
                 narr.source_count = source_count_result.scalar() or 0
 
             await session.commit()
+
+    # ──────────────────────────────────────────
+    # Step 4b — extract claims from narratives
+    # ──────────────────────────────────────────
+
+    _MIN_POSTS_FOR_CLAIM_EXTRACTION = 5
+
+    async def _extract_narrative_claims(self) -> None:
+        """For each active narrative with ≥5 posts and no claim yet, extract a claim via LLM."""
+        from app.services.claim_extractor import claim_extractor  # noqa: PLC0415
+
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Narrative).where(
+                    Narrative.status == "active",
+                    Narrative.claim_text.is_(None),
+                    Narrative.post_count >= self._MIN_POSTS_FOR_CLAIM_EXTRACTION,
+                )
+            )
+            narratives = result.scalars().all()
+
+        for narr in narratives:
+            try:
+                # Check if this narrative matches any active tracker — log for traceability
+                try:
+                    from app.models.narrative import NarrativeTracker, NarrativeTrackerMatch  # noqa: PLC0415
+                    async with AsyncSessionLocal() as session:
+                        tracker_result = await session.execute(
+                            select(NarrativeTracker.name)
+                            .join(
+                                NarrativeTrackerMatch,
+                                NarrativeTrackerMatch.tracker_id == NarrativeTracker.id,
+                            )
+                            .where(
+                                NarrativeTrackerMatch.narrative_id == narr.id,
+                                NarrativeTracker.status == "active",
+                            )
+                            .limit(5)
+                        )
+                        matched_tracker_names = [row[0] for row in tracker_result.all()]
+                    if matched_tracker_names:
+                        logger.info(
+                            "Claim extraction: narrative %s matches tracker(s): %s",
+                            narr.id,
+                            ", ".join(matched_tracker_names),
+                        )
+                except Exception as _tracker_err:
+                    logger.debug(
+                        "Claim extraction: tracker lookup failed for narrative %s (non-fatal): %s",
+                        narr.id, _tracker_err,
+                    )
+
+                # Fetch post contents for this narrative
+                async with AsyncSessionLocal() as session:
+                    posts_result = await session.execute(
+                        select(Post.content)
+                        .join(NarrativePost, NarrativePost.post_id == Post.id)
+                        .where(
+                            NarrativePost.narrative_id == narr.id,
+                            Post.content.isnot(None),
+                        )
+                        .limit(10)
+                    )
+                    post_contents = [row[0] for row in posts_result.all()]
+
+                if not post_contents:
+                    continue
+
+                # Build a truncated summary string
+                posts_summary = "\n".join(
+                    f"- {c[:200]}" for c in post_contents if c
+                )
+
+                # Gather entity names from topic_keywords as a proxy
+                entity_names: list[str] = list(narr.topic_keywords or [])[:10]
+
+                canonical_title = narr.canonical_title or narr.title or ""
+
+                extraction = await claim_extractor.extract_claim(
+                    narrative_id=str(narr.id),
+                    posts_summary=posts_summary,
+                    entity_names=entity_names,
+                    canonical_title=canonical_title,
+                )
+
+                if not extraction:
+                    continue
+
+                # Persist extracted claim
+                async with AsyncSessionLocal() as session:
+                    narr_obj = await session.get(Narrative, narr.id)
+                    if narr_obj is None:
+                        continue
+                    narr_obj.claim_text = extraction["claim_text"]
+                    narr_obj.claimant = extraction["claimant"]
+                    narr_obj.claim_type = extraction["claim_type"]
+                    narr_obj.claim_confidence = extraction["confidence"]
+                    narr_obj.claim_extracted_at = datetime.now(timezone.utc)
+                    await session.commit()
+
+                logger.info(
+                    "Narrative claim stored | narrative=%s type=%s claimant=%r text=%r",
+                    narr.id,
+                    extraction["claim_type"],
+                    extraction["claimant"],
+                    extraction["claim_text"][:80],
+                )
+
+            except Exception as exc:
+                logger.warning(
+                    "Claim extraction error for narrative %s: %s", narr.id, exc
+                )
+
+    # ──────────────────────────────────────────
+    # Step 4c — classify evidence for claims
+    # ──────────────────────────────────────────
+
+    async def _classify_narrative_evidence(self) -> None:
+        """For each active narrative that has a claim_text, classify unclassified posts."""
+        from app.services.evidence_classifier import evidence_classifier  # noqa: PLC0415
+
+        # Fetch active narratives that have a claim
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Narrative).where(
+                    Narrative.status == "active",
+                    Narrative.claim_text.isnot(None),
+                )
+            )
+            narratives = result.scalars().all()
+
+        for narr in narratives:
+            try:
+                # Fetch narrative_posts that haven't been evidence-classified yet
+                async with AsyncSessionLocal() as session:
+                    np_result = await session.execute(
+                        select(NarrativePost.id, NarrativePost.post_id, Post.content)
+                        .join(Post, Post.id == NarrativePost.post_id)
+                        .where(
+                            NarrativePost.narrative_id == narr.id,
+                            NarrativePost.evidence_classified_at.is_(None),
+                            Post.content.isnot(None),
+                        )
+                        .limit(100)
+                    )
+                    rows = np_result.all()
+
+                if not rows:
+                    continue  # All posts already classified
+
+                posts_for_classifier = [
+                    {"post_id": str(post_id), "content": content}
+                    for _np_id, post_id, content in rows
+                ]
+
+                classifications = await evidence_classifier.classify_evidence(
+                    claim_text=narr.claim_text,
+                    claimant=narr.claimant or "",
+                    posts=posts_for_classifier,
+                )
+
+                if not classifications:
+                    continue
+
+                # Build lookup: post_id → classification
+                class_map = {c["post_id"]: c for c in classifications}
+
+                # Persist results onto NarrativePost rows
+                now = datetime.now(timezone.utc)
+                counts: Counter = Counter()
+
+                async with AsyncSessionLocal() as session:
+                    for np_id, post_id, _content in rows:
+                        c = class_map.get(str(post_id))
+                        if c is None:
+                            continue
+                        np_obj = await session.get(NarrativePost, np_id)
+                        if np_obj is None:
+                            continue
+                        np_obj.evidence_role = c["role"]
+                        np_obj.evidence_confidence = c["confidence"]
+                        np_obj.evidence_classified_at = now
+                        counts[c["role"]] += 1
+                    await session.commit()
+
+                logger.info(
+                    "Evidence classified | narrative=%s supports=%d contradicts=%d "
+                    "contextual=%d unclear=%d",
+                    narr.id,
+                    counts.get("supports", 0),
+                    counts.get("contradicts", 0),
+                    counts.get("contextual", 0),
+                    counts.get("unclear", 0),
+                )
+
+            except Exception as exc:
+                logger.warning(
+                    "Evidence classification error for narrative %s: %s", narr.id, exc
+                )
 
     # ──────────────────────────────────────────
     # Step 5 — mark stale narratives
