@@ -91,7 +91,7 @@ export const useFeedStore = create<FeedState>((set) => ({
   facets: null,
   addPost: (post) => set((s) => {
     if (s.posts.some((p) => p.id === post.id)) return s;
-    return { posts: [post, ...s.posts].slice(0, 1000) };
+    return { posts: [post, ...s.posts] };
   }),
   setPosts: (posts) => set({ posts }),
   setFilters: (filters) =>

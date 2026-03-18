@@ -14,5 +14,8 @@ class Settings(BaseSettings):
     # Feature flags
     NARRATIVE_TRACKERS_ENABLED: bool = False
 
+    # Narrative lifecycle
+    NARRATIVE_STALE_TTL_HOURS: int = 48  # Mark narrative stale after N hours of no new posts
+
 
 settings = Settings()

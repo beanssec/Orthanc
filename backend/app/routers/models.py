@@ -244,6 +244,18 @@ async def get_usage(
     return summary
 
 
+@router.get("/performance")
+async def get_model_performance(
+    current_user=Depends(get_current_user),
+):
+    """Get in-memory performance counters per model (calls, errors, latency)."""
+    stats = model_router.get_performance_stats()
+    return {
+        "models": stats,
+        "total_models_tracked": len(stats),
+    }
+
+
 @router.get("/usage/daily")
 async def get_daily_usage(
     days: int = Query(default=7, ge=1, le=365),

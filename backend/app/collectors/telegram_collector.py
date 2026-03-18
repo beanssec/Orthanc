@@ -15,7 +15,10 @@ from typing import Any, Optional
 
 from telethon import TelegramClient, events
 from telethon.errors import (
+    AuthKeyError,
+    AuthKeyUnregisteredError,
     ChannelPrivateError,
+    SessionRevokedError,
     UsernameInvalidError,
     UsernameNotOccupiedError,
 )
@@ -63,6 +66,9 @@ class TelegramCollector:
         self._user_id: Optional[str] = None
         # Maps str(entity_id) -> config dict (download_images, etc.)
         self._source_configs: dict[str, dict] = {}
+        # Stored start params for auto-reconnect
+        self._start_user_id: Optional[str] = None
+        self._start_sources: list = []
 
     @property
     def is_running(self) -> bool:
@@ -86,6 +92,8 @@ class TelegramCollector:
         session_path = os.path.join(SESSION_DIR, user_id)
 
         self._user_id = user_id
+        self._start_user_id = user_id
+        self._start_sources = sources
         self._client = TelegramClient(session_path, api_id, api_hash)
 
         await self._client.connect()
@@ -165,7 +173,41 @@ class TelegramCollector:
                 logger.warning("Backfill failed for %s: %s", entity.id, exc)
 
         # Schedule run_until_disconnected as a background task so we don't block the caller.
-        asyncio.ensure_future(self._client.run_until_disconnected())
+        # Uses reconnect wrapper to handle session expiry gracefully.
+        asyncio.ensure_future(self._run_with_reconnect())
+
+    async def _run_with_reconnect(self) -> None:
+        """Wrap run_until_disconnected with session-expiry detection and auto-reconnect."""
+        _SESSION_EXPIRY_ERRORS = (SessionRevokedError, AuthKeyUnregisteredError, AuthKeyError)
+        try:
+            await self._client.run_until_disconnected()
+        except _SESSION_EXPIRY_ERRORS as exc:
+            logger.error(
+                "Telegram session expired or was revoked for user %s: %s — will attempt reconnect",
+                self._user_id, exc,
+            )
+            self._running = False
+            if self._client:
+                try:
+                    await self._client.disconnect()
+                except Exception:
+                    pass
+            self._client = None
+            # Brief pause before reconnecting so we don't hammer the API
+            await asyncio.sleep(10)
+            if self._start_user_id and self._start_sources is not None:
+                logger.info(
+                    "Reconnecting Telegram collector for user %s", self._start_user_id
+                )
+                await self.start(self._start_user_id, self._start_sources)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "TelegramCollector run_until_disconnected error for user %s: %s",
+                self._user_id, exc, exc_info=True,
+            )
+            self._running = False
 
     async def stop(self) -> None:
         """Disconnect the Telethon client and mark as stopped."""

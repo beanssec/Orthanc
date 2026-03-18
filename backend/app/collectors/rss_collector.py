@@ -63,6 +63,24 @@ class RSSCollector:
     def __init__(self, poll_interval: int = DEFAULT_POLL_INTERVAL):
         self._poll_interval = poll_interval
         self._tasks: dict[str, asyncio.Task] = {}  # source.id -> task
+        # Per-feed parse failure tracking for log suppression and backoff
+        self._consecutive_failures: dict[str, int] = {}
+        self._bozo_warned: set[str] = set()  # feeds where bozo warning was already logged
+        # Per-feed attempt history for 50% failure rate warning (last 10)
+        self._attempt_history: dict[str, list[bool]] = {}  # True=success, False=fail
+
+    def _record_attempt(self, feed_url: str, success: bool) -> None:
+        hist = self._attempt_history.setdefault(feed_url, [])
+        hist.append(success)
+        if len(hist) > 10:
+            hist.pop(0)
+        # Warn if >50% failure over last 10 attempts
+        if len(hist) >= 10:
+            fail_rate = hist.count(False) / len(hist)
+            if fail_rate > 0.5:
+                # Only log once per 10-cycle window
+                if hist[-1] is False and hist[-2] is True:
+                    logger.warning("RSS feed %s: >50%% failure rate over last 10 attempts", feed_url)
 
     async def start(self, sources: list[Source]) -> None:
         """Begin polling all provided RSS sources."""
@@ -87,18 +105,36 @@ class RSSCollector:
         self._tasks.clear()
 
     async def _poll_loop(self, source_id: str, feed_url: str) -> None:
-        """Continuous polling loop for a single RSS feed."""
+        """Continuous polling loop for a single RSS feed with exponential backoff."""
+        from app.services.collector_manager import collector_manager
+
+        backoff = self._poll_interval
+        MAX_BACKOFF = self._poll_interval * 16  # cap at ~80 minutes for 5-min base
         while True:
             try:
                 await self._poll_once(source_id, feed_url)
+                # Success — reset backoff, failure counter, and DB error tracking
+                self._consecutive_failures[feed_url] = 0
+                backoff = self._poll_interval
+                await collector_manager.record_source_success(source_id)
             except asyncio.CancelledError:
                 logger.info("RSS poller cancelled for source %s", source_id)
                 raise
             except Exception as exc:
+                failures = self._consecutive_failures.get(feed_url, 0) + 1
+                self._consecutive_failures[feed_url] = failures
                 logger.exception("RSS poll error for source %s: %s", source_id, exc)
+                # Exponential backoff on consecutive failures
+                backoff = min(self._poll_interval * (2 ** min(failures - 1, 4)), MAX_BACKOFF)
+                # Record error in DB; auto-disable if threshold reached
+                auto_disabled = await collector_manager.record_source_error(source_id, str(exc))
+                if auto_disabled:
+                    logger.warning("RSS poller stopping for auto-disabled source %s", source_id)
+                    self._tasks.pop(source_id, None)
+                    return
 
             try:
-                await asyncio.sleep(self._poll_interval)
+                await asyncio.sleep(backoff)
             except asyncio.CancelledError:
                 logger.info("RSS poller cancelled during sleep for source %s", source_id)
                 raise
@@ -112,7 +148,10 @@ class RSSCollector:
         parsed = await loop.run_in_executor(None, feedparser.parse, feed_url)
 
         if parsed.get("bozo") and not parsed.entries:
-            logger.warning("RSS parse error for %s: %s", feed_url, parsed.get("bozo_exception"))
+            if feed_url not in self._bozo_warned:
+                logger.warning("RSS parse error for %s: %s (suppressing further identical warnings)", feed_url, parsed.get("bozo_exception"))
+                self._bozo_warned.add(feed_url)
+            self._record_attempt(feed_url, False)
             return
 
         feed_title = parsed.feed.get("title", feed_url)
@@ -225,6 +264,9 @@ class RSSCollector:
 
             await session.commit()
 
+        self._record_attempt(feed_url, True)
+        # Reset bozo warning so we'll notice if the feed starts failing again
+        self._bozo_warned.discard(feed_url)
         if new_count:
             logger.info("RSS %s: inserted %d new posts", feed_url, new_count)
         else:

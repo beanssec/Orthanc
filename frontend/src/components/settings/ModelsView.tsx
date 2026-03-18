@@ -205,7 +205,7 @@ function ProvidersSection() {
     <div className="models-section">
       <div className="models-section-title">Configured Providers</div>
       <div className="models-card">
-        {error && <div className="models-error" style={{ margin: '12px' }}>{error}</div>}
+        {error && <div className="models-error">{error}</div>}
         {loading ? (
           <div className="models-loading">Loading providers…</div>
         ) : providers.length === 0 ? (
@@ -335,7 +335,7 @@ function TasksSection() {
     <div className="models-section">
       <div className="models-section-title">Task Assignments</div>
       <div className="models-card">
-        {error && <div className="models-error" style={{ margin: '12px' }}>{error}</div>}
+        {error && <div className="models-error">{error}</div>}
         {loading ? (
           <div className="models-loading">Loading assignments…</div>
         ) : (
@@ -356,11 +356,11 @@ function TasksSection() {
 
                 return (
                   <tr key={key}>
-                    <td style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
+                    <td className="models-task-label">
                       {TASK_LABELS[key]}
                     </td>
                     <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <div className="models-task-cell">
                         <select
                           className="models-select"
                           value={currentModel}
@@ -435,7 +435,7 @@ function UsageSection() {
     <div className="models-section">
       <div className="models-section-title">Usage (Last 24h)</div>
       <div className="models-card">
-        {error && <div className="models-error" style={{ margin: '12px' }}>{error}</div>}
+        {error && <div className="models-error">{error}</div>}
         {loading ? (
           <div className="models-loading">Loading usage…</div>
         ) : !usage ? (

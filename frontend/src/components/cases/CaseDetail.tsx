@@ -248,23 +248,54 @@ function EvidenceBoard({ caseData, onRefresh }: { caseData: CaseData; onRefresh:
 }
 
 // ── Timeline Tab ───────────────────────────────────────────
-function TimelineTab({ entries }: { entries: CaseTimelineEntry[] }) {
-  if (entries.length === 0) {
+function TimelineTab({ entries, items }: { entries: CaseTimelineEntry[]; items: CaseItemData[] }) {
+  // Build unified activity list from timeline entries + item additions
+  type ActivityEntry = {
+    id: string;
+    timestamp: string;
+    icon: string;
+    label: string;
+    description: string;
+    kind: 'event' | 'item';
+  };
+
+  const activities: ActivityEntry[] = [
+    ...entries.map((e) => ({
+      id: `evt-${e.id}`,
+      timestamp: e.timestamp,
+      icon: e.event_type === 'item_added' ? '➕' : e.event_type === 'status_changed' ? '🔄' : e.event_type === 'note_added' ? '📝' : '📌',
+      label: e.event_type.replace(/_/g, ' '),
+      description: e.description || e.event_type,
+      kind: 'event' as const,
+    })),
+    ...items.map((item) => ({
+      id: `item-${item.id}`,
+      timestamp: item.added_at,
+      icon: ITEM_ICONS[item.item_type] || '📁',
+      label: `Added ${item.item_type.replace('_', ' ')}`,
+      description: item.title || item.item_id || 'Untitled',
+      kind: 'item' as const,
+    })),
+  ].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  if (activities.length === 0) {
     return (
       <div style={{ textAlign: 'center', padding: '40px 16px', color: 'var(--text-muted)' }}>
-        No timeline events yet.
+        No activity yet.
       </div>
     )
   }
 
   return (
     <div className="case-timeline">
-      {entries.map((entry) => (
-        <div key={entry.id} className="case-timeline-entry">
-          <span className={`case-timeline-entry__dot case-timeline-entry__dot--${entry.event_type}`} />
-          <div className="case-timeline-entry__type">{entry.event_type.replace('_', ' ')}</div>
-          <div className="case-timeline-entry__time">{fmtDate(entry.timestamp)}</div>
-          <div className="case-timeline-entry__desc">{entry.description || entry.event_type}</div>
+      {activities.map((act) => (
+        <div key={act.id} className={`case-timeline-entry case-timeline-entry--${act.kind}`}>
+          <span className="case-timeline-entry__icon">{act.icon}</span>
+          <div className="case-timeline-entry__body">
+            <div className="case-timeline-entry__type">{act.label}</div>
+            <div className="case-timeline-entry__desc">{act.description}</div>
+          </div>
+          <div className="case-timeline-entry__time">{fmtDate(act.timestamp)}</div>
         </div>
       ))}
     </div>
@@ -529,7 +560,7 @@ export function CaseDetail() {
           <EvidenceBoard caseData={caseData} onRefresh={fetchCase} />
         )}
         {tab === 'timeline' && (
-          <TimelineTab entries={caseData.timeline} />
+          <TimelineTab entries={caseData.timeline} items={caseData.items} />
         )}
         {tab === 'map' && (
           <MapTab items={caseData.items} />

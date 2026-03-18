@@ -144,7 +144,11 @@ async def authenticate_api_key(
             detail="API key owner not found",
         )
 
-    logger.debug("API key auth OK: key_id=%s user=%s", api_key.id, user.username)
+    # Stamp the high-level scope onto request state so scope-checking middleware
+    # can enforce read-only restrictions without re-querying the DB.
+    setattr(request.state, "api_key_scope", getattr(api_key, "scope", "read_write"))
+
+    logger.debug("API key auth OK: key_id=%s user=%s scope=%s", api_key.id, user.username, getattr(api_key, "scope", "read_write"))
     return user
 
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 import asyncio
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status
+import time
+from collections import defaultdict
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import uuid
@@ -22,6 +24,29 @@ from app.config import settings
 router = APIRouter(prefix="/auth", tags=["auth"])
 ph = PasswordHasher()
 logger = logging.getLogger("orthanc.auth")
+
+# ── In-memory login rate limiter ──────────────────────────────────────────────
+# Structure: {ip: [(timestamp, count), ...]}  (rolling window, 1-minute)
+_login_attempts: dict[str, list[float]] = defaultdict(list)
+_LOGIN_RATE_LIMIT = 5      # max attempts
+_LOGIN_WINDOW_S = 60       # per this many seconds
+
+
+def _check_login_rate_limit(ip: str) -> None:
+    """Raise HTTP 429 if the IP has exceeded the login rate limit."""
+    now = time.time()
+    window_start = now - _LOGIN_WINDOW_S
+    attempts = _login_attempts[ip]
+    # Purge expired entries
+    attempts[:] = [t for t in attempts if t > window_start]
+    if len(attempts) >= _LOGIN_RATE_LIMIT:
+        retry_after = int(_LOGIN_WINDOW_S - (now - attempts[0])) + 1
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts. Please try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    attempts.append(now)
 
 
 _POST_LOGIN_STATUS: dict[str, dict] = {}
@@ -54,7 +79,11 @@ async def register(body: UserCreate, db: AsyncSession = Depends(get_db)) -> User
 
 
 @router.post("/login", response_model=Token)
-async def login(body: UserLogin, db: AsyncSession = Depends(get_db)) -> Token:
+async def login(request: Request, body: UserLogin, db: AsyncSession = Depends(get_db)) -> Token:
+    # Rate-limit by client IP
+    client_ip = request.client.host if request.client else "unknown"
+    _check_login_rate_limit(client_ip)
+
     result = await db.execute(select(User).where(User.username == body.username))
     user = result.scalar_one_or_none()
     if not user:

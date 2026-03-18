@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -28,6 +29,14 @@ class Entity(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     mention_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+
+    # Merge tracking (migration 033)
+    merged_into: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("entities.id", ondelete="SET NULL"), nullable=True
+    )
+    merged_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     mentions: Mapped[list["EntityMention"]] = relationship(back_populates="entity", cascade="all, delete-orphan")
 

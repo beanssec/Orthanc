@@ -43,6 +43,11 @@ _blocked_sources: set[str] = set()
 MARAD_URL = "https://www.maritime.dot.gov/msci-advisories"
 UKMTO_URL = "https://www.ukmto.org/ukmto-products/warnings"
 
+# Wave 2 maritime sources (Sprint 32 Checkpoint 4)
+NATO_SHIPPING_URL = "https://shipping.nato.int/"
+RECAAP_URL = "https://www.recaap.org/"
+NOAA_MARINE_URL = "https://www.weather.gov/marine/"
+
 # Shared HTTP headers to look like a real browser
 _HEADERS = {
     "User-Agent": (
@@ -235,7 +240,7 @@ class MaritimeAdvisoryCollector:
                 raise
 
     async def _poll_all(self) -> None:
-        """Fetch both advisory pages and ingest new items."""
+        """Fetch all advisory pages and ingest new items."""
         sources = [
             {
                 "name": "MARAD Maritime Advisories",
@@ -246,6 +251,24 @@ class MaritimeAdvisoryCollector:
                 "name": "UKMTO Warnings & Advisories",
                 "url": UKMTO_URL,
                 "short": "ukmto",
+            },
+            # Wave 2: NATO Shipping Centre
+            {
+                "name": "NATO Shipping Centre",
+                "url": NATO_SHIPPING_URL,
+                "short": "nato_shipping",
+            },
+            # Wave 2: ReCAAP piracy reports
+            {
+                "name": "ReCAAP Piracy Reports",
+                "url": RECAAP_URL,
+                "short": "recaap",
+            },
+            # Wave 2: NOAA Marine Weather
+            {
+                "name": "NOAA Marine Weather",
+                "url": NOAA_MARINE_URL,
+                "short": "noaa_marine",
             },
         ]
         for src in sources:

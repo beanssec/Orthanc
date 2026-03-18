@@ -147,7 +147,13 @@ class MarketCollector:
         loop = asyncio.get_event_loop()
 
         try:
-            data = await loop.run_in_executor(None, _fetch_yfinance, ticker_str)
+            data = await asyncio.wait_for(
+                loop.run_in_executor(None, _fetch_yfinance, ticker_str),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("MarketCollector: yfinance fetch timed out — skipping poll")
+            return
         except Exception:
             logger.exception("MarketCollector: yfinance.Tickers() failed")
             return
@@ -163,7 +169,14 @@ class MarketCollector:
                         logger.debug("No ticker object for %s", symbol)
                         continue
 
-                    info = await loop.run_in_executor(None, _get_fast_info, ticker_obj)
+                    try:
+                        info = await asyncio.wait_for(
+                            loop.run_in_executor(None, _get_fast_info, ticker_obj),
+                            timeout=10.0,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("MarketCollector: fast_info timed out for %s — skipping", symbol)
+                        continue
 
                     price = getattr(info, "last_price", None)
                     if price is None:

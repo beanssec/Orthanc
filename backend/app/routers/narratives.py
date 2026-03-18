@@ -769,10 +769,11 @@ async def _recompute_tracker(db: AsyncSession, tracker: NarrativeTracker, versio
             )
 
     # ── Score each candidate ─────────────────────────────────────────────────
-    # Each entry: (narrative, score, pattern_matched, entity_matched, evidence_relation)
-    matched: list[tuple[Narrative, float, bool, bool, str]] = []
+    # Each entry: (narrative, score, pattern_matched, entity_matched, evidence_relation, match_rationale)
+    matched: list[tuple[Narrative, float, bool, bool, str, str]] = []
 
     for n in candidates:
+        # ── Build haystack — title + summary + canonical_claim + keywords ──
         haystack = " ".join([
             n.title or "",
             n.summary or "",
@@ -780,27 +781,35 @@ async def _recompute_tracker(db: AsyncSession, tracker: NarrativeTracker, versio
             " ".join(n.topic_keywords or []),
         ]).lower()
 
+        # TASK-72: also match against canonical_claim text specifically
+        claim_haystack = (n.canonical_claim or "").lower()
+
         # keyword signal
         keyword_hit_rate = 0.0
+        matched_keywords: list[str] = []
         if has_keywords:
-            hits = sum(1 for kw in keywords if kw in haystack)
-            keyword_hit_rate = hits / len(keywords)
+            matched_keywords = [kw for kw in keywords if kw in haystack]
+            keyword_hit_rate = len(matched_keywords) / len(keywords)
 
-        # claim_pattern signal
+        # claim_pattern signal — also checked against canonical_claim
         pattern_matched = False
         pattern_score = 0.0
+        matched_patterns: list[str] = []
         if has_patterns:
-            pattern_hits = sum(1 for pat in compiled_patterns if pat.search(haystack))
-            pattern_matched = pattern_hits > 0
-            pattern_score = pattern_hits / len(compiled_patterns)
+            for pat in compiled_patterns:
+                if pat.search(haystack) or pat.search(claim_haystack):
+                    pattern_matched = True
+                    matched_patterns.append(pat.pattern)
+            pattern_score = len(matched_patterns) / len(compiled_patterns)
 
-        # entity signal
+        # entity signal — match against haystack (includes canonical_claim)
         entity_matched = False
         entity_score = 0.0
+        matched_entities: list[str] = []
         if has_entities:
-            entity_hits = sum(1 for en in entity_names if en in haystack)
-            entity_matched = entity_hits > 0
-            entity_score = entity_hits / len(entity_names)
+            matched_entities = [en for en in entity_names if en in haystack]
+            entity_matched = bool(matched_entities)
+            entity_score = len(matched_entities) / len(entity_names)
 
         # Filter: must have at least one signal hit when criteria are set
         if has_keywords or has_patterns or has_entities:
@@ -812,6 +821,20 @@ async def _recompute_tracker(db: AsyncSession, tracker: NarrativeTracker, versio
             has_keywords, has_patterns, has_entities,
         )
 
+        # TASK-72: build human-readable rationale string
+        rationale_parts: list[str] = []
+        if matched_keywords:
+            rationale_parts.append(f"keywords: {', '.join(matched_keywords[:5])}")
+        if matched_patterns:
+            rationale_parts.append(f"patterns: {', '.join(matched_patterns[:3])}")
+        if matched_entities:
+            rationale_parts.append(f"entities: {', '.join(matched_entities[:5])}")
+        if claim_haystack and any(
+            kw in claim_haystack for kw in (matched_keywords + matched_entities)
+        ):
+            rationale_parts.append("canonical_claim matched")
+        match_rationale = "; ".join(rationale_parts) if rationale_parts else "open match (no criteria)"
+
         # Source quality hint for this narrative (None if no reliability data)
         source_quality = narrative_reliability_weights.get(n.id)
 
@@ -820,7 +843,7 @@ async def _recompute_tracker(db: AsyncSession, tracker: NarrativeTracker, versio
             n, score, pattern_matched, entity_matched,
             source_quality=source_quality,
         )
-        matched.append((n, score, pattern_matched, entity_matched, heuristic_relation))
+        matched.append((n, score, pattern_matched, entity_matched, heuristic_relation, match_rationale))
 
     # ── Optional LLM refinement pass (Sprint 26 CP3) ─────────────────────────
     # Only activated when model_policy.enabled == true.  Falls back to heuristic
@@ -851,13 +874,15 @@ async def _recompute_tracker(db: AsyncSession, tracker: NarrativeTracker, versio
         "sum_evidence": 0.0,
     })
 
-    for narrative, score, pattern_matched, entity_matched, evidence_relation in matched:
+    for narrative, score, pattern_matched, entity_matched, evidence_relation, match_rationale in matched:
         db.add(NarrativeTrackerMatch(
             tracker_id=tracker.id,
             tracker_version_id=version.id,
             narrative_id=narrative.id,
             match_score=score,
+            relevance_score=round(score, 4),
             evidence_relation=evidence_relation,
+            match_rationale=match_rationale[:500] if match_rationale else None,
         ))
         month = _month_bucket(narrative.last_updated or narrative.created_at)
         bucket = month_rollup[month]

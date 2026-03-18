@@ -4,6 +4,7 @@ import api from '../../services/api';
 import { EntityDetail } from './EntityDetail';
 import { EntityGraph } from './EntityGraph';
 import { MergeCandidatesView } from './MergeCandidatesView';
+import { Skeleton } from '../common/Skeleton';
 import '../../styles/entities.css';
 
 // ── Types ──────────────────────────────────────────────────
@@ -58,6 +59,7 @@ export function EntitiesView() {
   const [searchParams] = useSearchParams();
   const { id: routeId } = useParams<{ id: string }>();
   const [activeTab, setActiveTab] = useState<ViewTab>('table');
+  const [graphFocusName, setGraphFocusName] = useState<string | undefined>(undefined);
   const [entities, setEntities] = useState<Entity[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -208,7 +210,7 @@ export function EntitiesView() {
       </div>
 
       {/* Graph view */}
-      {activeTab === 'graph' && <EntityGraph />}
+      {activeTab === 'graph' && <EntityGraph focusEntityName={graphFocusName} />}
 
       {/* Merge review view */}
       {activeTab === 'merge' && (
@@ -283,8 +285,7 @@ export function EntitiesView() {
             <div className="entities-table-wrap">
               {loading ? (
                 <div className="entities-loading">
-                  <span className="spinner" />
-                  Loading entities…
+                  <Skeleton rows={8} type="table" />
                 </div>
               ) : error ? (
                 <div className="entities-error">⚠ {error}</div>
@@ -313,13 +314,14 @@ export function EntitiesView() {
                       >
                         Last Seen {sortIcon('last_seen')}
                       </th>
+                      <th style={{ width: 90 }} />
                     </tr>
                   </thead>
                   <tbody>
                     {entities.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={5}
+                          colSpan={6}
                           style={{
                             textAlign: 'center',
                             color: 'var(--text-muted)',
@@ -363,6 +365,19 @@ export function EntitiesView() {
                           </td>
                           <td className="entities-table__mono">
                             {formatDate(entity.last_seen)}
+                          </td>
+                          <td style={{ paddingRight: 8 }}>
+                            <button
+                              className="entities-table__related-btn"
+                              title={`Show ${entity.name} in network graph`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setGraphFocusName(entity.name);
+                                setActiveTab('graph');
+                              }}
+                            >
+                              ⬡ Related
+                            </button>
                           </td>
                         </tr>
                       ))

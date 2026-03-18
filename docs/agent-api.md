@@ -444,6 +444,81 @@ All errors return a standard FastAPI JSON body:
 
 ---
 
+---
+
+## 7. Rate limits
+
+All API endpoints are rate-limited per user/key.
+
+| Tier | Limit | Window |
+|------|-------|--------|
+| Default | 100 requests | 1 minute |
+| Read-only keys | 100 requests | 1 minute |
+| Read-write keys | 100 requests | 1 minute |
+
+When a rate limit is exceeded, the server returns:
+
+```
+HTTP 429 Too Many Requests
+Retry-After: 30
+```
+
+**Recommendation:** for high-frequency polling, use `/agent/feed/compact` with a generous `hours` window rather than calling repeatedly with short windows.
+
+---
+
+## 8. API key scopes
+
+API keys support two access levels, set at creation time via the `scope` field:
+
+| Scope | HTTP methods | Description |
+|-------|-------------|-------------|
+| `read_write` (default) | ALL | Full read and write access |
+| `read_only` | GET, HEAD, OPTIONS only | No mutations; write requests return `403` |
+
+**Creating a read-only agent key:**
+
+```bash
+curl -s -X POST http://localhost:8000/api-keys \
+  -H "Authorization: Bearer $JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "monitor-agent", "scopes": ["agent:read"], "scope": "read_only"}' | jq .
+```
+
+Fine-grained scope labels (for the `scopes` array):
+
+| Scope label | Grants access to |
+|-------------|-----------------|
+| `agent:read` | All `/agent/*` endpoints (implied: read:feed, read:entities, read:narratives, read:alerts) |
+| `read:feed` | `/agent/feed/compact` |
+| `read:entities` | `/agent/entities/*` |
+| `read:narratives` | Narrative fields in sitrep |
+| `read:alerts` | Alert fields in sitrep |
+
+An empty `scopes` array with `scope: "read_only"` is the safest default for monitoring agents.
+
+---
+
+## 9. Versioned API paths
+
+All endpoints are available under `/api/v1/` (recommended) and the legacy unversioned path.
+
+| Legacy | Versioned (recommended) |
+|--------|------------------------|
+| `GET /agent/sitrep` | `GET /api/v1/agent/sitrep` |
+| `GET /agent/feed/compact` | `GET /api/v1/agent/feed/compact` |
+| `GET /agent/entities/{id}/dossier` | `GET /api/v1/agent/entities/{id}/dossier` |
+| `GET /api-keys` | `GET /api/v1/api-keys` |
+
+Unversioned paths return a `Deprecation: true` header and a `Link` header pointing to the versioned URL:
+
+```
+Deprecation: true
+Link: </api/v1/agent/sitrep>; rel="successor-version"
+```
+
+---
+
 ## Quick start for an AI agent
 
 Here is the minimal flow to get usable intelligence into an agent context:

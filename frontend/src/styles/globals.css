@@ -207,6 +207,41 @@ a:hover {
   gap: 0.75rem;
 }
 
+/* ── Skeleton component (Skeleton.tsx) ──────────────────── */
+.skeleton-pulse {
+  height: 0.85rem;
+  background: linear-gradient(90deg, var(--bg-surface) 25%, var(--border) 50%, var(--bg-surface) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+  border-radius: 4px;
+  display: block;
+}
+
+.skeleton-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 12px 0;
+}
+
+.skeleton-list-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.skeleton-table-header {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.skeleton-table-row {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
 /* ── Feed Infinite Scroll ───────────────────────────────── */
 .feed-sentinel {
   padding: 0.5rem 0;

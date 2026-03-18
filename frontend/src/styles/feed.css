@@ -56,7 +56,7 @@
 }
 
 .feed-sidebar__header-row {
-  display: flex;
+  display: none; /* hidden; overlay header takes its place */
   align-items: center;
   padding: 0 12px 8px 12px;
   border-bottom: 1px solid var(--border);
@@ -281,6 +281,13 @@
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 1px 7px;
+}
+
+.feed-timeline__count--total {
+  color: var(--text-secondary);
+  font-weight: 600;
+  border-color: var(--accent);
+  background: rgba(59, 130, 246, 0.08);
 }
 
 .feed-timeline__conn {
@@ -970,6 +977,16 @@
   font-style: italic;
 }
 
+/* ── Date range quick-select bar (above feed list) ──── */
+.feed-date-range-bar {
+  display: flex;
+  gap: 4px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  flex-shrink: 0;
+}
+
 /* ── Time range preset buttons ───────────────────── */
 .feed-filters__time-presets {
   display: flex;
@@ -981,22 +998,22 @@
   padding: 4px 10px;
   font-size: 11px;
   font-weight: 500;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--border);
   border-radius: 4px;
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .feed-filters__time-btn:hover {
-  border-color: var(--color-accent);
-  color: var(--color-text);
+  border-color: var(--accent);
+  color: var(--text-primary);
 }
 
 .feed-filters__time-btn--active {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
+  background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
 }
 
@@ -1008,9 +1025,17 @@
   background: var(--bg-primary);
   padding: 0;
   cursor: crosshair;
+  position: relative;
+}
+
+.feed-sparkline__svg {
+  width: 100%;
+  display: block;
 }
 
 .feed-sparkline__tooltip {
+  position: absolute;
+  pointer-events: none;
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 4px;

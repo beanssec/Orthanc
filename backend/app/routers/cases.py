@@ -149,16 +149,28 @@ async def create_case(
 @router.get("")
 async def list_cases(
     status_filter: Optional[str] = Query(None, alias="status"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    q = select(Case).where(Case.user_id == current_user.id)
+    """List cases — TASK-80 consistent pagination: {items, total, limit, offset}."""
+    base_q = select(Case).where(Case.user_id == current_user.id)
     if status_filter:
-        q = q.where(Case.status == status_filter)
-    q = q.order_by(Case.updated_at.desc())
-    result = await db.execute(q)
+        base_q = base_q.where(Case.status == status_filter)
+
+    count_result = await db.execute(select(func.count()).select_from(base_q.subquery()))
+    total = count_result.scalar() or 0
+
+    paged_q = base_q.order_by(Case.updated_at.desc()).limit(limit).offset(offset)
+    result = await db.execute(paged_q)
     cases = result.scalars().all()
-    return [_case_to_dict(c) for c in cases]
+    return {
+        "items": [_case_to_dict(c) for c in cases],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.get("/{case_id}")

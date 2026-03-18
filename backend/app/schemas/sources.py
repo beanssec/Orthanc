@@ -14,6 +14,10 @@ class SourceCreate(BaseModel):
     download_videos: bool = False
     max_image_size_mb: float = 10.0
     max_video_size_mb: float = 100.0
+    # Sprint 32 C4 scheduling & filtering
+    poll_interval_seconds: Optional[int] = None
+    filter_keywords: Optional[list[str]] = None
+    filter_mode: Optional[str] = None  # "include" | "exclude"
 
 
 class SourceUpdate(BaseModel):
@@ -24,6 +28,10 @@ class SourceUpdate(BaseModel):
     download_videos: Optional[bool] = None
     max_image_size_mb: Optional[float] = None
     max_video_size_mb: Optional[float] = None
+    # Sprint 32 C4 scheduling & filtering
+    poll_interval_seconds: Optional[int] = None
+    filter_keywords: Optional[list[str]] = None
+    filter_mode: Optional[str] = None  # "include" | "exclude"
 
 
 # ── Reliability sub-schema (Sprint 29 C1) ────────────────────────────────────
@@ -72,6 +80,11 @@ class SourceResponse(BaseModel):
     default_reliability_prior: Optional[str] = None
     ecosystem: Optional[str] = None
     risk_note: Optional[str] = None
+
+    # ── Scheduling & filtering (Sprint 32 C4)
+    poll_interval_seconds: Optional[int] = None
+    filter_keywords: Optional[list[str]] = None
+    filter_mode: Optional[str] = None
 
     class Config:
         from_attributes = True

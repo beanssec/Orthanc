@@ -220,12 +220,12 @@ function VelocityChart({ buckets }: { buckets: VelocityBucket[] }) {
   const yTicks = [0, Math.round(maxTotal / 2), maxTotal];
 
   return (
-    <div ref={wrapRef} className="velocity-chart-wrap" style={{ position: 'relative', width: '100%', flex: 1, minHeight: 0 }}>
+    <div ref={wrapRef} className="velocity-chart-wrap">
       <svg
         ref={svgRef}
         width={W}
         height={H}
-        style={{ display: 'block', cursor: 'crosshair' }}
+        className="velocity-chart__svg"
         onMouseLeave={() => setTooltip(null)}
       >
         {/* Y-axis gridlines + labels */}
@@ -275,7 +275,7 @@ function VelocityChart({ buckets }: { buckets: VelocityBucket[] }) {
           const showLabel = i === 0 || i === buckets.length - 1 || i % Math.ceil(buckets.length / 6) === 0;
 
           return (
-            <g key={bucket.hour} style={{ cursor: 'pointer' }}>
+            <g key={bucket.hour} className="velocity-bar-group">
               {/* hover hit area */}
               <rect
                 x={x}
@@ -319,10 +319,8 @@ function VelocityChart({ buckets }: { buckets: VelocityBucket[] }) {
         <div
           className="velocity-tooltip"
           style={{
-            position: 'absolute',
             left: tooltip.x + 8,
             top: tooltip.y - 10,
-            pointerEvents: 'none',
           }}
         >
           <div className="velocity-tooltip__hour">{formatHour(tooltip.bucket.hour)}</div>
@@ -386,7 +384,7 @@ function SourceHealthStrip({
   navigate: (path: string) => void;
 }) {
   if (sourceHealth.length === 0) {
-    return <div className="source-health-strip"><span style={{ color: 'var(--text-muted)', fontSize: 12 }}>No source data yet</span></div>;
+    return <div className="source-health-strip"><span className="source-health-strip__empty">No source data yet</span></div>;
   }
 
   return (
@@ -424,6 +422,11 @@ export function DashboardView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+
+  // TASK-34: source reliability
+  const [sourceReliability, setSourceReliability] = useState<{ total: number; healthy: number; warning: number; failing: number } | null>(null);
+  // TASK-35: narrative velocity
+  const [narrativeVelocity, setNarrativeVelocity] = useState<{ last24h: number; last7d: number } | null>(null);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -465,6 +468,35 @@ export function DashboardView() {
         // narratives endpoint may not have data yet
       }
 
+      // TASK-34: Source reliability from /sources/health — best-effort
+      try {
+        const srcHealthRes = await api.get('/sources/health');
+        const srcData = srcHealthRes.data as Array<{ status: string }>;
+        if (Array.isArray(srcData)) {
+          const total = srcData.length;
+          const healthy = srcData.filter((s) => s.status === 'ok' || s.status === 'active' || s.status === 'healthy').length;
+          const warning = srcData.filter((s) => s.status === 'warning' || s.status === 'idle').length;
+          const failing = srcData.filter((s) => s.status === 'error' || s.status === 'failing' || s.status === 'stale').length;
+          setSourceReliability({ total, healthy, warning, failing });
+        }
+      } catch {
+        // endpoint may not exist
+      }
+
+      // TASK-35: Narrative velocity — best-effort
+      try {
+        const narrAllRes = await api.get('/narratives/?limit=100');
+        const narrAll = (narrAllRes.data?.items ?? narrAllRes.data ?? []) as Array<{ last_updated?: string }>;
+        const now = Date.now();
+        const ms24h = 24 * 60 * 60 * 1000;
+        const ms7d = 7 * 24 * 60 * 60 * 1000;
+        const last24h = narrAll.filter((n) => n.last_updated && (now - new Date(n.last_updated).getTime()) < ms24h).length;
+        const last7d = narrAll.filter((n) => n.last_updated && (now - new Date(n.last_updated).getTime()) < ms7d).length;
+        setNarrativeVelocity({ last24h, last7d });
+      } catch {
+        // endpoint may have no data yet
+      }
+
       setLastRefresh(new Date());
       setError(null);
     } catch (err: unknown) {
@@ -484,8 +516,20 @@ export function DashboardView() {
   if (loading) {
     return (
       <div className="dashboard__loading">
-        <span className="spinner" />
-        Loading dashboard…
+        <div style={{ width: '100%', maxWidth: 600, padding: '0 20px' }}>
+          <div className="skeleton-pulse" style={{ width: '30%', height: '1rem', marginBottom: '1.5rem' }} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '10px', marginBottom: '1rem' }}>
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="skeleton-pulse" style={{ height: '80px' }} />
+            ))}
+          </div>
+          <div className="skeleton-pulse" style={{ width: '100%', height: '160px', marginBottom: '1rem' }} />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="skeleton-pulse" style={{ height: '120px' }} />
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
@@ -554,6 +598,61 @@ export function DashboardView() {
       {/* ── Row 2: Source Health Strip (full width) ───── */}
       <SourceHealthStrip sourceHealth={sourceHealth} navigate={navigate} />
 
+      {/* ── Row 2b: Source Reliability + Narrative Velocity ── */}
+      {(sourceReliability || narrativeVelocity) && (
+        <div className="dashboard-row dashboard-row--5050">
+          {sourceReliability && (
+            <div className="dash-card source-reliability-card">
+              <div className="dash-card__header">
+                <span className="dash-card__title">Source Reliability</span>
+              </div>
+              <div className="dash-card__body source-reliability-body">
+                <div className="source-rel-stat">
+                  <span className="source-rel-dot source-rel-dot--total" />
+                  <span className="source-rel-label">Total</span>
+                  <span className="source-rel-value">{sourceReliability.total}</span>
+                </div>
+                <div className="source-rel-stat">
+                  <span className="source-rel-dot source-rel-dot--healthy" />
+                  <span className="source-rel-label">Healthy</span>
+                  <span className="source-rel-value">{sourceReliability.healthy}</span>
+                </div>
+                {sourceReliability.warning > 0 && (
+                  <div className="source-rel-stat">
+                    <span className="source-rel-dot source-rel-dot--warning" />
+                    <span className="source-rel-label">Warning</span>
+                    <span className="source-rel-value">{sourceReliability.warning}</span>
+                  </div>
+                )}
+                <div className="source-rel-stat">
+                  <span className="source-rel-dot source-rel-dot--failing" />
+                  <span className="source-rel-label">Failing</span>
+                  <span className="source-rel-value">{sourceReliability.failing}</span>
+                </div>
+              </div>
+            </div>
+          )}
+          {narrativeVelocity && (
+            <div className="dash-card narrative-velocity-card">
+              <div className="dash-card__header">
+                <span className="dash-card__title">Narrative Velocity</span>
+              </div>
+              <div className="dash-card__body narrative-velocity-body">
+                <div className="narr-vel-stat">
+                  <span className="narr-vel-value">{narrativeVelocity.last24h}</span>
+                  <span className="narr-vel-label">Active 24h</span>
+                </div>
+                <div className="narr-vel-divider" />
+                <div className="narr-vel-stat">
+                  <span className="narr-vel-value">{narrativeVelocity.last7d}</span>
+                  <span className="narr-vel-label">Active 7d</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Row 3: Post Velocity (full width) ─────────── */}
       <div className="dash-card dash-card--full">
         <div className="dash-card__header">
@@ -621,7 +720,7 @@ export function DashboardView() {
           </div>
           <div className="dash-card__body">
             {trendingNarratives.length === 0 ? (
-              <div className="dash-empty" style={{ fontSize: '0.75rem', lineHeight: 1.5 }}>
+              <div className="dash-empty dash-empty--narrative">
                 No active narratives — narratives will appear as the clustering engine processes posts
               </div>
             ) : (
@@ -697,7 +796,7 @@ export function DashboardView() {
           <div className="dash-card__body">
             {alerts.length === 0 ? (
               <div className="dash-empty dash-empty--calm">
-                <span style={{ fontSize: 24 }}>✅</span>
+                <span className="dash-empty__icon">✅</span>
                 No unread alerts — all clear
               </div>
             ) : (
@@ -775,7 +874,7 @@ export function DashboardView() {
             ) : (
               <div className="dash-empty">
                 <span>{stats?.posts_last_24h ?? 0} posts ingested in last 24h</span>
-                <button className="btn btn-secondary btn-sm" style={{ marginTop: 8 }} onClick={() => navigate('/feed')}>
+                <button className="btn btn-secondary btn-sm" onClick={() => navigate('/feed')}>
                   Open feed →
                 </button>
               </div>
@@ -804,7 +903,7 @@ export function DashboardView() {
                 return (
                   <div key={ev.id} className="fusion-row">
                     <div className="fusion-row__sev" style={{ color }}>
-                      <span style={{ display: 'inline-block', width: 10, height: 10, transform: 'rotate(45deg)', background: color, flexShrink: 0, marginRight: 4 }} />
+                      <span className="fusion-row__sev-diamond" style={{ background: color }} />
                       {ev.severity.toUpperCase()}
                     </div>
                     <div className="fusion-row__body">

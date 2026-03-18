@@ -545,6 +545,38 @@
   margin-bottom: 3px;
 }
 
+/* ── Unified activity timeline layout ─────────────────── */
+.case-timeline-entry--event,
+.case-timeline-entry--item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.case-timeline-entry--event:last-child,
+.case-timeline-entry--item:last-child {
+  border-bottom: none;
+}
+
+.case-timeline-entry__icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.case-timeline-entry__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.case-timeline-entry--item .case-timeline-entry__type {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.2);
+  color: var(--accent, #3b82f6);
+}
+
 /* ── Case Map ────────────────────────────────────────────── */
 .case-map-container {
   width: 100%;

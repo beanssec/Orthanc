@@ -52,8 +52,10 @@ class CashtagCollector:
 
     async def start(self, user_id: str, tickers: list[str]) -> None:
         """Start monitoring cashtags for a user's portfolio tickers."""
+        # Strip whitespace and drop empty/blank ticker strings
+        tickers = [t.strip() for t in (tickers or []) if t and t.strip()]
         if not tickers:
-            logger.debug("CashtagCollector: no tickers for user %s", user_id)
+            logger.debug("CashtagCollector: no valid tickers for user %s", user_id)
             return
 
         keys = await collector_manager.get_keys(user_id, "x")
@@ -108,6 +110,9 @@ class CashtagCollector:
 
     async def _poll_once(self, user_id: str, tickers: list[str], api_key: str) -> None:
         """Fetch cashtag mentions for all tickers in batches."""
+        if not tickers:
+            logger.debug("CashtagCollector: ticker list is empty for user %s — skipping poll", user_id)
+            return
         logger.debug("CashtagCollector: polling %d tickers for user %s", len(tickers), user_id)
 
         # Process in batches of BATCH_SIZE
@@ -196,21 +201,30 @@ class CashtagCollector:
         resp.raise_for_status()
         data = resp.json()
 
-        raw_content: str = (
-            data.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "[]")
-        )
+        # Defensive extraction — choices may be absent or empty
+        choices = data.get("choices") or []
+        if not choices:
+            logger.warning("CashtagCollector: empty choices in Grok response for %s", cashtags)
+            return []
+
+        raw_content: str = choices[0].get("message", {}).get("content") or ""
+        if not raw_content.strip():
+            logger.warning("CashtagCollector: empty content in Grok response for %s", cashtags)
+            return []
 
         # Strip markdown code fences
         raw_content = re.sub(r"```(?:json)?\s*", "", raw_content).strip()
+        if not raw_content:
+            logger.warning("CashtagCollector: content empty after stripping for %s", cashtags)
+            return []
 
         try:
             tweets = json.loads(raw_content)
             if isinstance(tweets, list):
                 return tweets
+            logger.warning("CashtagCollector: Grok response is not a JSON array for %s", cashtags)
         except json.JSONDecodeError as e:
-            logger.warning("CashtagCollector: JSON parse error: %s", e)
+            logger.warning("CashtagCollector: JSON parse error for %s: %s", cashtags, e)
 
         return []
 

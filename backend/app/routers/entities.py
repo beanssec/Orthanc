@@ -69,33 +69,37 @@ class RelationshipCreate(BaseModel):
 
 
 
-@router.get("/", response_model=list[EntitySchema])
+@router.get("/")
 async def list_entities(
     type: Optional[str] = Query(None, description="Filter by entity type (PERSON, ORG, GPE, EVENT, NORP)"),
     sort_by: Literal["mention_count", "last_seen", "name"] = Query("mention_count"),
     resolved: bool = Query(False, description="When true, apply type overrides if present"),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
-) -> list[EntitySchema]:
-    query = select(Entity)
+):
+    base_query = select(Entity)
     if type and not resolved:
-        query = query.where(Entity.type == type.upper())
+        base_query = base_query.where(Entity.type == type.upper())
 
     if sort_by == "mention_count":
-        query = query.order_by(Entity.mention_count.desc())
+        base_query = base_query.order_by(Entity.mention_count.desc())
     elif sort_by == "last_seen":
-        query = query.order_by(Entity.last_seen.desc())
+        base_query = base_query.order_by(Entity.last_seen.desc())
     elif sort_by == "name":
-        query = query.order_by(Entity.name.asc())
+        base_query = base_query.order_by(Entity.name.asc())
 
-    query = query.limit(limit).offset(offset)
-    result = await db.execute(query)
+    # TASK-80: consistent pagination — count then page
+    count_q = select(func.count()).select_from(base_query.subquery())
+    total = (await db.execute(count_q)).scalar() or 0
+
+    paged_query = base_query.limit(limit).offset(offset)
+    result = await db.execute(paged_query)
     entities = result.scalars().all()
 
     if not resolved:
-        return entities
+        return {"items": entities, "total": total, "limit": limit, "offset": offset}
 
     overrides_result = await db.execute(select(EntityTypeOverride))
     override_map = {str(o.entity_id): o.override_type for o in overrides_result.scalars().all()}
@@ -118,7 +122,7 @@ async def list_entities(
             }
         )
 
-    return output
+    return {"items": output, "total": total, "limit": limit, "offset": offset}
 
 
 
@@ -616,6 +620,64 @@ def _rel_dict(rel: EntityRelationship) -> dict:
 
 
 
+@router.get("/{entity_id}/merge-candidates")
+async def get_per_entity_merge_candidates(
+    entity_id: uuid.UUID,
+    limit: int = Query(10, ge=1, le=50, description="Maximum number of candidates to return"),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> list[dict]:
+    """
+    Find entities of the same type with similar names to the given entity.
+
+    Uses difflib.SequenceMatcher for string similarity.
+    Returns top N candidates sorted by similarity score descending.
+    Filters out already-merged entities and the entity itself.
+
+    Response: list of {entity_id, name, type, similarity_score}
+    """
+    import difflib
+
+    # Load source entity
+    src_result = await db.execute(select(Entity).where(Entity.id == entity_id))
+    source_entity = src_result.scalar_one_or_none()
+    if not source_entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+
+    # Load all non-merged entities of the same type (excluding the entity itself)
+    candidates_result = await db.execute(
+        select(Entity).where(
+            Entity.type == source_entity.type,
+            Entity.id != entity_id,
+            Entity.merged_into.is_(None),  # exclude already-merged entities
+        )
+    )
+    candidates = candidates_result.scalars().all()
+
+    source_name_lower = source_entity.name.lower()
+    scored: list[tuple[float, Entity]] = []
+    for candidate in candidates:
+        similarity = difflib.SequenceMatcher(
+            None, source_name_lower, candidate.name.lower()
+        ).ratio()
+        if similarity > 0.0:
+            scored.append((similarity, candidate))
+
+    # Sort descending by score, take top N
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = scored[:limit]
+
+    return [
+        {
+            "entity_id": str(ent.id),
+            "name": ent.name,
+            "type": ent.type,
+            "similarity_score": round(score, 4),
+        }
+        for score, ent in top
+    ]
+
+
 @router.get("/merge-candidates", response_model=MergeCandidateResponse)
 async def get_merge_candidates(
     min_confidence: float = Query(0.5, ge=0.0, le=1.0, description="Minimum confidence threshold"),
@@ -807,9 +869,15 @@ async def merge_entities(
 
     await db.flush()
 
-    # ── Step 5: delete secondary entities ────────────────────────────────────
-    # Any remaining rows (e.g. duplicate aliases) pointing at secondaries
-    # will be removed via CASCADE (ondelete="CASCADE" on entity FK).
+    # ── Step 5: mark secondaries as merged, then delete ──────────────────────
+    # Set merged_into/merged_at for audit trail before cascade deletion.
+    # Any remaining rows pointing at secondaries are cleaned up via CASCADE.
+    merge_time = datetime.utcnow()
+    for secondary in secondaries:
+        secondary.merged_into = primary_id
+        secondary.merged_at = merge_time
+    await db.flush()
+
     for secondary in secondaries:
         await db.delete(secondary)
 

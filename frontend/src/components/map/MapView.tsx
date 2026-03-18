@@ -456,7 +456,9 @@ export function MapView() {
   const [zoom, setZoom] = useState(3);
   const [loading, setLoading] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [layerPanelCollapsed, setLayerPanelCollapsed] = useState(false);
+  const [layerPanelCollapsed, setLayerPanelCollapsed] = useState(() => {
+    try { return localStorage.getItem('map_layers_collapsed') === 'true'; } catch { return false; }
+  });
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [mobileLayersOpen, setMobileLayersOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -569,6 +571,11 @@ export function MapView() {
   useEffect(() => {
     fetchEvents();
   }, [fetchEvents]);
+
+  // TASK-37: Persist layer panel collapsed state
+  useEffect(() => {
+    try { localStorage.setItem('map_layers_collapsed', String(layerPanelCollapsed)); } catch {}
+  }, [layerPanelCollapsed]);
 
   // ---------------------------------------------------------------------------
   // Layer data fetchers
@@ -2306,7 +2313,7 @@ export function MapView() {
           <div className="map-event-detail__body">
             <div className="map-event-detail__source-row">
               <span className="map-event-detail__source-badge" style={{ color: getSourceColor(selectedEvent.post.source_type) }}>
-                <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: getSourceColor(selectedEvent.post.source_type) }} />
+                <span className="map-event-detail__source-dot" style={{ background: getSourceColor(selectedEvent.post.source_type) }} />
                 {selectedEvent.post.source_type.toUpperCase()}
               </span>
               <span className="map-event-detail__time">{relativeTime(selectedEvent.post.timestamp)}</span>
@@ -2400,7 +2407,7 @@ export function MapView() {
             </label>
 
             <label className="map-layer-row map-layer-row--sub">
-              <span className="map-layer-row__name" style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+              <span className="map-layer-row__name map-layer-row__name--muted">
                 Include country-level
               </span>
               <span className="toggle-switch">
@@ -2579,7 +2586,7 @@ export function MapView() {
 
             {layers.gdelt && (
               <div className="sentiment-controls">
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, marginBottom: 4 }}>
+                <div className="map-layer-section-label">
                   GDELT Keyword
                 </div>
                 <div className="gdelt-keyword-input">
@@ -2647,7 +2654,7 @@ export function MapView() {
             )}
 
             {layers.acled && layerCounts.acled > 0 && (
-              <div className="sentiment-legend" style={{ marginTop: 6 }}>
+              <div className="sentiment-legend sentiment-legend--mt">
                 <div className="sentiment-legend__title">Event Types</div>
                 <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#ef4444' }} />Battles</div>
                 <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#f97316' }} />Explosions/Remote Violence</div>
@@ -2659,17 +2666,8 @@ export function MapView() {
             )}
 
             {/* NOTAM row */}
-            <label className="map-layer-row" style={{ marginTop: 8 }}>
-              <span className="map-layer-row__dot" style={{
-                background: 'transparent',
-                border: '5px solid transparent',
-                borderBottom: '9px solid #fbbf24',
-                width: 0,
-                height: 0,
-                borderRadius: 0,
-                display: 'inline-block',
-                marginRight: 4,
-              }} />
+            <label className="map-layer-row map-layer-row--mt">
+              <span className="sentiment-legend__triangle" style={{ borderBottom: '9px solid #fbbf24' }} />
               <span className="map-layer-row__name">⚠️ NOTAMs</span>
               {layers.notams && (
                 <span className={`map-layer-row__count${layerCounts.notams === 0 ? ' map-layer-row__count--zero' : ''}`}>{layerCounts.notams || 0}</span>
@@ -2689,21 +2687,21 @@ export function MapView() {
             )}
 
             {layers.notams && layerCounts.notams > 0 && (
-              <div className="sentiment-legend" style={{ marginTop: 6 }}>
+              <div className="sentiment-legend sentiment-legend--mt">
                 <div className="sentiment-legend__title">NOTAM Types</div>
                 <div className="sentiment-legend__row">
-                  <span style={{ display: 'inline-block', width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderBottom: '9px solid #f97316', marginRight: 6, verticalAlign: 'middle' }} />
+                  <span className="sentiment-legend__triangle" style={{ borderBottom: '9px solid #f97316' }} />
                   Military/Exercise
                 </div>
                 <div className="sentiment-legend__row">
-                  <span style={{ display: 'inline-block', width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderBottom: '9px solid #ef4444', marginRight: 6, verticalAlign: 'middle' }} />
+                  <span className="sentiment-legend__triangle" style={{ borderBottom: '9px solid #ef4444' }} />
                   GPS Jamming
                 </div>
                 <div className="sentiment-legend__row">
-                  <span style={{ display: 'inline-block', width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderBottom: '9px solid #fbbf24', marginRight: 6, verticalAlign: 'middle' }} />
+                  <span className="sentiment-legend__triangle" style={{ borderBottom: '9px solid #fbbf24' }} />
                   TFR / Standard
                 </div>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                <div className="map-legend-hint">
                   22 military FIRs · refreshes every 15 min
                 </div>
               </div>
@@ -2715,7 +2713,7 @@ export function MapView() {
             <div className="map-layers-section__label">Fused Intelligence</div>
 
             <label className="map-layer-row">
-              <span className="map-layer-row__dot" style={{ background: 'linear-gradient(135deg, #ef4444, #3b82f6)', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8 }} />
+              <span className="map-layer-row__dot map-layer-row__dot--diamond" style={{ background: 'linear-gradient(135deg, #ef4444, #3b82f6)' }} />
               <span className="map-layer-row__name">◆ Multi-Source Fusion</span>
               {layers.fusion && (
                 <span className={`map-layer-row__count${layerCounts.fusion === 0 ? ' map-layer-row__count--zero' : ''}`}>{layerCounts.fusion || 0}</span>
@@ -2735,12 +2733,12 @@ export function MapView() {
             )}
 
             {layers.fusion && layerCounts.fusion > 0 && (
-              <div className="sentiment-legend" style={{ marginTop: 6 }}>
+              <div className="sentiment-legend sentiment-legend--mt">
                 <div className="sentiment-legend__title">Severity</div>
-                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#ef4444', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8, display: 'inline-block', marginRight: 6 }} />Flash (4+ sources or 10+ posts)</div>
-                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#f97316', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8, display: 'inline-block', marginRight: 6 }} />Urgent (3 sources)</div>
-                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#3b82f6', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8, display: 'inline-block', marginRight: 6 }} />Routine (2 sources)</div>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot sentiment-legend__dot--diamond" style={{ background: '#ef4444' }} />Flash (4+ sources or 10+ posts)</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot sentiment-legend__dot--diamond" style={{ background: '#f97316' }} />Urgent (3 sources)</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot sentiment-legend__dot--diamond" style={{ background: '#3b82f6' }} />Routine (2 sources)</div>
+                <div className="map-legend-hint">
                   Auto-detected every 5 min within 50km / 6h windows
                 </div>
               </div>
@@ -2772,13 +2770,13 @@ export function MapView() {
             )}
 
             {layers.maritime && (
-              <div className="sentiment-legend" style={{ marginTop: 6 }}>
+              <div className="sentiment-legend sentiment-legend--mt">
                 <div className="sentiment-legend__title">Event Types</div>
                 <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#ef4444' }} />🚫 Dark Ship (AIS off)</div>
                 <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#f97316' }} />🔄 STS Transfer</div>
                 <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#3b82f6' }} />⚓ Port Call</div>
                 <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#64748b' }} />🏭 Monitored Port</div>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                <div className="map-legend-hint">
                   Analysis runs every 15 min — requires AIS data
                 </div>
               </div>
@@ -2810,11 +2808,11 @@ export function MapView() {
             )}
 
             {layers.watchpoints && (
-              <div className="sentiment-legend" style={{ marginTop: 6 }}>
+              <div className="sentiment-legend sentiment-legend--mt">
                 <div className="sentiment-legend__title">Change Status</div>
                 <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#a78bfa' }} />🟣 No change detected</div>
                 <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#ef4444' }} />🔴 Change detected</div>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                <div className="map-legend-hint">
                   Sentinel-2 via Copernicus · checks every 6h
                 </div>
               </div>
@@ -2826,7 +2824,7 @@ export function MapView() {
             <div className="map-layers-section__label">Narrative Intelligence</div>
 
             <label className="map-layer-row">
-              <span className="map-layer-row__dot" style={{ background: 'transparent', border: '2px solid #6366f1', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8 }} />
+              <span className="map-layer-row__dot map-layer-row__dot--diamond" style={{ background: 'transparent', border: '2px solid #6366f1' }} />
               <span className="map-layer-row__name">📖 Narratives</span>
               {layers.narratives && (
                 <span className={`map-layer-row__count${layerCounts.narratives === 0 ? ' map-layer-row__count--zero' : ''}`}>{layerCounts.narratives || 0}</span>
@@ -2846,13 +2844,13 @@ export function MapView() {
             )}
 
             {layers.narratives && layerCounts.narratives > 0 && (
-              <div className="sentiment-legend" style={{ marginTop: 6 }}>
+              <div className="sentiment-legend sentiment-legend--mt">
                 <div className="sentiment-legend__title">Claim Consensus</div>
-                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#22c55e', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8, display: 'inline-block', marginRight: 6 }} />Confirmed</div>
-                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#f59e0b', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8, display: 'inline-block', marginRight: 6 }} />Disputed</div>
-                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#ef4444', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8, display: 'inline-block', marginRight: 6 }} />Denied</div>
-                <div className="sentiment-legend__row"><span className="sentiment-legend__dot" style={{ background: '#9ca3af', borderRadius: 0, transform: 'rotate(45deg)', width: 8, height: 8, display: 'inline-block', marginRight: 6 }} />Unverified</div>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot sentiment-legend__dot--diamond" style={{ background: '#22c55e' }} />Confirmed</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot sentiment-legend__dot--diamond" style={{ background: '#f59e0b' }} />Disputed</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot sentiment-legend__dot--diamond" style={{ background: '#ef4444' }} />Denied</div>
+                <div className="sentiment-legend__row"><span className="sentiment-legend__dot sentiment-legend__dot--diamond" style={{ background: '#9ca3af' }} />Unverified</div>
+                <div className="map-legend-hint">
                   Diamond markers · refreshes every 5 min
                 </div>
               </div>

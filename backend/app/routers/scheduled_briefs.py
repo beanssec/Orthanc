@@ -18,14 +18,15 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select, desc
+from sqlalchemy import func, select, desc
 
 from app.db import AsyncSessionLocal
 from app.middleware.auth import get_current_user
 from app.models import User
 from app.models.scheduled_brief import ScheduledBrief, ScheduledBriefRun
+from app.models.webhook_delivery import WebhookDelivery
 
 logger = logging.getLogger("orthanc.routers.scheduled_briefs")
 
@@ -161,16 +162,31 @@ async def create_scheduled_brief(
 @router.get("/")
 async def list_scheduled_briefs(
     current_user: User = Depends(get_current_user),
-) -> list[dict]:
-    """List all scheduled briefs for the current user."""
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    """List all scheduled briefs for the current user.
+
+    Returns: {items, total, limit, offset}
+    """
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
+        base_q = (
             select(ScheduledBrief)
             .where(ScheduledBrief.user_id == current_user.id)
-            .order_by(ScheduledBrief.created_at.desc())
+        )
+        count_result = await db.execute(select(func.count()).select_from(base_q.subquery()))
+        total = count_result.scalar() or 0
+
+        result = await db.execute(
+            base_q.order_by(ScheduledBrief.created_at.desc()).limit(limit).offset(offset)
         )
         schedules = result.scalars().all()
-    return [schedule_to_dict(s) for s in schedules]
+    return {
+        "items": [schedule_to_dict(s) for s in schedules],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.get("/{schedule_id}")
@@ -290,3 +306,56 @@ async def list_schedule_runs(
         runs = runs_result.scalars().all()
 
     return [run_to_dict(r) for r in runs]
+
+
+# ── TASK-88: Webhook delivery history ────────────────────────────────────────
+
+
+def _delivery_to_dict(d: WebhookDelivery) -> dict:
+    return {
+        "id": str(d.id),
+        "scheduled_brief_id": str(d.scheduled_brief_id),
+        "url": d.url,
+        "payload_hash": d.payload_hash,
+        "status_code": d.status_code,
+        "response_body": d.response_body,
+        "success": d.success,
+        "delivered_at": d.delivered_at.isoformat() if d.delivered_at else None,
+        "error_message": d.error_message,
+    }
+
+
+@router.get("/{schedule_id}/deliveries")
+async def list_webhook_deliveries(
+    schedule_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    current_user: User = Depends(get_current_user),
+) -> list[dict]:
+    """List webhook delivery history for a specific scheduled brief."""
+    try:
+        sid = uuid.UUID(schedule_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid schedule ID")
+
+    async with AsyncSessionLocal() as db:
+        # Verify ownership
+        result = await db.execute(
+            select(ScheduledBrief).where(
+                ScheduledBrief.id == sid,
+                ScheduledBrief.user_id == current_user.id,
+            )
+        )
+        if not result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Scheduled brief not found")
+
+        deliveries_result = await db.execute(
+            select(WebhookDelivery)
+            .where(WebhookDelivery.scheduled_brief_id == sid)
+            .order_by(desc(WebhookDelivery.delivered_at))
+            .limit(limit)
+            .offset(offset)
+        )
+        deliveries = deliveries_result.scalars().all()
+
+    return [_delivery_to_dict(d) for d in deliveries]

@@ -340,7 +340,7 @@ export function ScheduledBriefsView() {
           <div className="sb-empty__body">
             Create a schedule to receive automated intelligence briefs at regular intervals.
           </div>
-          <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={openCreate}>
+          <button className="btn btn-primary sb-empty__cta" onClick={openCreate}>
             + New Schedule
           </button>
         </div>

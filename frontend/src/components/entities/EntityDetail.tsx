@@ -10,10 +10,19 @@ interface EntityDetailData {
   name: string;
   type: string;
   canonical_name?: string;
+  aliases?: string[];
   mention_count: number;
   first_seen: string;
   last_seen: string;
   mentions?: unknown[];
+}
+
+// TASK-67: Co-occurrence graph item
+interface GraphEntity {
+  entity_id: string;
+  name: string;
+  type: string;
+  weight: number;
 }
 
 interface Connection {
@@ -98,7 +107,7 @@ interface Props {
   entityId: string | number;
 }
 
-type DetailTab = 'overview' | 'timeline' | 'relationships' | 'notes' | 'global_media' | 'sanctions' | 'investigations';
+type DetailTab = 'overview' | 'timeline' | 'mention_freq' | 'related' | 'relationships' | 'notes' | 'global_media' | 'sanctions' | 'investigations';
 
 // ── Sanctions types ────────────────────────────────────────
 interface SanctionsMatch {
@@ -384,7 +393,7 @@ function AddRelationshipModal({ entityId, relTypes, onClose, onCreated }: AddRel
             {selectedTarget ? (
               <div className="rel-modal__selected-entity">
                 <span className={`badge badge--${entityTypeClass(selectedTarget.type)}`}>{selectedTarget.type}</span>
-                <span style={{ fontSize: 12 }}>{selectedTarget.name}</span>
+                <span className="rel-modal__target-name">{selectedTarget.name}</span>
                 <button className="rel-modal__clear-btn" onClick={() => setSelectedTarget(null)}>✕</button>
               </div>
             ) : (
@@ -443,17 +452,17 @@ function AddRelationshipModal({ entityId, relTypes, onClose, onCreated }: AddRel
               placeholder="Supporting context or evidence…"
               value={notes}
               onChange={e => setNotes(e.target.value)}
-              style={{ minHeight: 72, resize: 'vertical', fontFamily: 'inherit', fontSize: 12 }}
+              className="rel-modal__textarea"
             />
           </div>
 
           {error && (
-            <div style={{ fontSize: 12, color: 'var(--danger)', padding: '6px 10px', background: '#ef444415', borderRadius: 4 }}>
+            <div className="rel-modal__error">
               {error}
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <div className="rel-modal__footer">
             <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
             <button className="btn btn-primary" onClick={handleSubmit} disabled={!selectedTarget || !relType || loading}>
               {loading ? 'Saving…' : '+ Add Relationship'}
@@ -517,14 +526,14 @@ function NotesSection({ targetType, targetId }: NotesSectionProps) {
   return (
     <div className="collab-notes">
       {loading ? (
-        <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>Loading notes…</div>
+        <div className="notes-loading">Loading notes…</div>
       ) : (
         notes.map(note => (
           <div key={note.id} className="note-card">
             <div className="note-card__header">
               <span className="note-card__timestamp">{formatDateTime(note.created_at)}</span>
               {note.updated_at !== note.created_at && (
-                <span style={{ fontSize: 9, color: 'var(--text-muted)', marginLeft: 4 }}>(edited)</span>
+                <span className="note-card__edited">(edited)</span>
               )}
               <div className="note-card__actions">
                 <button className="note-card__action-btn" onClick={() => { setEditingId(note.id); setEditContent(note.content); }}>Edit</button>
@@ -532,15 +541,15 @@ function NotesSection({ targetType, targetId }: NotesSectionProps) {
               </div>
             </div>
             {editingId === note.id ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div className="note-card__edit-col">
                 <textarea
                   className="note-card__edit-area"
                   value={editContent}
                   onChange={e => setEditContent(e.target.value)}
                 />
-                <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                  <button className="btn btn-secondary btn-sm" style={{ fontSize: 11 }} onClick={() => setEditingId(null)}>Cancel</button>
-                  <button className="btn btn-primary btn-sm" style={{ fontSize: 11 }} onClick={() => saveEdit(note.id)}>Save</button>
+                <div className="note-card__edit-row">
+                  <button className="btn btn-secondary btn-sm btn--xs" onClick={() => setEditingId(null)}>Cancel</button>
+                  <button className="btn btn-primary btn-sm btn--xs" onClick={() => saveEdit(note.id)}>Save</button>
                 </div>
               </div>
             ) : (
@@ -700,7 +709,7 @@ function RelationshipsSection({ entityId, relTypes }: RelationshipsSectionProps)
     <>
       <div className="entity-section__title-row">
         <span className="entity-section__title">Relationships ({rels.length})</span>
-        <button className="btn btn-secondary btn-sm" style={{ fontSize: 10, padding: '2px 8px' }}
+        <button className="btn btn-secondary btn-sm btn--xxs"
           onClick={() => setShowAddModal(true)}>
           + Add
         </button>
@@ -708,9 +717,9 @@ function RelationshipsSection({ entityId, relTypes }: RelationshipsSectionProps)
 
       <div className="entity-relationships">
         {loading ? (
-          <div style={{ padding: '12px 14px', fontSize: 12, color: 'var(--text-muted)' }}>Loading…</div>
+          <div className="entity-rels-loading">Loading…</div>
         ) : rels.length === 0 ? (
-          <div style={{ padding: '12px 14px', fontSize: 12, color: 'var(--text-muted)' }}>
+          <div className="entity-rels-empty">
             No relationships defined yet
           </div>
         ) : (
@@ -725,7 +734,7 @@ function RelationshipsSection({ entityId, relTypes }: RelationshipsSectionProps)
                     {typeInfo?.label ?? rel.relationship_type}
                   </span>
                   {typeInfo?.directed && !isSource && (
-                    <span style={{ fontSize: 9, color: 'var(--text-muted)', display: 'block', marginTop: 2 }}>← received</span>
+                    <span className="entity-rel__received">← received</span>
                   )}
                 </div>
                 <div className="entity-relationship__target">
@@ -735,7 +744,7 @@ function RelationshipsSection({ entityId, relTypes }: RelationshipsSectionProps)
                     <span>{other?.name ?? '—'}</span>
                   </div>
                   {/* Confidence bar */}
-                  <div className="confidence-bar" style={{ marginTop: 5 }}>
+                  <div className="confidence-bar confidence-bar--mt">
                     <div className="confidence-bar__track">
                       <div className="confidence-bar__fill" style={{
                         width: `${Math.round(rel.confidence * 100)}%`,
@@ -751,10 +760,10 @@ function RelationshipsSection({ entityId, relTypes }: RelationshipsSectionProps)
                 </div>
                 <div className="entity-relationship__actions">
                   {confirmDelete === rel.id ? (
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <button className="btn btn-sm" style={{ fontSize: 10, background: 'var(--danger)', color: '#fff', border: 'none', padding: '2px 6px', borderRadius: 3 }}
+                    <div className="entity-rel__actions">
+                      <button className="btn btn-sm btn--danger-sm"
                         onClick={() => handleDelete(rel.id)}>Yes</button>
-                      <button className="btn btn-secondary btn-sm" style={{ fontSize: 10 }}
+                      <button className="btn btn-secondary btn-sm btn--xxs-secondary"
                         onClick={() => setConfirmDelete(null)}>No</button>
                     </div>
                   ) : (
@@ -839,7 +848,7 @@ function SanctionsTab({ entityId }: SanctionsTabProps) {
   if (error) {
     return (
       <div className="entity-section">
-        <div style={{ color: 'var(--danger)', fontSize: 12, padding: '12px 0' }}>⚠ {error}</div>
+        <div className="entity-error-msg">⚠ {error}</div>
       </div>
     );
   }
@@ -848,13 +857,12 @@ function SanctionsTab({ entityId }: SanctionsTabProps) {
   const possibleMatches = matches.filter(m => m.confidence >= 0.7 && m.confidence < 0.9);
 
   return (
-    <div className="entity-section" style={{ paddingBottom: 24 }}>
+    <div className="entity-section entity-section--pb">
       {/* Header row */}
-      <div className="entity-section__title-row" style={{ marginBottom: 12 }}>
+      <div className="entity-section__title-row entity-section__title-row--mb">
         <span className="entity-section__title">Sanctions Screening</span>
         <button
-          className="btn btn-secondary btn-sm"
-          style={{ fontSize: 10, padding: '2px 8px' }}
+          className="btn btn-secondary btn-sm btn--xxs"
           onClick={runCheck}
           disabled={checking}
         >
@@ -863,45 +871,28 @@ function SanctionsTab({ entityId }: SanctionsTabProps) {
       </div>
 
       {matches.length === 0 ? (
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '12px 14px',
-          background: 'rgba(16, 185, 129, 0.06)',
-          border: '1px solid rgba(16, 185, 129, 0.2)',
-          borderRadius: 6,
-        }}>
+        <div className="watchlist-status watchlist-status--clear">
           <span className="sanctions-badge sanctions-badge--clear">✓ Clear</span>
-          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+          <span className="watchlist-summary-text">
             No sanctions matches found in available databases.
           </span>
         </div>
       ) : (
         <>
           {/* Summary banner */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            padding: '10px 14px',
-            background: 'rgba(239, 68, 68, 0.08)',
-            border: '1px solid rgba(239, 68, 68, 0.25)',
-            borderRadius: 6,
-            marginBottom: 16,
-          }}>
+          <div className="watchlist-status watchlist-status--hit">
             <span className="sanctions-badge sanctions-badge--match">🔴 SANCTIONED</span>
-            <div style={{ fontSize: 12 }}>
-              <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
+            <div className="watchlist-detail-info">
+              <span className="watchlist-detail-name">
                 {matches.length} match{matches.length !== 1 ? 'es' : ''} found
               </span>
               {strongMatches.length > 0 && (
-                <span style={{ color: 'var(--danger)', marginLeft: 8 }}>
+                <span className="watchlist-detail-alert">
                   {strongMatches.length} strong
                 </span>
               )}
               {possibleMatches.length > 0 && (
-                <span style={{ color: 'var(--warning)', marginLeft: 8 }}>
+                <span className="watchlist-detail-warn">
                   {possibleMatches.length} possible
                 </span>
               )}
@@ -909,45 +900,39 @@ function SanctionsTab({ entityId }: SanctionsTabProps) {
           </div>
 
           {/* Match cards */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="watchlist-matches-list">
             {matches.map(match => {
               const isStrong = match.confidence >= 0.9;
               const accentColor = isStrong ? 'var(--danger)' : 'var(--warning)';
               const confPct = Math.round(match.confidence * 100);
 
               return (
-                <div key={match.match_id} style={{
-                  padding: '12px 14px',
-                  background: 'var(--bg-surface)',
+                <div key={match.match_id} className="watchlist-match-card" style={{
                   border: `1px solid ${isStrong ? 'rgba(239,68,68,0.25)' : 'rgba(245,158,11,0.2)'}`,
                   borderLeft: `3px solid ${accentColor}`,
-                  borderRadius: 6,
                 }}>
                   {/* Name + confidence */}
-                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+                  <div className="watchlist-match-header">
                     <div>
                       <a
                         href={match.opensanctions_url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}
+                        className="watchlist-match-name"
                       >
                         {match.sanctions_entity_name}
                       </a>
                       {match.entity_type && (
-                        <span style={{
-                          marginLeft: 8, fontSize: 10, color: 'var(--text-muted)',
-                          textTransform: 'uppercase', letterSpacing: '0.04em',
-                        }}>
+                        <span className="watchlist-match-badge watchlist-match-badge--ml">
                           {match.entity_type}
                         </span>
                       )}
                     </div>
-                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      <div style={{ fontSize: 18, fontWeight: 700, color: accentColor, lineHeight: 1 }}>
+                    <div className="watchlist-match-score-area">
+                      <div className="watchlist-match-score" style={{ color: accentColor }}>
                         {confPct}%
                       </div>
-                      <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 1 }}>
+                      <div className="watchlist-match-label">
                         {isStrong ? 'STRONG MATCH' : 'POSSIBLE MATCH'}
                       </div>
                     </div>
@@ -955,9 +940,9 @@ function SanctionsTab({ entityId }: SanctionsTabProps) {
 
                   {/* Matched on */}
                   {match.matched_on && (
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
+                    <div className="watchlist-match-meta">
                       Matched on:{' '}
-                      <span style={{ color: 'var(--text-secondary)' }}>
+                      <span className="watchlist-match-meta-value">
                         {match.matched_on === 'name' ? 'exact name' : `alias`}
                       </span>
                     </div>
@@ -965,16 +950,9 @@ function SanctionsTab({ entityId }: SanctionsTabProps) {
 
                   {/* Datasets */}
                   {match.datasets.length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+                    <div className="watchlist-match-tags">
                       {match.datasets.map(ds => (
-                        <span key={ds} style={{
-                          fontSize: 10, padding: '2px 6px',
-                          background: 'rgba(239,68,68,0.1)',
-                          border: '1px solid rgba(239,68,68,0.2)',
-                          borderRadius: 3,
-                          color: 'var(--danger)',
-                          fontWeight: 600,
-                        }}>
+                        <span key={ds} className="watchlist-match-tag watchlist-match-tag--danger">
                           {formatDataset(ds)}
                         </span>
                       ))}
@@ -983,9 +961,9 @@ function SanctionsTab({ entityId }: SanctionsTabProps) {
 
                   {/* Countries */}
                   {match.countries.length > 0 && (
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
+                    <div className="watchlist-match-fields">
                       Countries:{' '}
-                      <span style={{ color: 'var(--text-secondary)' }}>
+                      <span className="watchlist-match-field-value">
                         {match.countries.join(', ')}
                       </span>
                     </div>
@@ -993,9 +971,9 @@ function SanctionsTab({ entityId }: SanctionsTabProps) {
 
                   {/* Aliases (first 3) */}
                   {match.aliases.length > 0 && (
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    <div className="watchlist-match-fields">
                       Aliases:{' '}
-                      <span style={{ color: 'var(--text-secondary)' }}>
+                      <span className="watchlist-match-field-value">
                         {match.aliases.slice(0, 3).join(', ')}
                         {match.aliases.length > 3 && ` +${match.aliases.length - 3} more`}
                       </span>
@@ -1003,12 +981,11 @@ function SanctionsTab({ entityId }: SanctionsTabProps) {
                   )}
 
                   {/* Link */}
-                  <div style={{ marginTop: 8 }}>
+                  <div className="watchlist-match-source-link">
                     <a
                       href={match.opensanctions_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      style={{ fontSize: 11, color: 'var(--accent)' }}
                     >
                       View on OpenSanctions →
                     </a>
@@ -1020,7 +997,7 @@ function SanctionsTab({ entityId }: SanctionsTabProps) {
         </>
       )}
 
-      <div style={{ marginTop: 16, fontSize: 10, color: 'var(--text-muted)' }}>
+      <div className="watchlist-footer">
         Data sourced from{' '}
         <a href="https://opensanctions.org" target="_blank" rel="noopener noreferrer">
           OpenSanctions
@@ -1050,6 +1027,14 @@ export function EntityDetail({ entityId }: Props) {
 
   // Path modal
   const [showPathModal, setShowPathModal] = useState(false);
+
+  // TASK-66: Mention frequency (day-grouped bars)
+  const [mentionFreq, setMentionFreq] = useState<Record<string, number>>({});
+  const [mentionFreqLoading, setMentionFreqLoading] = useState(false);
+
+  // TASK-67: Co-occurring entities (Related tab)
+  const [relatedEntities, setRelatedEntities] = useState<GraphEntity[]>([]);
+  const [relatedLoading, setRelatedLoading] = useState(false);
 
   // GDELT Global Media state
   const [gdeltArticles, setGdeltArticles] = useState<GdeltArticle[]>([]);
@@ -1174,6 +1159,59 @@ export function EntityDetail({ entityId }: Props) {
     return () => { cancelled = true; };
   }, [entityId, activeTab, entity]);
 
+  // TASK-66: Load mention frequency (group timeline items by day)
+  useEffect(() => {
+    if (activeTab !== 'mention_freq') return;
+    let cancelled = false;
+    setMentionFreqLoading(true);
+
+    // Fetch a broad timeline to build frequency map
+    api.get(`/entities/${entityId}/timeline`, {
+      params: { hours: 99999, page: 1, page_size: 200 },
+    })
+      .then(res => {
+        if (!cancelled) {
+          const data = res.data as TimelineResponse;
+          const freq: Record<string, number> = {};
+          for (const item of data.items) {
+            if (!item.timestamp) continue;
+            const d = new Date(item.timestamp);
+            if (isNaN(d.getTime())) continue;
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            freq[key] = (freq[key] ?? 0) + 1;
+          }
+          setMentionFreq(freq);
+        }
+      })
+      .catch(() => { if (!cancelled) setMentionFreq({}); })
+      .finally(() => { if (!cancelled) setMentionFreqLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [entityId, activeTab]);
+
+  // TASK-67: Load co-occurring entities for Related tab
+  useEffect(() => {
+    if (activeTab !== 'related') return;
+    let cancelled = false;
+    setRelatedLoading(true);
+
+    api.get('/graph/entities', { params: { entity_id: entityId, limit: 20 } })
+      .then(res => {
+        if (!cancelled) {
+          const data = res.data;
+          // Support both array response and {entities: [...]} shape
+          const items: GraphEntity[] = Array.isArray(data)
+            ? (data as GraphEntity[])
+            : ((data as { entities?: GraphEntity[] }).entities ?? []);
+          setRelatedEntities(items.sort((a, b) => b.weight - a.weight));
+        }
+      })
+      .catch(() => { if (!cancelled) setRelatedEntities([]); })
+      .finally(() => { if (!cancelled) setRelatedLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [entityId, activeTab]);
+
   if (loading) {
     return <div className="entities-loading"><span className="spinner" />Loading entity…</div>;
   }
@@ -1188,10 +1226,20 @@ export function EntityDetail({ entityId }: Props) {
       {/* Header */}
       <div className="entity-detail__header">
         <div className="entity-detail__name">{entity.name}</div>
-        <div className="entity-detail__meta" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        {/* TASK-68: Alias badges */}
+        {entity.aliases && entity.aliases.length > 0 && (
+          <div className="entity-detail__alias-wrap">
+            {entity.aliases.map(alias => (
+              <span key={alias} className="entity-detail__alias-tag">
+                {alias}
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="entity-detail__meta">
           <span className={`badge badge--${entityTypeClass(entity.type)}`}>{entity.type}</span>
           {entity.canonical_name && entity.canonical_name !== entity.name && (
-            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>aka {entity.canonical_name}</span>
+            <span className="entity-detail__canonical">aka {entity.canonical_name}</span>
           )}
           <BookmarkButton targetType="entity" targetId={String(entity.id)} label={entity.name} />
           <AddToCase
@@ -1204,13 +1252,13 @@ export function EntityDetail({ entityId }: Props) {
       </div>
 
       {/* Tags */}
-      <div style={{ padding: '6px 14px 10px', borderBottom: '1px solid var(--border)' }}>
+      <div className="entity-detail__tabs-wrap">
         <TagsSection targetType="entity" targetId={String(entity.id)} />
       </div>
 
       {/* Tab bar */}
       <div className="entity-detail__tabs">
-        {(['overview', 'timeline', 'relationships', 'notes', 'global_media', 'sanctions', 'investigations'] as DetailTab[]).map(tab => (
+        {(['overview', 'timeline', 'mention_freq', 'related', 'relationships', 'notes', 'global_media', 'sanctions', 'investigations'] as DetailTab[]).map(tab => (
           <button
             key={tab}
             className={`entity-detail__tab${activeTab === tab ? ' entity-detail__tab--active' : ''}`}
@@ -1218,6 +1266,8 @@ export function EntityDetail({ entityId }: Props) {
           >
             {tab === 'overview' ? 'Overview'
               : tab === 'timeline' ? `Timeline${timelineTotal > 0 && activeTab === 'timeline' ? ` (${timelineTotal})` : ''}`
+              : tab === 'mention_freq' ? '📊 Freq'
+              : tab === 'related' ? '🔗 Related'
               : tab === 'relationships' ? 'Relationships'
               : tab === 'global_media' ? '🌐 Global Media'
               : tab === 'sanctions' ? '🔴 Sanctions'
@@ -1250,7 +1300,7 @@ export function EntityDetail({ entityId }: Props) {
             <div className="entity-section">
               <div className="entity-section__title-row">
                 <span className="entity-section__title">Connected Entities ({connections.length})</span>
-                <button className="btn btn-secondary btn-sm" style={{ fontSize: 10, padding: '2px 8px' }}
+                <button className="btn btn-secondary btn-sm btn--xxs"
                   onClick={() => setShowPathModal(true)}>
                   🔗 Find Path
                 </button>
@@ -1258,15 +1308,15 @@ export function EntityDetail({ entityId }: Props) {
               {connections.length > 0 && <div className="entity-section__hint">Co-occur in the same posts</div>}
               <div className="entity-connections">
                 {connections.length === 0 ? (
-                  <div style={{ padding: '12px 14px', color: 'var(--text-muted)', fontSize: 12 }}>No connections found</div>
+                  <div className="entity-connections-empty">No connections found</div>
                 ) : (
                   connections.slice(0, 20).map((conn) => (
                     <div key={conn.entity.id} className="entity-connection__item">
-                      <span className={`badge badge--${entityTypeClass(conn.entity.type)}`} style={{ cursor: 'pointer' }}
+                      <span className={`badge badge--${entityTypeClass(conn.entity.type)}`}
                         onClick={() => navigate(`/entities/${conn.entity.id}`)}>
                         {conn.entity.type}
                       </span>
-                      <span className="entity-connection__name" onClick={() => navigate(`/entities/${conn.entity.id}`)} style={{ cursor: 'pointer' }}>
+                      <span className="entity-connection__name" onClick={() => navigate(`/entities/${conn.entity.id}`)}>
                         {conn.entity.name}
                       </span>
                       <span className="entity-connection__count">{conn.co_occurrences}×</span>
@@ -1296,7 +1346,7 @@ export function EntityDetail({ entityId }: Props) {
             {timelineLoading ? (
               <div className="entities-loading"><span className="spinner" /> Loading timeline…</div>
             ) : timelineItems.length === 0 ? (
-              <div style={{ padding: '24px 14px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+              <div className="entity-center-empty">
                 No posts found in this time range
               </div>
             ) : (
@@ -1361,22 +1411,22 @@ export function EntityDetail({ entityId }: Props) {
         {activeTab === 'global_media' && (
           <div className="entity-section">
             <div className="entity-section__title">Global Media Coverage</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>
+            <div className="entity-gdelt-desc">
               Powered by GDELT — last 7 days
             </div>
             {gdeltLoading && (
               <div className="entities-loading"><span className="spinner" /> Searching global media…</div>
             )}
             {gdeltError && (
-              <div style={{ padding: '12px 0', color: 'var(--danger)', fontSize: 12 }}>⚠ {gdeltError}</div>
+              <div className="entity-gdelt-error">⚠ {gdeltError}</div>
             )}
             {!gdeltLoading && !gdeltError && gdeltArticles.length === 0 && (
-              <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+              <div className="entity-gdelt-empty">
                 No global media coverage found
               </div>
             )}
             {!gdeltLoading && gdeltArticles.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div className="entity-gdelt-list">
                 {gdeltArticles.map((art, i) => {
                   const tone = typeof art.tone === 'number' ? art.tone : parseFloat(String(art.tone)) || 0;
                   const toneColor = tone < -1 ? '#ef4444' : tone > 1 ? '#22c55e' : '#9ca3af';
@@ -1385,54 +1435,106 @@ export function EntityDetail({ entityId }: Props) {
                     ? art.seendate.replace(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z?/, '$1-$2-$3 $4:$5')
                     : '';
                   return (
-                    <div key={i} style={{
-                      padding: '10px 12px',
-                      background: 'var(--bg-surface)',
-                      border: '1px solid var(--border)',
-                      borderRadius: 6,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 4,
-                    }}>
+                    <div key={i} className="entity-gdelt-card">
                       <a
                         href={art.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)', textDecoration: 'none', lineHeight: 1.4 }}
-                        onMouseOver={e => (e.currentTarget.style.textDecoration = 'underline')}
-                        onMouseOut={e => (e.currentTarget.style.textDecoration = 'none')}
                       >
                         {art.title || art.url}
                       </a>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <div className="entity-gdelt-meta">
                         {art.source && (
-                          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono, monospace)' }}>
+                          <span className="entity-gdelt-meta-mono">
                             {art.source}
                           </span>
                         )}
                         {dateStr && (
-                          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{dateStr}</span>
+                          <span className="entity-gdelt-meta-date">{dateStr}</span>
                         )}
-                        <span style={{
-                          fontSize: 10,
+                        <span className="entity-gdelt-tone-badge" style={{
                           color: toneColor,
                           background: `${toneColor}22`,
                           border: `1px solid ${toneColor}55`,
-                          borderRadius: 8,
-                          padding: '1px 6px',
-                          fontWeight: 600,
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.05em',
                         }}>
                           {toneLabel}
                         </span>
                         {art.language && art.language !== 'English' && (
-                          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{art.language}</span>
+                          <span className="entity-gdelt-meta-lang">{art.language}</span>
                         )}
                       </div>
                     </div>
                   );
                 })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── TASK-66: Mention Frequency (CSS bars) ── */}
+        {activeTab === 'mention_freq' && (
+          <div className="entity-section">
+            <div className="entity-section__title">Mention Frequency by Day</div>
+            {mentionFreqLoading ? (
+              <div className="entities-loading"><span className="spinner" /> Loading frequency data…</div>
+            ) : Object.keys(mentionFreq).length === 0 ? (
+              <div className="entity-gdelt-empty">
+                No mention data available
+              </div>
+            ) : (() => {
+              const sortedDays = Object.keys(mentionFreq).sort();
+              const maxCount = Math.max(...Object.values(mentionFreq), 1);
+              return (
+                <div className="entity-gdelt-timeline">
+                  <div className="entity-gdelt-chart">
+                    {sortedDays.map(day => {
+                      const count = mentionFreq[day];
+                      const heightPct = Math.max(4, (count / maxCount) * 100);
+                      const d = new Date(day + 'T00:00:00');
+                      const label = `${d.getMonth() + 1}/${d.getDate()}`;
+                      return (
+                        <div key={day} title={`${day}: ${count} mention${count !== 1 ? 's' : ''}`}
+                          className="entity-gdelt-bar-group">
+                          <div className="entity-gdelt-bar-count">{count}</div>
+                          <div className="entity-gdelt-bar" style={{ height: `${heightPct}%` }} />
+                          <div className="entity-gdelt-bar-label">{label}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="entity-gdelt-chart-footer">
+                    {sortedDays.length} day{sortedDays.length !== 1 ? 's' : ''} · {Object.values(mentionFreq).reduce((a, b) => a + b, 0)} total mentions
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* ── TASK-67: Related (co-occurrence) ── */}
+        {activeTab === 'related' && (
+          <div className="entity-section">
+            <div className="entity-section__title">Related Entities (Co-occurrence)</div>
+            {relatedLoading ? (
+              <div className="entities-loading"><span className="spinner" /> Loading related entities…</div>
+            ) : relatedEntities.length === 0 ? (
+              <div className="entity-gdelt-empty">
+                No co-occurring entities found
+              </div>
+            ) : (
+              <div className="entity-cooccur-list">
+                {relatedEntities.map(item => (
+                  <div key={item.entity_id}
+                    onClick={() => navigate(`/entities/${item.entity_id}`)}
+                    className="entity-cooccur-item"
+                  >
+                    <span className={`badge badge--${entityTypeClass(item.type)}`}>{item.type}</span>
+                    <span className="entity-cooccur-name">{item.name}</span>
+                    <span className="entity-cooccur-count">
+                      weight: {typeof item.weight === 'number' ? item.weight.toFixed(2) : item.weight}
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -1446,21 +1548,21 @@ export function EntityDetail({ entityId }: Props) {
         {/* ── Investigations (ICIJ + OCCRP) ── */}
         {activeTab === 'investigations' && (
           <div className="entity-section">
-            <div className="entity-section__title" style={{ marginBottom: 4 }}>🔎 Investigations</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 14 }}>
+            <div className="entity-section__title entity-investigation-title">🔎 Investigations</div>
+            <div className="entity-investigation-desc">
               Offshore Leaks (ICIJ) + OCCRP Aleph — searched on demand, cached 24h
             </div>
 
             {/* ── ICIJ Offshore Leaks ── */}
-            <div style={{ marginBottom: 18 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div className="entity-investigation-block">
+              <div className="entity-investigation-heading">
                 <span>🗂 Offshore Leaks (ICIJ)</span>
-                <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>Panama, Pandora, Paradise Papers &amp; more</span>
+                <span className="entity-investigation-subtext">Panama, Pandora, Paradise Papers &amp; more</span>
               </div>
               {icijLoading ? (
                 <div className="entities-loading"><span className="spinner" /> Searching Offshore Leaks…</div>
               ) : icijResults.length === 0 ? null : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div className="entity-investigation-list">
                   {icijResults.map((item, i) => {
                     const dataset = String(item.dataset ?? '');
                     const badgeClass = dataset.toLowerCase().includes('panama') ? 'leak-badge--panama'
@@ -1469,21 +1571,13 @@ export function EntityDetail({ entityId }: Props) {
                       : dataset.toLowerCase().includes('bahamas') ? 'leak-badge--bahamas'
                       : 'leak-badge--default';
                     return (
-                      <div key={i} style={{
-                        padding: '10px 12px',
-                        background: 'var(--bg-surface)',
-                        border: '1px solid var(--border)',
-                        borderRadius: 6,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 5,
-                      }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                      <div key={i} className="entity-investigation-card">
+                        <div className="entity-investigation-card-meta">
+                          <span className="entity-investigation-card-name">
                             {String(item.name ?? '—')}
                           </span>
                           {item.type && (
-                            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                            <span className="entity-investigation-card-date">
                               {Array.isArray(item.type) ? (item.type as string[]).join(', ') : String(item.type)}
                             </span>
                           )}
@@ -1491,7 +1585,7 @@ export function EntityDetail({ entityId }: Props) {
                             <span className={`leak-badge ${badgeClass}`}>{dataset}</span>
                           )}
                         </div>
-                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11, color: 'var(--text-muted)' }}>
+                        <div className="entity-investigation-card-details">
                           {item.jurisdiction && (
                             <span>📍 {String(item.jurisdiction)}</span>
                           )}
@@ -1505,15 +1599,15 @@ export function EntityDetail({ entityId }: Props) {
                             <span>🔗 {String(item.linked_count)} connections</span>
                           )}
                           {item.status && (
-                            <span style={{ color: 'var(--text-muted)' }}>{String(item.status)}</span>
+                            <span className="entity-investigation-card-status">{String(item.status)}</span>
                           )}
                         </div>
                         {item.address && (
-                          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{String(item.address)}</div>
+                          <div className="entity-investigation-card-address">{String(item.address)}</div>
                         )}
                         {item.url && (
                           <a href={String(item.url)} target="_blank" rel="noopener noreferrer"
-                            style={{ fontSize: 10, color: 'var(--accent)', marginTop: 2 }}>
+                            className="entity-investigation-card-link">
                             View on ICIJ Offshore Leaks ↗
                           </a>
                         )}
@@ -1525,49 +1619,38 @@ export function EntityDetail({ entityId }: Props) {
             </div>
 
             {/* ── OCCRP Aleph ── */}
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div className="entity-investigation-block">
+              <div className="entity-investigation-heading">
                 <span>🔍 OCCRP Aleph</span>
-                <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>1B+ records of organized crime &amp; corruption data</span>
+                <span className="entity-investigation-subtext">1B+ records of organized crime &amp; corruption data</span>
               </div>
               {occrpLoading ? (
                 <div className="entities-loading"><span className="spinner" /> Searching OCCRP Aleph…</div>
               ) : occrpResults.length === 0 ? null : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div className="entity-investigation-list">
                   {occrpResults.map((item, i) => (
-                    <div key={i} style={{
-                      padding: '10px 12px',
-                      background: 'var(--bg-surface)',
-                      border: '1px solid var(--border)',
-                      borderRadius: 6,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 5,
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                    <div key={i} className="entity-investigation-card">
+                      <div className="entity-investigation-card-meta">
+                        <span className="entity-investigation-card-name">
                           {String(item.name ?? '—')}
                         </span>
                         {item.schema && (
-                          <span style={{
-                            fontSize: 10, padding: '1px 6px', borderRadius: 3,
-                            background: 'rgba(59,130,246,0.12)', color: '#60a5fa', fontWeight: 600,
-                          }}>
+                          <span className="watchlist-match-badge watchlist-match-badge--blue">
                             {String(item.schema)}
                           </span>
                         )}
                         {item.score != null && Number(item.score) > 0 && (
-                          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                          <span className="entity-investigation-card-date">
                             score: {typeof item.score === 'number' ? item.score.toFixed(2) : String(item.score)}
                           </span>
                         )}
                       </div>
-                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11, color: 'var(--text-muted)' }}>
+                      <div className="entity-investigation-card-details entity-investigation-card-details--sm">
                         {item.dataset && (
-                          <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>{String(item.dataset)}</span>
+                          <span className="entity-investigation-card-dataset">{String(item.dataset)}</span>
                         )}
                         {item.dataset_category && (
-                          <span style={{ color: 'var(--text-muted)' }}>[{String(item.dataset_category)}]</span>
+                          <span className="entity-investigation-card-category">[{String(item.dataset_category)}]</span>
                         )}
                         {Array.isArray(item.countries) && (item.countries as string[]).length > 0 && (
                           <span>🌐 {(item.countries as string[]).join(', ')}</span>
@@ -1577,13 +1660,13 @@ export function EntityDetail({ entityId }: Props) {
                         )}
                       </div>
                       {item.summary && (
-                        <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontStyle: 'italic', lineHeight: 1.4 }}>
+                        <div className="entity-investigation-card-summary">
                           {String(item.summary)}
                         </div>
                       )}
                       {item.aleph_url && (
                         <a href={String(item.aleph_url)} target="_blank" rel="noopener noreferrer"
-                          style={{ fontSize: 10, color: 'var(--accent)', marginTop: 2 }}>
+                          className="entity-investigation-card-link">
                           View on OCCRP Aleph ↗
                         </a>
                       )}
@@ -1595,8 +1678,8 @@ export function EntityDetail({ entityId }: Props) {
 
             {/* ── Empty state ── */}
             {!icijLoading && !occrpLoading && icijResults.length === 0 && occrpResults.length === 0 && (
-              <div style={{ padding: '28px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-                ✅ No investigation records found for <strong style={{ color: 'var(--text-secondary)' }}>{entity.name}</strong>
+              <div className="entity-investigation-clear">
+                ✅ No investigation records found for <strong className="entity-investigation-highlight">{entity.name}</strong>
               </div>
             )}
           </div>

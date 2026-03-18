@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +21,8 @@ logger = logging.getLogger("orthanc.collectors.flight")
 
 OPENSKY_URL = "https://opensky-network.org/api/states/all"
 POLL_INTERVAL = 300  # 5 minutes (OpenSky anonymous rate limit: 10 req/min, 400/day)
+_RATE_LIMIT_BACKOFF_BASE = 60.0   # seconds — initial backoff on 429
+_RATE_LIMIT_BACKOFF_MAX = 900.0   # seconds — cap at 15 minutes
 
 # Conflict zone bounding boxes for flight monitoring
 MONITOR_ZONES: dict[str, dict[str, float]] = {
@@ -60,6 +63,17 @@ MILITARY_CALLSIGN_PATTERNS = [
 ]
 
 _COMPILED_PATTERNS = [re.compile(p, re.IGNORECASE) for p in MILITARY_CALLSIGN_PATTERNS]
+
+
+def _safe_float(val) -> float | None:
+    """Return val as float, or None if it is None, NaN, or infinite."""
+    if val is None:
+        return None
+    try:
+        f = float(val)
+        return None if (math.isnan(f) or math.isinf(f)) else f
+    except (TypeError, ValueError):
+        return None
 
 
 def _is_military_callsign(callsign: str | None) -> bool:
@@ -112,6 +126,8 @@ class FlightCollector:
         self._task: asyncio.Task | None = None
         # In-memory cache of current flights: icao24 -> state dict
         self._current_flights: dict[str, dict] = {}
+        # Exponential backoff state for 429 responses
+        self._rate_limit_failures: int = 0
 
     async def start(self) -> None:
         if self._task and not self._task.done():
@@ -165,11 +181,20 @@ class FlightCollector:
                         },
                     )
                     if resp.status_code == 429:
-                        logger.warning("OpenSky rate limit hit, backing off")
-                        await asyncio.sleep(60)
+                        self._rate_limit_failures += 1
+                        backoff = min(
+                            _RATE_LIMIT_BACKOFF_BASE * (2 ** (self._rate_limit_failures - 1)),
+                            _RATE_LIMIT_BACKOFF_MAX,
+                        )
+                        logger.warning(
+                            "OpenSky rate limited (attempt #%d) — exponential backoff %.0fs",
+                            self._rate_limit_failures, backoff,
+                        )
+                        await asyncio.sleep(backoff)
                         return
                     resp.raise_for_status()
                     data = resp.json()
+                    self._rate_limit_failures = 0  # reset on success
             except httpx.HTTPError as exc:
                 logger.warning("OpenSky request failed for zone %s: %s", zone_name, exc)
                 continue
@@ -186,10 +211,10 @@ class FlightCollector:
                 origin_country = state[2] or "Unknown"
                 lng = state[5]
                 lat = state[6]
-                altitude = state[7]
+                altitude = _safe_float(state[7])   # NaN-safe baro_altitude
                 on_ground = state[8]
-                velocity = state[9]
-                heading = state[10]
+                velocity = _safe_float(state[9])   # NaN-safe velocity
+                heading = _safe_float(state[10])   # NaN-safe true_track
                 squawk = state[14]
 
                 if lat is None or lng is None:
@@ -222,15 +247,18 @@ class FlightCollector:
 
                 zone_count += 1
 
-                content = (
-                    f"[Flight] {callsign or 'Unknown'} ({icao24}) — "
-                    f"Alt: {int(altitude)}m, Speed: {int(velocity or 0)}m/s, "
-                    f"Heading: {int(heading or 0)}°, Origin: {origin_country}, "
-                    f"Zone: {zone_name}"
-                    if altitude and velocity
-                    else f"[Flight] {callsign or 'Unknown'} ({icao24}) — "
-                    f"Origin: {origin_country}, Zone: {zone_name}"
-                )
+                if altitude is not None and velocity is not None:
+                    content = (
+                        f"[Flight] {callsign or 'Unknown'} ({icao24}) — "
+                        f"Alt: {int(altitude)}m, Speed: {int(velocity)}m/s, "
+                        f"Heading: {int(heading or 0)}°, Origin: {origin_country}, "
+                        f"Zone: {zone_name}"
+                    )
+                else:
+                    content = (
+                        f"[Flight] {callsign or 'Unknown'} ({icao24}) — "
+                        f"Origin: {origin_country}, Zone: {zone_name}"
+                    )
 
                 try:
                     async with AsyncSessionLocal() as session:

@@ -110,6 +110,13 @@ class ScheduledBrief(Base):
         cascade="all, delete-orphan",
         order_by="ScheduledBriefRun.started_at.desc()",
     )
+    webhook_deliveries = relationship(
+        "WebhookDelivery",
+        back_populates="scheduled_brief",
+        lazy="noload",
+        cascade="all, delete-orphan",
+        order_by="WebhookDelivery.delivered_at.desc()",
+    )
 
 
 class ScheduledBriefRun(Base):

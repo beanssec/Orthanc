@@ -149,7 +149,11 @@ function runSimulation(nodes: GraphNode[], edges: GraphEdge[], width: number, he
 
 // ── Component ──────────────────────────────────────────────────────────────
 
-export function EntityGraph() {
+interface EntityGraphProps {
+  focusEntityName?: string;
+}
+
+export function EntityGraph({ focusEntityName }: EntityGraphProps = {}) {
   const navigate = useNavigate();
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -163,7 +167,7 @@ export function EntityGraph() {
   // Controls
   const [minWeight, setMinWeight] = useState(3);
   const [activeTypes, setActiveTypes] = useState<Set<string>>(new Set(ENTITY_TYPES));
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(focusEntityName ?? '');
 
   // Interaction
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -174,6 +178,13 @@ export function EntityGraph() {
   const panStart = useRef<{ mx: number; my: number; vx: number; vy: number } | null>(null);
 
   // ── Fetch ────────────────────────────────────────────────────────────────
+
+  // Sync searchQuery when focusEntityName prop changes (e.g. tab switch)
+  useEffect(() => {
+    if (focusEntityName !== undefined) {
+      setSearchQuery(focusEntityName);
+    }
+  }, [focusEntityName]);
 
   useEffect(() => {
     let cancelled = false;

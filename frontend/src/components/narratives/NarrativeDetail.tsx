@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import type { NarrativeDetail as NarrativeDetailType, NarrativePost, Claim } from './types';
 import { timeAgo, pct, claimStatusIcon } from './utils';
@@ -8,6 +9,16 @@ interface NarrativeDetailProps {
 }
 
 type TabKey = 'overview' | 'stances' | 'claims' | 'timeline';
+
+// TASK-69: Shape of a narrative list item (from GET /narratives/)
+interface NarrativeListItem {
+  id: string;
+  title: string;
+  canonical_title: string | null;
+  status: string;
+  topic_keywords: string[];
+  post_count: number;
+}
 
 // ── Sub-components ──────────────────────────────────────────
 
@@ -30,6 +41,46 @@ function ConfirmationLine({ status, consensus }: { status: string | null; consen
         {resolvedStatus ? 'Confirmation:' : 'Consensus:'}
       </span>
       <span className={cls}>{label}</span>
+    </div>
+  );
+}
+
+// ── Daily Posts Bar Chart (CSS-only) ────────────────────────
+function DailyPostsChart({ posts }: { posts: NarrativePost[] }) {
+  const bars = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const post of posts) {
+      const d = new Date(post.timestamp);
+      if (isNaN(d.getTime())) continue;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      map[key] = (map[key] ?? 0) + 1;
+    }
+    const sorted = Object.entries(map).sort(([a], [b]) => a.localeCompare(b));
+    return sorted.slice(-14);
+  }, [posts]);
+
+  if (bars.length === 0) return null;
+
+  const maxCount = Math.max(...bars.map(([, c]) => c), 1);
+
+  return (
+    <div className="daily-chart">
+      <div className="daily-chart__title">Posts per Day</div>
+      <div className="daily-chart__bars">
+        {bars.map(([date, count]) => {
+          const heightPct = Math.max(4, (count / maxCount) * 100);
+          const d = new Date(date + 'T00:00:00');
+          const label = `${d.getMonth() + 1}/${d.getDate()}`;
+          return (
+            <div key={date} className="daily-chart__bar-col" title={`${date}: ${count} posts`}>
+              <div className="daily-chart__bar-wrap">
+                <div className="daily-chart__bar" style={{ height: `${heightPct}%` }} />
+              </div>
+              <div className="daily-chart__bar-label">{label}</div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -92,6 +143,8 @@ function OverviewTab({ detail }: { detail: NarrativeDetailType }) {
         <span>First seen: {timeAgo(detail.first_seen)}</span>
         <span style={{ marginLeft: '1rem' }}>Last updated: {timeAgo(detail.last_updated)}</span>
       </div>
+
+      <DailyPostsChart posts={detail.posts} />
     </div>
   );
 }
@@ -410,10 +463,16 @@ function TimelineTab({ posts }: { posts: NarrativePost[] }) {
 // ── Main component ──────────────────────────────────────────
 
 export function NarrativeDetail({ narrativeId }: NarrativeDetailProps) {
+  const navigate = useNavigate();
   const [detail, setDetail] = useState<NarrativeDetailType | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
+  const [generatingBrief, setGeneratingBrief] = useState(false);
+
+  // TASK-69: Related narratives (sharing >2 keywords as entity proxy)
+  const [relatedNarratives, setRelatedNarratives] = useState<Array<NarrativeListItem & { sharedCount: number }>>([]);
+  const [relatedNarrativesLoading, setRelatedNarrativesLoading] = useState(false);
 
   useEffect(() => {
     if (!narrativeId) return;
@@ -437,6 +496,41 @@ export function NarrativeDetail({ narrativeId }: NarrativeDetailProps) {
     return () => { cancelled = true; };
   }, [narrativeId]);
 
+  // TASK-69: Load related narratives once detail is available
+  useEffect(() => {
+    if (!detail || !detail.topic_keywords?.length) return;
+    let cancelled = false;
+    setRelatedNarrativesLoading(true);
+
+    api.get('/narratives/', { params: { page_size: 100, status: 'active' } })
+      .then(res => {
+        if (!cancelled) {
+          const data = res.data;
+          const items: NarrativeListItem[] = Array.isArray(data)
+            ? (data as NarrativeListItem[])
+            : ((data as { items?: NarrativeListItem[]; narratives?: NarrativeListItem[] }).items
+                ?? (data as { narratives?: NarrativeListItem[] }).narratives ?? []);
+
+          const myKeywords = new Set(detail.topic_keywords.map(k => k.toLowerCase()));
+          const related = items
+            .filter(n => n.id !== narrativeId)
+            .map(n => {
+              const shared = (n.topic_keywords ?? []).filter(k => myKeywords.has(k.toLowerCase())).length;
+              return { ...n, sharedCount: shared };
+            })
+            .filter(n => n.sharedCount > 2)
+            .sort((a, b) => b.sharedCount - a.sharedCount)
+            .slice(0, 10);
+
+          setRelatedNarratives(related);
+        }
+      })
+      .catch(() => { if (!cancelled) setRelatedNarratives([]); })
+      .finally(() => { if (!cancelled) setRelatedNarrativesLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [narrativeId, detail]);
+
   if (loading) {
     return (
       <div className="narrative-detail-loading">
@@ -455,6 +549,22 @@ export function NarrativeDetail({ narrativeId }: NarrativeDetailProps) {
 
   if (!detail) return null;
 
+  const handleGenerateBrief = async () => {
+    if (!detail) return;
+    setGeneratingBrief(true);
+    try {
+      const res = await api.post('/briefs/generate', { narrative_id: narrativeId });
+      const briefId = res.data?.id;
+      if (briefId) {
+        navigate(`/briefs/${briefId}`);
+      }
+    } catch (e) {
+      console.error('Failed to generate brief', e);
+    } finally {
+      setGeneratingBrief(false);
+    }
+  };
+
   // Prefer canonical_title in the header; fall back to legacy title
   const displayTitle = detail.canonical_title ?? detail.title;
 
@@ -469,7 +579,7 @@ export function NarrativeDetail({ narrativeId }: NarrativeDetailProps) {
     <>
       <div className="narrative-detail-header">
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.5rem' }}>
-          <div>
+          <div style={{ flex: 1, minWidth: 0 }}>
             <div className="narrative-detail-title">{displayTitle}</div>
             {/* Show original title as a dim subtitle when canonical differs */}
             {detail.canonical_title && detail.canonical_title !== detail.title && (
@@ -478,7 +588,16 @@ export function NarrativeDetail({ narrativeId }: NarrativeDetailProps) {
               </div>
             )}
           </div>
-          <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.4rem', flexShrink: 0 }}>
+            <button
+              className="narrative-generate-brief-btn"
+              onClick={handleGenerateBrief}
+              disabled={generatingBrief}
+              title="Generate intelligence brief from this narrative"
+            >
+              {generatingBrief ? '⏳ Generating…' : '📄 Generate Brief'}
+            </button>
+            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             {detail.narrative_type && (
               <span className="narrative-type-pill narrative-type-pill--detail">
                 {detail.narrative_type.replace(/_/g, ' ')}
@@ -493,6 +612,7 @@ export function NarrativeDetail({ narrativeId }: NarrativeDetailProps) {
               <span className={`consensus-badge ${detail.consensus}`}>{detail.consensus}</span>
             )}
             <span className={`narrative-status-badge ${detail.status}`}>{detail.status}</span>
+            </div>
           </div>
         </div>
 
@@ -520,7 +640,57 @@ export function NarrativeDetail({ narrativeId }: NarrativeDetailProps) {
       </div>
 
       <div className="narrative-tab-content">
-        {activeTab === 'overview' && <OverviewTab detail={detail} />}
+        {activeTab === 'overview' && (
+          <>
+            <OverviewTab detail={detail} />
+            {/* TASK-69: Related Narratives section */}
+            {(relatedNarrativesLoading || relatedNarratives.length > 0) && (
+              <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Related Narratives
+                </div>
+                {relatedNarrativesLoading ? (
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Loading related…</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {relatedNarratives.map(n => (
+                      <div key={n.id}
+                        onClick={() => navigate(`/narratives/${n.id}`)}
+                        style={{
+                          padding: '8px 12px',
+                          background: 'var(--bg-surface)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 6,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                          transition: 'border-color 0.15s',
+                        }}
+                        onMouseOver={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+                        onMouseOut={e => (e.currentTarget.style.borderColor = 'var(--border)')}
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: '0.78rem', fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {n.canonical_title ?? n.title}
+                          </div>
+                        </div>
+                        <span style={{
+                          fontSize: 10, padding: '2px 7px', borderRadius: 8, flexShrink: 0,
+                          background: 'rgba(99,102,241,0.12)', color: 'var(--text-secondary)',
+                          fontVariantNumeric: 'tabular-nums',
+                        }}>
+                          {n.sharedCount} shared
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
         {activeTab === 'stances' && <StancesTab detail={detail} />}
         {activeTab === 'claims' && <ClaimsTab claims={detail.claims} />}
         {activeTab === 'timeline' && <TimelineTab posts={detail.posts} />}

@@ -551,8 +551,8 @@ export function BriefsView() {
             <div className="briefs-generating">
               <span className="spinner" />
               <div>
-                <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Analyzing posts…</div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                <div className="briefs-generating__title">Analyzing posts…</div>
+                <div className="briefs-generating__subtitle">
                   Using {selectedModelInfo?.name ?? selectedModel} · Last {hours}h
                 </div>
               </div>
@@ -573,13 +573,12 @@ export function BriefsView() {
           ) : briefs.length === 0 ? (
             <div className="briefs-empty">
               <div className="briefs-empty__icon">📋</div>
-              <div style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>No briefs generated yet</div>
-              <div style={{ fontSize: 12, maxWidth: 360 }}>
+              <div className="briefs-empty__title">No briefs generated yet</div>
+              <div className="briefs-empty__body">
                 Generate your first intelligence brief above — AI will synthesize patterns across your collected feed data.
               </div>
               <button
-                className="btn btn-primary"
-                style={{ marginTop: 8 }}
+                className="btn btn-primary briefs-empty__cta"
                 onClick={() => setActiveTab('generate')}
               >
                 ▶ Generate Brief
@@ -670,7 +669,7 @@ export function BriefsView() {
 
                           {isDeleteConfirm ? (
                             <>
-                              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Delete?</span>
+                              <span className="briefs-delete-confirm">Delete?</span>
                               <button className="btn btn-danger btn-sm" onClick={() => handleDelete(brief.id)}>
                                 Confirm
                               </button>

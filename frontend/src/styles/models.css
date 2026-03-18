@@ -320,12 +320,24 @@
 }
 
 .models-error {
+  margin: 12px;
   padding: 12px 16px;
   font-size: 12px;
   color: var(--danger);
   background: rgba(239, 68, 68, 0.07);
   border-radius: 6px;
   border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.models-task-label {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.models-task-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .models-empty {

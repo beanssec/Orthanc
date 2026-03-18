@@ -24,6 +24,10 @@ DEFAULT_POLL_INTERVAL = 3600  # 1 hour — Shodan is rate-limited
 SHODAN_SEARCH_URL = "https://api.shodan.io/shodan/host/search"
 
 
+class _ShodanQueryDisabled(Exception):
+    """Raised when a query is permanently disabled due to auth or plan restriction (401/403)."""
+
+
 def _parse_shodan_timestamp(ts_str: Optional[str]) -> Optional[datetime]:
     """Parse Shodan timestamp string to tz-aware datetime."""
     if not ts_str:
@@ -46,6 +50,7 @@ class ShodanCollector:
     def __init__(self, poll_interval: int = DEFAULT_POLL_INTERVAL):
         self._poll_interval = poll_interval
         self._tasks: dict[str, asyncio.Task] = {}  # source_id -> task
+        self._disabled_queries: set[str] = set()  # queries disabled due to auth/plan errors
 
     async def start(self, user_id: str, sources: list) -> None:
         """Begin polling Shodan for each source query."""
@@ -90,6 +95,14 @@ class ShodanCollector:
             except asyncio.CancelledError:
                 logger.info("Shodan poller cancelled for query %r", query)
                 raise
+            except _ShodanQueryDisabled:
+                logger.warning(
+                    "Shodan query %r permanently disabled (auth/plan restriction) — stopping poller",
+                    query,
+                )
+                self._disabled_queries.add(query)
+                self._tasks.pop(source_id, None)
+                return  # exit loop without retrying
             except Exception as exc:
                 logger.exception("Shodan poll error for query %r: %s", query, exc)
 
@@ -112,11 +125,18 @@ class ShodanCollector:
                     params={"key": api_key, "query": query, "page": 1},
                 )
                 if resp.status_code == 401:
-                    logger.error("Shodan API key invalid for user query %r", query)
-                    return
+                    logger.error(
+                        "Shodan API key invalid or unauthorised for query %r — disabling this query",
+                        query,
+                    )
+                    raise _ShodanQueryDisabled(f"401 Unauthorised for query {query!r}")
                 if resp.status_code == 403:
-                    logger.error("Shodan API access forbidden (plan restriction?) for query %r", query)
-                    return
+                    logger.error(
+                        "Shodan API plan restriction (403) for query %r — "
+                        "this query type is not available on your current plan. Disabling.",
+                        query,
+                    )
+                    raise _ShodanQueryDisabled(f"403 Forbidden (plan restriction) for query {query!r}")
                 resp.raise_for_status()
                 data = resp.json()
         except httpx.HTTPStatusError as e:

@@ -6,10 +6,10 @@ import uuid
 from datetime import timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import func, text
 
 from app.db import AsyncSessionLocal
 from app.middleware.auth import get_current_user
@@ -181,11 +181,22 @@ async def delete_brief_schedule(
 @router.get("/")
 async def list_briefs(
     current_user: User = Depends(get_current_user),
-    limit: int = 20,
-    offset: int = 0,
-) -> list[dict]:
-    """List saved briefs for the current user, newest first."""
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    """List saved briefs for the current user, newest first.
+
+    Returns: {items, total, limit, offset}
+    """
     async with AsyncSessionLocal() as session:
+        # TASK-80: count total before paging
+        count_result = await session.execute(
+            select(func.count()).select_from(
+                select(Brief).where(Brief.user_id == current_user.id).subquery()
+            )
+        )
+        total = count_result.scalar() or 0
+
         result = await session.execute(
             select(Brief)
             .where(Brief.user_id == current_user.id)
@@ -194,15 +205,20 @@ async def list_briefs(
             .offset(offset)
         )
         briefs = result.scalars().all()
-    return [brief_to_dict(b) for b in briefs]
+    return {
+        "items": [brief_to_dict(b) for b in briefs],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.get("/history")
 async def list_briefs_history_legacy(
     current_user: User = Depends(get_current_user),
-    limit: int = 20,
-    offset: int = 0,
-) -> list[dict]:
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+) -> dict:
     """Legacy compatibility alias for clients expecting /briefs/history."""
     return await list_briefs(current_user=current_user, limit=limit, offset=offset)
 

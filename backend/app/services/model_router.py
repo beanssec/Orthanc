@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, AsyncIterator
 
 import httpx
 
@@ -22,13 +23,14 @@ class LLMProvider(ABC):
     supports_chat: bool = True
     supports_embeddings: bool = True
     supports_vision: bool = False
+    supports_response_format: bool = True   # whether provider accepts response_format kwarg
 
     @abstractmethod
     async def chat(self, messages: list[dict], model: str, **kwargs) -> dict:
         """Send chat completion request.
 
         Returns:
-            {"content": str, "usage": {"prompt_tokens": int, "completion_tokens": int}, "model": str}
+            {"content": str, "thinking": str|None, "usage": {...}, "model": str}
         """
 
     @abstractmethod
@@ -41,6 +43,21 @@ class LLMProvider(ABC):
 
 
 # ---------------------------------------------------------------------------
+# Helper — inject JSON instruction for providers that don't support response_format
+# ---------------------------------------------------------------------------
+
+def _inject_json_instruction(messages: list[dict]) -> list[dict]:
+    """Append 'Respond in valid JSON format.' to the system message."""
+    messages = list(messages)
+    for i, msg in enumerate(messages):
+        if msg.get("role") == "system":
+            messages[i] = {**msg, "content": msg["content"].rstrip() + "\nRespond in valid JSON format."}
+            return messages
+    # No system message — prepend one
+    return [{"role": "system", "content": "Respond in valid JSON format."}] + messages
+
+
+# ---------------------------------------------------------------------------
 # OpenRouter provider
 # ---------------------------------------------------------------------------
 
@@ -50,6 +67,7 @@ class OpenRouterProvider(LLMProvider):
     supports_chat: bool = True
     supports_embeddings: bool = True
     supports_vision: bool = True
+    supports_response_format: bool = True
 
     def __init__(self, api_key: str) -> None:
         self.api_key = api_key
@@ -73,16 +91,64 @@ class OpenRouterProvider(LLMProvider):
             r.raise_for_status()
             data = r.json()
 
-        content = data["choices"][0]["message"]["content"]
+        msg = data["choices"][0]["message"]
+        content_raw = msg.get("content", "")
+        thinking_content: str | None = None
+
+        # Handle extended thinking (Claude) — content may be a list of blocks
+        if isinstance(content_raw, list):
+            text_parts: list[str] = []
+            thinking_parts: list[str] = []
+            for block in content_raw:
+                if isinstance(block, dict):
+                    btype = block.get("type")
+                    if btype == "thinking":
+                        thinking_parts.append(block.get("thinking", ""))
+                    elif btype == "text":
+                        text_parts.append(block.get("text", ""))
+            content = " ".join(text_parts)
+            thinking_content = "\n".join(thinking_parts) if thinking_parts else None
+        else:
+            content = content_raw or ""
+            # Gemini / other models may return reasoning_content separately
+            thinking_content = msg.get("reasoning_content") or data.get("reasoning_content") or None
+
         usage = data.get("usage", {})
         return {
             "content": content,
+            "thinking": thinking_content,
             "usage": {
                 "prompt_tokens": usage.get("prompt_tokens", 0),
                 "completion_tokens": usage.get("completion_tokens", 0),
             },
             "model": model,
         }
+
+    async def chat_stream(self, messages: list[dict], model: str, **kwargs) -> AsyncIterator[str]:
+        """Stream chat completion via SSE. Yields text chunks as they arrive."""
+        payload: dict[str, Any] = {"model": model, "messages": messages, "stream": True, **kwargs}
+        async with httpx.AsyncClient(timeout=120) as client:
+            async with client.stream(
+                "POST",
+                f"{self.base_url}/chat/completions",
+                headers=self._headers(),
+                json=payload,
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                        delta = chunk["choices"][0].get("delta", {})
+                        text = delta.get("content") or ""
+                        if text:
+                            yield text
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        continue
 
     async def embed(self, text: str, model: str = "openai/text-embedding-3-small") -> list[float]:
         payload = {"model": model, "input": text}
@@ -107,7 +173,6 @@ class OpenRouterProvider(LLMProvider):
                 data = r.json()
             models = []
             for m in data.get("data", []):
-                # Only include chat-capable models (skip embedding-only)
                 arch = m.get("architecture", {})
                 modality = arch.get("modality", "")
                 if "text->text" in modality or "text+image->text" in modality:
@@ -131,6 +196,7 @@ class XAIProvider(LLMProvider):
     supports_chat: bool = True
     supports_embeddings: bool = False
     supports_vision: bool = True
+    supports_response_format: bool = True
 
     def __init__(self, api_key: str) -> None:
         self.api_key = api_key
@@ -153,10 +219,13 @@ class XAIProvider(LLMProvider):
             r.raise_for_status()
             data = r.json()
 
-        content = data["choices"][0]["message"]["content"]
+        msg = data["choices"][0]["message"]
+        content = msg.get("content", "") or ""
+        thinking_content: str | None = msg.get("reasoning_content") or data.get("reasoning_content") or None
         usage = data.get("usage", {})
         return {
             "content": content,
+            "thinking": thinking_content,
             "usage": {
                 "prompt_tokens": usage.get("prompt_tokens", 0),
                 "completion_tokens": usage.get("completion_tokens", 0),
@@ -198,28 +267,21 @@ class OllamaProvider(LLMProvider):
     Supports vision models (llava, bakllava, llama3.2-vision, moondream, etc.).
     OpenAI-style ``image_url`` content parts are automatically converted to
     Ollama's ``images`` list format before sending.
+
+    Note: does NOT support response_format — uses system message injection instead.
     """
 
     supports_chat: bool = True
     supports_embeddings: bool = True
-    supports_vision: bool = True  # Requires a vision-capable model to be pulled
+    supports_vision: bool = True
+    supports_response_format: bool = False  # use _inject_json_instruction instead
 
     def __init__(self, base_url: str = "http://localhost:11434") -> None:
         self.base_url = base_url.rstrip("/")
 
     @staticmethod
     def _convert_messages_for_ollama(messages: list[dict]) -> list[dict]:
-        """Convert OpenAI-format image_url content to Ollama's ``images`` list.
-
-        OpenAI format:
-            {"role": "user", "content": [
-                {"type": "text", "text": "..."},
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,<b64>"}}
-            ]}
-
-        Ollama format:
-            {"role": "user", "content": "...", "images": ["<b64>"]}
-        """
+        """Convert OpenAI-format image_url content to Ollama's ``images`` list."""
         import re
         converted = []
         for msg in messages:
@@ -233,13 +295,10 @@ class OllamaProvider(LLMProvider):
                         text_parts.append(part.get("text", ""))
                     elif ptype == "image_url":
                         url = part.get("image_url", {}).get("url", "")
-                        # Extract raw base64 from data URI: data:image/png;base64,<data>
                         m = re.match(r"data:[^;]+;base64,(.+)", url, re.DOTALL)
                         if m:
                             images.append(m.group(1))
                         else:
-                            # Plain URL — pass as-is; Ollama may not support HTTP URLs
-                            # but we pass it through and let Ollama handle/error
                             images.append(url)
                 new_msg: dict = {
                     "role": msg["role"],
@@ -264,9 +323,9 @@ class OllamaProvider(LLMProvider):
             data = r.json()
 
         content = data["message"]["content"]
-        # Ollama may return prompt_eval_count / eval_count
         return {
             "content": content,
+            "thinking": None,
             "usage": {
                 "prompt_tokens": data.get("prompt_eval_count", 0),
                 "completion_tokens": data.get("eval_count", 0),
@@ -309,7 +368,8 @@ class OpenAICompatibleProvider(LLMProvider):
 
     supports_chat: bool = True
     supports_embeddings: bool = True
-    supports_vision: bool = True  # Depends on the model served
+    supports_vision: bool = True
+    supports_response_format: bool = True
 
     def __init__(self, base_url: str, api_key: str = "") -> None:
         self.base_url = base_url.rstrip("/")
@@ -332,10 +392,13 @@ class OpenAICompatibleProvider(LLMProvider):
             r.raise_for_status()
             data = r.json()
 
-        content = data["choices"][0]["message"]["content"]
+        msg = data["choices"][0]["message"]
+        content = msg.get("content", "") or ""
+        thinking_content: str | None = msg.get("reasoning_content") or data.get("reasoning_content") or None
         usage = data.get("usage", {})
         return {
             "content": content,
+            "thinking": thinking_content,
             "usage": {
                 "prompt_tokens": usage.get("prompt_tokens", 0),
                 "completion_tokens": usage.get("completion_tokens", 0),
@@ -416,6 +479,8 @@ class ModelRouter:
         self._providers: dict[str, LLMProvider] = {}
         self._task_overrides: dict[str, str] = {}   # task -> model_id
         self._model_to_provider: dict[str, str] = {}  # model_id -> provider_name
+        # TASK-63: In-memory performance counters per model
+        self._perf: dict[str, dict] = {}
 
     # ------------------------------------------------------------------
     # Registration
@@ -448,21 +513,12 @@ class ModelRouter:
     # ------------------------------------------------------------------
 
     def get_provider_for_model(self, model_id: str) -> LLMProvider | None:
-        """Find which provider serves a given model.
-
-        Resolution order:
-        1. Explicit model→provider mapping set via map_model_to_provider()
-        2. Provider name inferred from model_id prefix (e.g. "openai/..." → openrouter)
-        3. xai provider for grok-* models
-        4. First available provider as fallback
-        """
+        """Find which provider serves a given model."""
         if model_id in self._model_to_provider:
             pname = self._model_to_provider[model_id]
             return self._providers.get(pname)
 
-        # Infer from model id patterns
         if "/" in model_id:
-            # OpenRouter-style namespaced model
             if "openrouter" in self._providers:
                 return self._providers["openrouter"]
 
@@ -470,7 +526,6 @@ class ModelRouter:
             if "xai" in self._providers:
                 return self._providers["xai"]
 
-        # Fallback: return first registered provider
         if self._providers:
             return next(iter(self._providers.values()))
 
@@ -489,58 +544,118 @@ class ModelRouter:
         return "none"
 
     # ------------------------------------------------------------------
+    # TASK-63: Performance tracking helpers
+    # ------------------------------------------------------------------
+
+    def _update_perf(self, model_id: str, latency_ms: int, error: bool = False) -> None:
+        """Update in-memory performance counters for a model."""
+        if model_id not in self._perf:
+            self._perf[model_id] = {"total_calls": 0, "total_errors": 0, "total_latency_ms": 0}
+        self._perf[model_id]["total_calls"] += 1
+        if error:
+            self._perf[model_id]["total_errors"] += 1
+        self._perf[model_id]["total_latency_ms"] += latency_ms
+
+    def get_performance_stats(self) -> dict:
+        """Return in-memory performance counters for all models."""
+        result = {}
+        for model_id, counters in self._perf.items():
+            calls = counters["total_calls"]
+            avg_latency = (counters["total_latency_ms"] / calls) if calls > 0 else 0
+            result[model_id] = {
+                **counters,
+                "avg_latency_ms": round(avg_latency, 1),
+                "error_rate": round(counters["total_errors"] / calls, 4) if calls > 0 else 0,
+            }
+        return result
+
+    # ------------------------------------------------------------------
     # Core routing methods
     # ------------------------------------------------------------------
 
-    async def chat(self, task: str, messages: list[dict], **kwargs) -> dict:
+    async def chat(
+        self,
+        task: str,
+        messages: list[dict],
+        *,
+        response_format: dict | None = None,
+        **kwargs,
+    ) -> dict:
         """Route a chat request to the correct provider based on task config.
 
-        Accepts an optional ``model`` kwarg to bypass task routing.
+        Args:
+            task: Task type constant (e.g. TASK_BRIEF).
+            messages: OpenAI-format message list.
+            response_format: Optional structured output format, e.g. {"type": "json_object"}.
+                             Forwarded to providers that support it; injected as a system prompt
+                             instruction for providers that don't (Ollama).
+            **kwargs: Additional kwargs forwarded to provider (e.g. model=, temperature=).
 
         Returns:
-            {"content": str, "usage": dict, "model": str, "provider": str}
+            {"content": str, "thinking": str|None, "usage": dict, "model": str, "provider": str}
         """
         model_id: str = kwargs.pop("model", None) or self.get_task_model(task)
         provider = self.get_provider_for_model(model_id)
         provider_name = self._provider_name_for_model(model_id)
 
         if provider is None:
+            available = list(self._providers.keys())
             raise RuntimeError(
-                f"No provider available for model '{model_id}' (task: {task}). "
-                "Register at least one provider via model_router.register_provider()."
+                f"No provider found for model '{model_id}'. "
+                f"Available providers: {available}. Check Settings → Models."
             )
 
+        # TASK-61: Handle response_format by provider capability
+        effective_messages = messages
+        if response_format is not None:
+            if getattr(provider, "supports_response_format", True):
+                kwargs["response_format"] = response_format
+            else:
+                # Ollama and other non-supporting providers: inject instruction
+                effective_messages = _inject_json_instruction(list(messages))
+
         t0 = time.monotonic()
+        last_error: Exception | None = None
         try:
-            result = await provider.chat(messages, model_id, **kwargs)
+            result = await provider.chat(effective_messages, model_id, **kwargs)
             latency_ms = int((time.monotonic() - t0) * 1000)
+            self._update_perf(model_id, latency_ms, error=False)
+
+            # TASK-64: Log thinking content for debugging; don't expose to end-users by default
+            thinking = result.get("thinking")
+            if thinking:
+                logger.debug(
+                    "LLM thinking | provider=%s model=%s task=%s thinking=%.200s…",
+                    provider_name, model_id, task, thinking,
+                )
+
             usage = result.get("usage", {})
             logger.info(
                 "LLM chat | provider=%s model=%s task=%s latency_ms=%d "
                 "tokens_in=%d tokens_out=%d",
-                provider_name,
-                model_id,
-                task,
-                latency_ms,
+                provider_name, model_id, task, latency_ms,
                 usage.get("prompt_tokens", 0),
                 usage.get("completion_tokens", 0),
             )
             result["provider"] = provider_name
             return result
         except Exception as exc:
+            last_error = exc
             latency_ms = int((time.monotonic() - t0) * 1000)
+            self._update_perf(model_id, latency_ms, error=True)
             logger.warning(
                 "LLM chat error | provider=%s model=%s task=%s latency_ms=%d error=%s",
                 provider_name, model_id, task, latency_ms, exc,
             )
-            # Try fallback: iterate over other providers
+            # Try fallback providers
             for fallback_name, fallback_provider in self._providers.items():
                 if fallback_name == provider_name:
                     continue
                 try:
                     t1 = time.monotonic()
-                    result = await fallback_provider.chat(messages, model_id, **kwargs)
+                    result = await fallback_provider.chat(effective_messages, model_id, **kwargs)
                     latency_ms = int((time.monotonic() - t1) * 1000)
+                    self._update_perf(model_id, latency_ms, error=False)
                     usage = result.get("usage", {})
                     logger.info(
                         "LLM chat (fallback) | provider=%s model=%s task=%s latency_ms=%d",
@@ -549,22 +664,49 @@ class ModelRouter:
                     result["provider"] = fallback_name
                     return result
                 except Exception as fb_exc:
+                    last_error = fb_exc
                     logger.warning("Fallback provider %s also failed: %s", fallback_name, fb_exc)
-            raise RuntimeError(f"All providers failed for task '{task}': {exc}") from exc
+            raise RuntimeError(
+                f"All providers failed for task '{task}'. "
+                f"Last error: {last_error}. Check API keys and provider health."
+            ) from last_error
+
+    async def chat_stream(
+        self,
+        task: str,
+        messages: list[dict],
+        **kwargs,
+    ) -> AsyncIterator[str]:
+        """Stream a chat response. Currently implemented for OpenRouter; others yield full response.
+
+        This is a foundation method — not yet wired into any endpoint.
+        Yields text chunks as they arrive from the model.
+        """
+        model_id: str = kwargs.pop("model", None) or self.get_task_model(task)
+        provider = self.get_provider_for_model(model_id)
+
+        if provider is None:
+            available = list(self._providers.keys())
+            raise RuntimeError(
+                f"No provider found for model '{model_id}'. "
+                f"Available providers: {available}. Check Settings → Models."
+            )
+
+        if isinstance(provider, OpenRouterProvider):
+            async for chunk in provider.chat_stream(messages, model_id, **kwargs):
+                yield chunk
+        else:
+            # Non-streaming fallback: call regular chat and yield the full content
+            result = await provider.chat(messages, model_id, **kwargs)
+            yield result.get("content", "")
 
     def _get_embed_capable_provider(self, model_id: str) -> tuple[LLMProvider | None, str]:
-        """Resolve an embedding-capable provider for the given model_id.
-
-        Returns (provider, provider_name).  Skips any provider whose
-        ``supports_embeddings`` flag is False (e.g. xAI/Grok).
-        """
-        # First try the normal resolution path
+        """Resolve an embedding-capable provider for the given model_id."""
         candidate = self.get_provider_for_model(model_id)
         candidate_name = self._provider_name_for_model(model_id)
         if candidate is not None and getattr(candidate, "supports_embeddings", True):
             return candidate, candidate_name
 
-        # Primary provider doesn't support embeddings — warn and find first capable one
         if candidate is not None:
             logger.warning(
                 "Provider '%s' does not support embeddings (model=%s). "
@@ -572,14 +714,12 @@ class ModelRouter:
                 candidate_name, model_id,
             )
 
-        # Prefer openrouter → ollama → openai-compatible; skip xai/any non-embed provider
         priority_order = ["openrouter", "ollama", "local"]
         for pname in priority_order:
             p = self._providers.get(pname)
             if p is not None and getattr(p, "supports_embeddings", True):
                 return p, pname
 
-        # Last resort: any registered embed-capable provider
         for pname, p in self._providers.items():
             if getattr(p, "supports_embeddings", True):
                 return p, pname
@@ -593,7 +733,8 @@ class ModelRouter:
 
         if provider is None:
             logger.warning(
-                "No embedding-capable provider available (model=%s task=%s) — returning empty vector",
+                "No embedding provider available (model=%s task=%s) — returning empty vector. "
+                "Set an embedding model in Settings → Models → Task Assignments.",
                 model_id, task,
             )
             return []
@@ -602,6 +743,7 @@ class ModelRouter:
         try:
             result = await provider.embed(text, model_id)
             latency_ms = int((time.monotonic() - t0) * 1000)
+            self._update_perf(model_id, latency_ms, error=False)
             logger.info(
                 "LLM embed | provider=%s model=%s task=%s latency_ms=%d dims=%d",
                 provider_name, model_id, task, latency_ms, len(result),
@@ -609,11 +751,11 @@ class ModelRouter:
             return result
         except Exception as exc:
             latency_ms = int((time.monotonic() - t0) * 1000)
+            self._update_perf(model_id, latency_ms, error=True)
             logger.warning(
                 "LLM embed error | provider=%s model=%s task=%s latency_ms=%d error=%s",
                 provider_name, model_id, task, latency_ms, exc,
             )
-            # Try fallback providers that support embeddings
             for fallback_name, fallback_provider in self._providers.items():
                 if fallback_name == provider_name:
                     continue

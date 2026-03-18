@@ -32,6 +32,7 @@ from app.routers import agent as agent_router_module
 from app.routers import api_keys as api_keys_router_module
 from app.routers import scheduled_briefs as scheduled_briefs_router_module
 from app.routers import digests as digests_router_module
+from app.routers import metrics as metrics_router_module
 from app.middleware.rate_limit import rate_limit_middleware
 from app.collectors.orchestrator import orchestrator
 from app.collectors.satellite_collector import satellite_collector
@@ -79,6 +80,26 @@ async def _silence_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import signal
+
+    # ── SIGTERM / SIGINT graceful-shutdown handler ─────────────────────────
+    # Sets a flag that can be checked by the shutdown block, and schedules
+    # an orderly stop via the existing lifespan teardown path.
+    _shutdown_event = asyncio.Event()
+
+    def _handle_signal(signum, frame):  # noqa: ANN001
+        sig_name = signal.Signals(signum).name
+        logger.info("Received %s — initiating graceful shutdown", sig_name)
+        _shutdown_event.set()
+
+    loop = asyncio.get_event_loop()
+    for _sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(_sig, lambda s=_sig: _handle_signal(s, None))
+        except (NotImplementedError, RuntimeError):
+            # Windows / non-default loop fallback
+            signal.signal(_sig, _handle_signal)
+
     logger.info("Orthanc API starting up")
     await orchestrator.start_rss()
     await orchestrator.start_reddit()
@@ -296,57 +317,149 @@ app.add_middleware(
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """Log requests that take longer than 1 second."""
+    """Log all requests as structured JSON at INFO level; skip health-check noise."""
+    import json
+
+    # Skip health/ping endpoints to reduce log noise
+    skip_paths = {"/", "/health", "/health/", "/api/health"}
+    path = request.url.path
+
     start = time.time()
     response = await call_next(request)
-    duration = time.time() - start
-    if duration > 1.0:
-        logger.warning(
-            "Slow request: %s %s took %.2fs",
-            request.method,
-            request.url.path,
-            duration,
-        )
+    duration_ms = int((time.time() - start) * 1000)
+
+    if path not in skip_paths:
+        # Extract authenticated user_id from JWT if present (best-effort, non-blocking)
+        user_id: str | None = None
+        try:
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.startswith("Bearer "):
+                from jose import jwt as _jwt
+                from app.config import settings as _settings
+                payload = _jwt.decode(
+                    auth_header[7:],
+                    _settings.JWT_SECRET,
+                    algorithms=[_settings.JWT_ALGORITHM],
+                    options={"verify_exp": False},
+                )
+                user_id = payload.get("sub")
+        except Exception:
+            pass
+
+        log_record = {
+            "method": request.method,
+            "path": path,
+            "status_code": response.status_code,
+            "duration_ms": duration_ms,
+        }
+        if user_id:
+            log_record["user_id"] = user_id
+
+        if duration_ms > 1000:
+            logger.warning(json.dumps(log_record))
+        else:
+            logger.info(json.dumps(log_record))
+
     return response
 
 
 app.middleware("http")(rate_limit_middleware)
 
-app.include_router(auth.router)
-app.include_router(credentials.router)
-app.include_router(sources.router)
-app.include_router(feed.router)
-app.include_router(alerts.router)
-app.include_router(telegram_auth.router)
-app.include_router(events.router)
-app.include_router(entities.router)
-app.include_router(dashboard.router)
-app.include_router(briefs.router)
-app.include_router(webhook.router)
-app.include_router(layers.router)
-app.include_router(finance.router)
-app.include_router(search.router)
-app.include_router(documents.router)
-app.include_router(collaboration.router)
-app.include_router(nlquery.router)
-app.include_router(media.router)
-app.include_router(gdelt.router)
-app.include_router(investigations.router)
-app.include_router(sanctions.router)
-app.include_router(fusion.router)
-app.include_router(cases.router)
-app.include_router(oql.router)
-app.include_router(maritime.router)
-app.include_router(watchpoints.router)
-app.include_router(narratives_router_module.router)
-app.include_router(models_router)
-app.include_router(graph_router_module.router)
-app.include_router(frontlines_router)
-app.include_router(health_router_module.router)
-app.include_router(agent_router_module.router)
-app.include_router(api_keys_router_module.router)
-app.include_router(scheduled_briefs_router_module.router)
-app.include_router(digests_router_module.router)
+
+# ── TASK-89: API key scope enforcement ────────────────────────────────────────
+_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+@app.middleware("http")
+async def api_key_scope_middleware(request: Request, call_next):
+    """Reject write requests from read_only API keys.
+
+    This middleware runs AFTER authentication (which stamps request.state.api_key_scope).
+    JWT-authenticated requests (request.state.jwt_authenticated=True) bypass this check.
+    """
+    if request.method in _WRITE_METHODS:
+        api_key_scope = getattr(request.state, "api_key_scope", None)
+        if api_key_scope == "read_only":
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "This API key is read-only and cannot perform write operations."},
+            )
+    return await call_next(request)
+
+# ── Unversioned routes (legacy — kept for backwards compatibility) ─────────────
+# Clients should migrate to /api/v1/* paths.
+
+_ALL_ROUTERS = [
+    auth.router,
+    credentials.router,
+    sources.router,
+    feed.router,
+    alerts.router,
+    telegram_auth.router,
+    events.router,
+    entities.router,
+    dashboard.router,
+    briefs.router,
+    webhook.router,
+    layers.router,
+    finance.router,
+    search.router,
+    documents.router,
+    collaboration.router,
+    nlquery.router,
+    media.router,
+    gdelt.router,
+    investigations.router,
+    sanctions.router,
+    fusion.router,
+    cases.router,
+    oql.router,
+    maritime.router,
+    watchpoints.router,
+    narratives_router_module.router,
+    models_router,
+    graph_router_module.router,
+    frontlines_router,
+    health_router_module.router,
+    agent_router_module.router,
+    api_keys_router_module.router,
+    scheduled_briefs_router_module.router,
+    digests_router_module.router,
+    metrics_router_module.router,
+]
+
+for _r in _ALL_ROUTERS:
+    app.include_router(_r)
+
+# ── /api/v1 versioned routes ────────────────────────────────────────────────
+# All routers are also mounted under /api/v1 prefix.
+# New clients should use these paths.
+from fastapi import APIRouter as _APIRouter
+
+_v1 = _APIRouter(prefix="/api/v1")
+for _r in _ALL_ROUTERS:
+    _v1.include_router(_r)
+app.include_router(_v1)
+
+
+# ── Deprecation warning middleware for unversioned routes ───────────────────
+@app.middleware("http")
+async def _deprecation_header(request: Request, call_next):
+    """Add Deprecation header on unversioned API routes to encourage migration."""
+    path = request.url.path
+    # Only flag unversioned API paths (not /api/v1/*, not /ws/*, not /, not /health)
+    is_unversioned_api = (
+        not path.startswith("/api/")
+        and not path.startswith("/ws/")
+        and path not in ("/", "/health", "/health/")
+        and "/" in path[1:]  # has at least one sub-path component
+    )
+    response = await call_next(request)
+    if is_unversioned_api:
+        response.headers["Deprecation"] = "true"
+        response.headers["Link"] = f'</api/v1{path}>; rel="successor-version"'
+    return response
 
 
 @app.get("/")

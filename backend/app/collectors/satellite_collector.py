@@ -5,7 +5,7 @@ import asyncio
 import logging
 import math
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 
@@ -26,6 +26,23 @@ GROUP_MAX = {
     "military": 80,    # US/RU/CN recon, SIGINT, early warning
     "weather": 30,     # NOAA, GOES, Meteosat
 }
+
+
+def _clamp_cloud_cover(val) -> Optional[float]:
+    """Clamp a cloud cover percentage to the valid [0, 100] range.
+
+    Returns None for missing / non-numeric values.
+    Negative values are clamped to 0; values > 100 are clamped to 100.
+    """
+    if val is None:
+        return None
+    try:
+        f = float(val)
+        if math.isnan(f) or math.isinf(f):
+            return None
+        return max(0.0, min(100.0, f))
+    except (TypeError, ValueError):
+        return None
 
 
 def _eci_to_geodetic(r: list[float], jd_full: float) -> tuple[float, float, float]:
@@ -202,6 +219,9 @@ class SatelliteCollector:
                     if not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
                         continue
                     velocity = math.sqrt(v[0]**2 + v[1]**2 + v[2]**2)
+                    # cloud_cover may be provided by future weather-pass integrations;
+                    # always clamp to [0, 100] to guard against out-of-range API values.
+                    cloud_cover_raw: Optional[float] = None  # placeholder for enrichment
                     positions.append({
                         "name": name,
                         "group": group,
@@ -209,6 +229,7 @@ class SatelliteCollector:
                         "lng": round(lng, 4),
                         "altitude_km": round(alt, 1),
                         "velocity_kms": round(velocity, 2),
+                        "cloud_cover": _clamp_cloud_cover(cloud_cover_raw),
                     })
                 except Exception:
                     continue

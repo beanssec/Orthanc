@@ -1335,3 +1335,59 @@
   color: var(--text-secondary);
   min-width: 3rem;
 }
+
+/* ── Inline-style migration helpers ─────────────────────── */
+.sentiment-legend__dot--diamond,
+.map-layer-row__dot--diamond {
+  border-radius: 0;
+  transform: rotate(45deg);
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.sentiment-legend__triangle {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.map-legend-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.sentiment-legend--mt {
+  margin-top: 6px;
+}
+
+.map-layer-row--mt {
+  margin-top: 8px;
+}
+
+.map-event-detail__source-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.map-layer-row__name--muted {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.map-layer-section-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  margin-bottom: 4px;
+}

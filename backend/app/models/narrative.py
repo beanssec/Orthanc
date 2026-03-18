@@ -38,6 +38,16 @@ class Narrative(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
+    # Duplicate / merge detection (TASK-71)
+    # When two narratives share >60% of their posts the smaller one gets
+    # merged_into pointing at the canonical (larger) narrative.
+    # Populated by the narrative engine; not auto-applied — admin review only.
+    merged_into: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("narratives.id", ondelete="SET NULL", use_alter=True, name="fk_narratives_merged_into"),
+        nullable=True,
+    )
+    merge_candidate_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     # Relationships
     narrative_posts: Mapped[list["NarrativePost"]] = relationship(
         back_populates="narrative", cascade="all, delete-orphan"
@@ -275,6 +285,9 @@ class NarrativeTrackerMatch(Base):
     # Sprint 26 CP1: groundwork for evidence classification (CP2 will populate these)
     # Values: supports | contradicts | contextual | unclear | NULL (unclassified)
     evidence_relation: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # TASK-72: richer match metadata
+    relevance_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    match_rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class NarrativeTrackerMonthlySnapshot(Base):

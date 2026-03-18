@@ -112,6 +112,47 @@ OFFICIAL_SOURCES: list[dict] = [
         "ecosystem": "energy",
         "risk_note": None,
     },
+    # ── Additional Diplomacy (Sprint 32 Checkpoint 4) ────────────────────────
+    {
+        "type": "rss",
+        "handle": "uk_fcdo_press",
+        "display_name": "UK FCDO Press Releases",
+        "source_class": "official",
+        "default_reliability_prior": "high",
+        "ecosystem": "diplomacy",
+        "risk_note": None,
+        "url": "https://www.gov.uk/government/organisations/foreign-commonwealth-development-office.atom",
+    },
+    {
+        "type": "rss",
+        "handle": "israel_mfa_news",
+        "display_name": "Israeli MFA State News",
+        "source_class": "official",
+        "default_reliability_prior": "high",
+        "ecosystem": "diplomacy",
+        "risk_note": "Official Israeli government positions.",
+        "url": "https://www.mfa.gov.il/MFA/IsraelExperience/Pages/StateNewsFeed.aspx",
+    },
+    {
+        "type": "scraper",
+        "handle": "russia_mfa_news",
+        "display_name": "Russian MFA Press Service",
+        "source_class": "state_media",
+        "default_reliability_prior": "medium",
+        "ecosystem": "diplomacy",
+        "risk_note": "Official Russian government positions; cross-check with independent sources.",
+        "url": "https://mid.ru/en/press_service/news/",
+    },
+    {
+        "type": "rss",
+        "handle": "india_mea_rss",
+        "display_name": "Indian MEA Press Releases",
+        "source_class": "official",
+        "default_reliability_prior": "high",
+        "ecosystem": "diplomacy",
+        "risk_note": None,
+        "url": "https://mea.gov.in/rss-feed.htm",
+    },
     # ── Maritime ─────────────────────────────────────────────────────────────
     {
         "type": "scraper",
@@ -162,6 +203,15 @@ async def seed_official_sources() -> None:
                 if existing.scalars().first():
                     continue  # Already seeded for this user
 
+                config = {
+                    "source_class": defn["source_class"],
+                    "reliability": defn["default_reliability_prior"],
+                    "ecosystem": defn["ecosystem"],
+                    "seeded_by": "official_sources_seeder",
+                }
+                if defn.get("url"):
+                    config["url"] = defn["url"]
+
                 source = Source(
                     user_id=user.id,
                     type=src_type,
@@ -172,12 +222,7 @@ async def seed_official_sources() -> None:
                     default_reliability_prior=defn["default_reliability_prior"],
                     ecosystem=defn["ecosystem"],
                     risk_note=defn.get("risk_note"),
-                    config_json={
-                        "source_class": defn["source_class"],
-                        "reliability": defn["default_reliability_prior"],
-                        "ecosystem": defn["ecosystem"],
-                        "seeded_by": "official_sources_seeder",
-                    },
+                    config_json=config,
                 )
                 session.add(source)
                 user_added += 1

@@ -3,6 +3,8 @@ import { useFeedStore } from '../../stores/feedStore'
 import type { Post, FeedFilters } from '../../stores/feedStore'
 import api from '../../services/api'
 import FeedItem from './FeedItem'
+import { EmptyState } from '../common/EmptyState'
+import { Skeleton } from '../common/Skeleton'
 
 interface PaginatedFeedResponse {
   items: Post[]
@@ -15,6 +17,43 @@ interface FeedTimelineProps {
   selectedPost: Post | null
   onSelectPost: (post: Post) => void
   newPostIds: Set<string>
+}
+
+/** Build a contextual empty-state message from active filters */
+function buildEmptyState(filters: FeedFilters): { message: string; description: string } {
+  const parts: string[] = []
+
+  if (filters.keyword) parts.push(`matching "${filters.keyword}"`)
+  if (filters.source_types.length > 0) {
+    const names = filters.source_types.map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(', ')
+    parts.push(`from ${names}`)
+  }
+  if (filters.author) parts.push(`by ${filters.author}`)
+  if (filters.entity) parts.push(`mentioning "${filters.entity}"`)
+  if (filters.location) parts.push(`near "${filters.location}"`)
+  if (filters.has_geo === true) parts.push('with location data')
+  if (filters.has_media === true) parts.push('with media')
+
+  let timeLabel = ''
+  if (filters.date_from) {
+    const diff = Date.now() - new Date(filters.date_from).getTime()
+    const h = diff / (1000 * 60 * 60)
+    if (h <= 25) timeLabel = 'in the last 24h'
+    else if (h <= 7 * 24 + 1) timeLabel = 'in the last 7 days'
+    else if (h <= 30 * 24 + 1) timeLabel = 'in the last 30 days'
+    else timeLabel = `since ${new Date(filters.date_from).toLocaleDateString()}`
+  }
+
+  if (parts.length === 0 && !timeLabel) {
+    return { message: 'No posts yet', description: 'New posts will appear here as they are ingested.' }
+  }
+
+  const subject = parts.length > 0 ? `No posts ${parts.join(' ')}` : 'No posts found'
+  const description = timeLabel
+    ? `Try expanding the time range or adjusting your filters.`
+    : 'Try adjusting your filters.'
+
+  return { message: timeLabel ? `${subject} ${timeLabel}` : subject, description }
 }
 
 /** Build query params from filters, omitting null/empty values */
@@ -197,10 +236,16 @@ const FeedTimeline: React.FC<FeedTimelineProps> = ({ selectedPost, onSelectPost,
 
       {/* Posts list */}
       {wsFilteredPosts.length === 0 && !loading ? (
-        <div className="feed-timeline__empty">
-          <span className="feed-timeline__empty-icon">🔍</span>
-          <span>No posts match current filters</span>
-        </div>
+        (() => {
+          const es = buildEmptyState(filters)
+          return (
+            <EmptyState
+              icon="🔍"
+              message={es.message}
+              description={es.description}
+            />
+          )
+        })()
       ) : (
         wsFilteredPosts.map((post) => (
           <FeedItem
@@ -216,7 +261,7 @@ const FeedTimeline: React.FC<FeedTimelineProps> = ({ selectedPost, onSelectPost,
 
       {/* Infinite scroll sentinel */}
       <div ref={bottomRef} className="feed-sentinel">
-        {loading && <div className="feed-loading">Loading more…</div>}
+        {loading && <Skeleton rows={3} type="card" />}
       </div>
     </div>
   )

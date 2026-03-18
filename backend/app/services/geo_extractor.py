@@ -14,6 +14,10 @@ _geocode_queue: asyncio.Queue | None = None
 _geocode_results: dict[str, asyncio.Future] = {}
 _geocode_worker_task: asyncio.Task | None = None
 
+# Rate-limit 429 log messages: only log once per 5 minutes
+_last_429_log: float = 0.0
+_429_LOG_INTERVAL = 300.0  # seconds
+
 
 def _ensure_geocode_worker():
     """Lazily start the geocode worker on first use."""
@@ -30,9 +34,10 @@ def _ensure_geocode_worker():
 
 async def _geocode_worker_loop():
     """Single async worker: drains queue at ≤1 request/second."""
-    global _geocode_queue
+    global _geocode_queue, _last_429_log
     import httpx  # noqa: PLC0415
     last_req = 0.0
+    backoff_until = 0.0  # monotonic time after which we can resume requests
     while True:
         try:
             location_name, fut = await asyncio.wait_for(_geocode_queue.get(), timeout=60)
@@ -41,8 +46,15 @@ async def _geocode_worker_loop():
         except asyncio.CancelledError:
             break
 
-        # Rate limit: 1.2s between requests
+        # If we're in a 429 backoff window, skip and resolve with None
         now = time.monotonic()
+        if now < backoff_until:
+            if not fut.done():
+                fut.set_result(None)
+            _geocode_queue.task_done()
+            continue
+
+        # Rate limit: 1.2s between requests
         wait = 1.2 - (now - last_req)
         if wait > 0:
             await asyncio.sleep(wait)
@@ -56,6 +68,17 @@ async def _geocode_worker_loop():
                     headers={"User-Agent": "Orthanc-OSINT/1.0"},
                     timeout=10.0,
                 )
+                if resp.status_code == 429:
+                    # Back off 60 seconds; only log once per 5 min
+                    backoff_until = time.monotonic() + 60.0
+                    now_wall = time.monotonic()
+                    if now_wall - _last_429_log >= _429_LOG_INTERVAL:
+                        _last_429_log = now_wall
+                        log.warning("Nominatim rate-limited (429) — backing off 60s (suppressing further 429 logs for %ds)", int(_429_LOG_INTERVAL))
+                    if not fut.done():
+                        fut.set_result(None)
+                    _geocode_queue.task_done()
+                    continue
                 resp.raise_for_status()
                 data = resp.json()
             if data:

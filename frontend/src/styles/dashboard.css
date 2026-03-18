@@ -248,13 +248,46 @@
   color: var(--success);
 }
 
+.dash-empty--narrative {
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.dash-empty__icon {
+  font-size: 24px;
+}
+
+.dash-empty .btn {
+  margin-top: 8px;
+}
+
+.fusion-row__sev-diamond {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  transform: rotate(45deg);
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+
 /* ── Velocity Chart ─────────────────────────────────────── */
 .velocity-chart-wrap {
   position: relative;
   width: 100%;
   height: 100%;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.velocity-chart__svg {
+  display: block;
+  cursor: crosshair;
+}
+
+.velocity-bar-group {
+  cursor: pointer;
 }
 
 .velocity-empty {
@@ -292,6 +325,8 @@
 }
 
 .velocity-tooltip {
+  position: absolute;
+  pointer-events: none;
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -341,6 +376,11 @@
   border: 1px solid var(--border);
   border-radius: 4px;
   flex-shrink: 0;
+}
+
+.source-health-strip__empty {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .source-health-strip__label {
@@ -825,6 +865,83 @@
   margin: 16px 20px;
 }
 
+/* ── Source Reliability Widget (TASK-34) ───────────────── */
+.source-reliability-body {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.source-rel-stat {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.source-rel-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.source-rel-dot--total   { background: var(--text-muted); }
+.source-rel-dot--healthy { background: var(--success); }
+.source-rel-dot--warning { background: var(--warning, #f59e0b); }
+.source-rel-dot--failing { background: var(--danger); }
+
+.source-rel-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.source-rel-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* ── Narrative Velocity Widget (TASK-35) ───────────────── */
+.narrative-velocity-body {
+  flex-direction: row !important;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+}
+
+.narr-vel-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+}
+
+.narr-vel-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.narr-vel-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.narr-vel-divider {
+  width: 1px;
+  height: 36px;
+  background: var(--border);
+  flex-shrink: 0;
+  margin: 0 12px;
+}
+
 /* ── Responsive ─────────────────────────────────────────── */
 @media (max-width: 1200px) {
   .kpi-strip {
@@ -840,8 +957,34 @@
 }
 
 @media (max-width: 768px) {
+  .dashboard {
+    padding: 8px 10px;
+    overflow-x: hidden;
+  }
+
   .kpi-strip {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .dashboard-row--3col,
+  .dashboard-row--5050,
+  .dashboard-row--6040,
+  .dashboard-row--4060 {
+    grid-template-columns: 1fr;
+  }
+
+  .source-health-strip {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .source-reliability-body {
+    gap: 10px;
+  }
+
+  .dash-card__body--velocity {
+    min-height: 160px;
   }
 }
 

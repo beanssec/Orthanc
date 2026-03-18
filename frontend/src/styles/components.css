@@ -487,3 +487,49 @@
 .credential-card__remove:hover {
   background: rgba(239, 68, 68, 0.1);
 }
+
+/* ── Settings Layout ────────────────────────────────────── */
+.settings-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.settings-nav {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background-color: var(--bg-surface);
+  flex-shrink: 0;
+  padding: 0 20px;
+}
+
+.settings-nav__link {
+  padding: 12px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.1s;
+  white-space: nowrap;
+}
+
+.settings-nav__link.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.settings-content {
+  flex: 1;
+  overflow: auto;
+  padding: 20px;
+}
+
+/* ── Utility: danger text ───────────────────────────────── */
+.text-danger {
+  color: var(--danger);
+}

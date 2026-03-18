@@ -119,11 +119,12 @@ function VolumeSparkline() {
   )
 
   return (
-    <div className="feed-sparkline" style={{ position: 'relative' }}>
+    <div className="feed-sparkline">
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
-        style={{ width: '100%', height: H, display: 'block' }}
+        className="feed-sparkline__svg"
+        style={{ height: H }}
         onMouseLeave={() => setTooltip(null)}
       >
         {buckets.map((bucket, i) => {
@@ -168,10 +169,8 @@ function VolumeSparkline() {
         <div
           className="feed-sparkline__tooltip"
           style={{
-            position: 'absolute',
             left: Math.min(tooltip.x + 6, W - 120),
             top: H + 4,
-            pointerEvents: 'none',
           }}
         >
           <div className="feed-sparkline__tooltip-hour">
@@ -180,6 +179,59 @@ function VolumeSparkline() {
           <div className="feed-sparkline__tooltip-total">{tooltip.bucket.total} posts</div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Date Range Bar ─────────────────────────────────────────
+type DateRangePreset = '24h' | '7d' | '30d' | 'all'
+
+const DATE_PRESETS: Array<{ label: string; value: DateRangePreset }> = [
+  { label: '24h', value: '24h' },
+  { label: '7d',  value: '7d'  },
+  { label: '30d', value: '30d' },
+  { label: 'All', value: 'all' },
+]
+
+function presetToDateFrom(preset: DateRangePreset): string | null {
+  const now = Date.now()
+  switch (preset) {
+    case '24h': return new Date(now - 24 * 60 * 60 * 1000).toISOString()
+    case '7d':  return new Date(now - 7  * 24 * 60 * 60 * 1000).toISOString()
+    case '30d': return new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString()
+    case 'all': return null
+  }
+}
+
+function DateRangeBar() {
+  const filters    = useFeedStore((s) => s.filters)
+  const setFilters = useFeedStore((s) => s.setFilters)
+
+  // Derive active preset from current date_from (best-effort)
+  function guessActivePreset(): DateRangePreset {
+    if (!filters.date_from) return 'all'
+    const diff = Date.now() - new Date(filters.date_from).getTime()
+    const h = diff / (1000 * 60 * 60)
+    if (h <= 25) return '24h'
+    if (h <= 7 * 24 + 1) return '7d'
+    if (h <= 30 * 24 + 1) return '30d'
+    return 'all'
+  }
+
+  const active = guessActivePreset()
+
+  return (
+    <div className="feed-date-range-bar">
+      {DATE_PRESETS.map((p) => (
+        <button
+          key={p.value}
+          className={`feed-filters__time-btn${active === p.value ? ' feed-filters__time-btn--active' : ''}`}
+          onClick={() => setFilters({ date_from: presetToDateFrom(p.value) })}
+          aria-pressed={active === p.value}
+        >
+          {p.label}
+        </button>
+      ))}
     </div>
   )
 }
@@ -309,7 +361,7 @@ export function FeedView() {
           </button>
         </div>
 
-        <div className="feed-sidebar__header-row" style={{ display: 'none' /* hidden; overlay header takes its place */ }}>
+        <div className="feed-sidebar__header-row">
           <span className="feed-sidebar__title">Filters</span>
           {hasActiveFilters && (
             <button
@@ -343,12 +395,17 @@ export function FeedView() {
       <div className="feed-timeline">
         <div className="feed-timeline__header">
           <span className="feed-timeline__title">Live Feed</span>
-          <span className="feed-timeline__count">{totalCount > 0 ? totalCount.toLocaleString() : posts.length} posts</span>
+          <span className="feed-timeline__count feed-timeline__count--total" title="Total matching posts">
+            {totalCount.toLocaleString()} posts
+          </span>
           <span
             className={`status-dot ${connected ? 'status-dot--active' : reconnecting ? 'status-dot--warning' : 'status-dot--error'}`}
             title={connected ? 'Connected' : reconnecting ? 'Reconnecting...' : 'Disconnected'}
           />
         </div>
+
+        {/* Date range quick-select */}
+        <DateRangeBar />
 
         {/* Mobile controls bar — hidden on desktop via CSS */}
         <div className="feed-mobile-bar">

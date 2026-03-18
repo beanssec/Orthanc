@@ -191,8 +191,7 @@ function CorrelationStageBuilder({
               <span className="correlation-stage-label">Stage {stage.stage}</span>
               {idx > 0 && (
                 <button
-                  className="btn btn-ghost btn-sm"
-                  style={{ color: 'var(--danger)' }}
+                  className="btn btn-ghost btn-sm text-danger"
                   onClick={() => removeStage(idx)}
                   type="button"
                 >
@@ -202,7 +201,7 @@ function CorrelationStageBuilder({
             </div>
 
             {idx > 0 && (
-              <div className="form-group" style={{ marginBottom: '10px' }}>
+              <div className="form-group">
                 <label className="form-label">Time window from previous stage (minutes)</label>
                 <input
                   className="input"
@@ -214,7 +213,7 @@ function CorrelationStageBuilder({
               </div>
             )}
 
-            <div className="form-group" style={{ marginBottom: '10px' }}>
+            <div className="form-group">
               <label className="form-label">Condition Type</label>
               <select
                 className="select"
@@ -230,7 +229,7 @@ function CorrelationStageBuilder({
             </div>
 
             {stage.condition.type === 'keyword_match' && (
-              <div className="form-group" style={{ marginBottom: '10px' }}>
+              <div className="form-group">
                 <label className="form-label">Keywords</label>
                 <KeywordTagsInput
                   value={stage.condition.keywords ?? []}
@@ -241,7 +240,7 @@ function CorrelationStageBuilder({
 
             {stage.condition.type === 'entity_velocity' && (
               <>
-                <div className="form-group" style={{ marginBottom: '10px' }}>
+                <div className="form-group">
                   <label className="form-label">Entities (comma-separated)</label>
                   <input
                     className="input"
@@ -255,7 +254,7 @@ function CorrelationStageBuilder({
                     }
                   />
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <div className="alert-form-grid">
                   <div className="form-group">
                     <label className="form-label">Threshold (x baseline)</label>
                     <input
@@ -282,7 +281,7 @@ function CorrelationStageBuilder({
             )}
 
             {stage.condition.type === 'source_count' && (
-              <div className="form-group" style={{ marginBottom: '10px' }}>
+              <div className="form-group">
                 <label className="form-label">Minimum sources</label>
                 <input
                   className="input"
@@ -416,11 +415,11 @@ function Step2Conditions({
 
   if (ruleType === 'keyword') {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <div className="alert-form-section">
         <div className="form-group">
           <label className="form-label">Keywords</label>
           <KeywordTagsInput value={cond.keywords} onChange={(v) => onChange({ keywords: v })} />
-          <span className="form-error" style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
+          <span className="alert-form-hint">
             Press Enter or comma to add each keyword
           </span>
         </div>
@@ -440,9 +439,9 @@ function Step2Conditions({
 
         <div className="form-group">
           <label className="form-label">Source Filter (optional)</label>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
+          <div className="alert-source-checks">
             {sourceOptions.map((src) => (
-              <label key={src} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', cursor: 'pointer' }}>
+              <label key={src} className="alert-source-label">
                 <input
                   type="checkbox"
                   checked={cond.source_types.includes(src)}
@@ -470,7 +469,7 @@ function Step2Conditions({
 
   if (ruleType === 'velocity') {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <div className="alert-form-section">
         <div className="form-group">
           <label className="form-label">Entity Name</label>
           <input
@@ -482,7 +481,7 @@ function Step2Conditions({
           />
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+        <div className="alert-form-grid">
           <div className="form-group">
             <label className="form-label">Threshold (x baseline)</label>
             <input
@@ -518,7 +517,7 @@ function Step2Conditions({
 
   if (ruleType === 'geo_proximity') {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <div className="alert-form-section">
         <div className="form-group">
           <label className="form-label">Location Name</label>
           <input
@@ -530,7 +529,7 @@ function Step2Conditions({
           />
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+        <div className="alert-form-grid">
           <div className="form-group">
             <label className="form-label">Latitude</label>
             <input
@@ -576,9 +575,9 @@ function Step2Conditions({
             step="1"
             value={cond.geo_radius_km}
             onChange={(e) => onChange({ geo_radius_km: +e.target.value })}
-            style={{ padding: '0', marginTop: '4px' }}
+            className="alert-range-input"
           />
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-muted)', marginTop: '2px' }}>
+          <div className="alert-range-labels">
             <span>1 km</span>
             <span>250 km</span>
             <span>500 km</span>
@@ -596,8 +595,8 @@ function Step2Conditions({
   if (ruleType === 'silence') {
     const sourceOptions = ['telegram', 'x', 'rss', 'reddit', 'discord', 'webhook'];
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <div style={{ padding: '10px 12px', background: 'var(--surface-2)', borderRadius: '6px', fontSize: '12px', color: 'var(--text-muted)' }}>
+      <div className="alert-form-section">
+        <div className="alert-info-box">
           Choose <strong>either</strong> an entity name <em>or</em> a source type — not both.
         </div>
 
@@ -612,7 +611,7 @@ function Step2Conditions({
           />
         </div>
 
-        <div style={{ textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>— or —</div>
+        <div className="alert-divider">— or —</div>
 
         <div className="form-group">
           <label className="form-label">Source Type (monitor an entire feed)</label>
@@ -641,7 +640,7 @@ function Step2Conditions({
             value={cond.silence_expected_hours}
             onChange={(e) => onChange({ silence_expected_hours: +e.target.value })}
           />
-          <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>
+          <span className="alert-form-hint">
             Checked every 5 minutes. Minimum 0.5h (30 min).
           </span>
         </div>
@@ -656,7 +655,7 @@ function Step2Conditions({
 
   // correlation
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+    <div className="alert-form-section">
       <CorrelationStageBuilder
         stages={cond.stages}
         onChange={(s) => onChange({ stages: s })}
@@ -727,8 +726,8 @@ function Step3Delivery({
   ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+    <div className="alert-form-section alert-form-section--lg">
+      <div className="alert-form-grid">
         <div className="form-group">
           <label className="form-label">Rule Name *</label>
           <input
@@ -764,9 +763,9 @@ function Step3Delivery({
 
       <div className="form-group">
         <label className="form-label">Delivery Channels</label>
-        <div style={{ display: 'flex', gap: '12px', marginTop: '6px' }}>
+        <div className="alert-delivery-channels">
           {['in_app', 'telegram', 'webhook'].map((ch) => (
-            <label key={ch} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer' }}>
+            <label key={ch} className="alert-delivery-label">
               <input
                 type="checkbox"
                 checked={delivery.delivery_channels.includes(ch)}
@@ -788,7 +787,7 @@ function Step3Delivery({
             value={delivery.telegram_chat_id}
             onChange={(e) => onChange({ telegram_chat_id: e.target.value })}
           />
-          <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px' }}>
+          <span className="alert-form-hint">
             Bot must be added to your Telegram chat first
           </span>
         </div>
@@ -808,7 +807,7 @@ function Step3Delivery({
       )}
 
       <div>
-        <div className="form-label" style={{ marginBottom: '8px' }}>Review</div>
+        <div className="form-label alert-form-label--mb">Review</div>
         <div className="rule-review">
           {reviewRows.map((row) => (
             <div key={row.label} className="rule-review-row">
@@ -1001,13 +1000,13 @@ function RuleWizardModal({
       title={editRule ? `Edit Rule: ${editRule.name}` : 'New Alert Rule'}
       onClose={onClose}
       footer={
-        <div style={{ display: 'flex', gap: '8px', width: '100%', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', gap: '6px' }}>
+        <div className="alert-modal-footer">
+          <div className="alert-modal-footer__left">
             {step > 1 && (
               <button className="btn btn-secondary" onClick={() => setStep(step - 1)}>← Back</button>
             )}
           </div>
-          <div style={{ display: 'flex', gap: '6px' }}>
+          <div className="alert-modal-footer__right">
             <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
             {step < 3 ? (
               <button className="btn btn-primary" onClick={() => setStep(step + 1)}>Next →</button>
@@ -1027,25 +1026,25 @@ function RuleWizardModal({
         </div>
       }
     >
-      <div style={{ minWidth: '560px' }}>
+      <div className="alert-wizard-body">
         {/* Step indicators */}
-        <div className="wizard-steps" style={{ marginBottom: '20px' }}>
+        <div className="wizard-steps alert-wizard-steps">
           {stepLabels.map((label, i) => {
             const num = i + 1;
             const state = num < step ? 'done' : num === step ? 'active' : '';
             return (
-              <div key={label} style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+              <div key={label} className="alert-wizard-step-item">
                 <div className={`wizard-step ${state}`}>
                   <span className="wizard-step-num">{num < step ? '✓' : num}</span>
                   <span>{label}</span>
                 </div>
-                {i < stepLabels.length - 1 && <div className="wizard-step-sep" style={{ flex: 1, height: '1px', background: 'var(--border)', margin: '0 8px' }} />}
+                {i < stepLabels.length - 1 && <div className="wizard-step-sep" />}
               </div>
             );
           })}
         </div>
 
-        {error && <div className="error-message" style={{ marginBottom: '12px' }}>{error}</div>}
+        {error && <div className="error-message alert-error-mb">{error}</div>}
 
         {step === 1 && (
           <Step1RuleType value={ruleType} onChange={(v) => { setRuleType(v); setCond(defaultCondition()); }} />
@@ -1068,7 +1067,7 @@ function RuleWizardModal({
 
         {testResult && (
           <div className="test-result-panel">
-            <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>
+            <div className="test-result-title">
               Test Result — {(testResult as { match_count: number }).match_count} matches in last hour ({(testResult as { posts_checked: number }).posts_checked} posts checked)
             </div>
             {(testResult as { matches: Array<{ content_preview?: string }> }).matches.slice(0, 5).map((m, i) => (
@@ -1117,7 +1116,7 @@ function RuleCard({
           {rule.last_fired_at ? (
             <span>fired {formatRelative(rule.last_fired_at)}</span>
           ) : (
-            <span style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: 11 }}>never fired</span>
+            <span className="alert-never-fired">never fired</span>
           )}
         </div>
         <div className="alert-rule-actions" onClick={(e) => e.stopPropagation()}>
@@ -1132,15 +1131,14 @@ function RuleCard({
           </label>
           <button className="btn btn-ghost btn-sm" onClick={onEdit} title="Edit">✎</button>
           <button
-            className="btn btn-ghost btn-sm"
-            style={{ color: 'var(--danger)' }}
+            className="btn btn-ghost btn-sm text-danger"
             onClick={onDelete}
             title="Delete"
           >
             ✕
           </button>
         </div>
-        <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{expanded ? '▲' : '▼'}</span>
+        <span className="alert-rule-chevron">{expanded ? '▲' : '▼'}</span>
       </div>
 
       {expanded && (
@@ -1226,7 +1224,7 @@ function RuleCard({
             </div>
           </div>
           {rule.description && (
-            <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-muted)' }}>
+            <div className="alert-rule-description">
               {rule.description}
             </div>
           )}
@@ -1261,7 +1259,7 @@ function AlertHistoryTab({ highlightId }: { highlightId?: string | null }) {
 
   if (loadingEvents) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}>
+      <div className="alert-center-spinner">
         <LoadingSpinner size="lg" />
       </div>
     );
@@ -1271,8 +1269,7 @@ function AlertHistoryTab({ highlightId }: { highlightId?: string | null }) {
     <div>
       <div className="alert-event-filters">
         <select
-          className="select"
-          style={{ width: '140px' }}
+          className="select alert-filter-select--sm"
           value={severityFilter}
           onChange={(e) => setSeverityFilter(e.target.value)}
         >
@@ -1282,8 +1279,7 @@ function AlertHistoryTab({ highlightId }: { highlightId?: string | null }) {
           <option value="routine">Routine</option>
         </select>
         <select
-          className="select"
-          style={{ width: '160px' }}
+          className="select alert-filter-select--md"
           value={ackedFilter === null ? '' : String(ackedFilter)}
           onChange={(e) => setAckedFilter(e.target.value === '' ? null : e.target.value === 'true')}
         >
@@ -1291,13 +1287,13 @@ function AlertHistoryTab({ highlightId }: { highlightId?: string | null }) {
           <option value="false">Unacknowledged</option>
           <option value="true">Acknowledged</option>
         </select>
-        <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: 'auto' }}>
+        <span className="alert-filters__count">
           {totalEvents} total events
         </span>
       </div>
 
       {events.length === 0 ? (
-        <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+        <div className="alert-empty-state">
           No alert events yet. Rules will appear here when they fire.
         </div>
       ) : (
@@ -1374,8 +1370,8 @@ export function AlertsPage() {
   return (
     <div>
       {/* Page header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-        <h2 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+      <div className="alert-section-header">
+        <h2 className="alert-section-title">
           Alert Rules ({rules.length})
         </h2>
         <button className="btn btn-primary btn-sm" onClick={() => setShowWizard(true)}>
@@ -1403,14 +1399,14 @@ export function AlertsPage() {
       {activeTab === 'rules' && (
         <>
           {loadingRules ? (
-            <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}>
+            <div className="alert-center-spinner">
               <LoadingSpinner size="lg" />
             </div>
           ) : rules.length === 0 ? (
-            <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
-              <div style={{ fontSize: '32px', marginBottom: '12px' }}>🔕</div>
+            <div className="alert-empty-state">
+              <div className="alert-empty-state__icon">🔕</div>
               <div>No alert rules configured.</div>
-              <div style={{ marginTop: '4px', marginBottom: '16px' }}>
+              <div className="alert-empty-state__body">
                 Create keyword, velocity, correlation, geo-proximity, or silence rules to monitor your feed.
               </div>
               <button className="btn btn-primary btn-sm" onClick={() => setShowWizard(true)}>

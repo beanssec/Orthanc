@@ -43,6 +43,23 @@ def run_migrations_offline() -> None:
 
 def do_run_migrations(connection: Connection) -> None:
     context.configure(connection=connection, target_metadata=target_metadata)
+
+    # Log current and target revisions before applying migrations (TASK-53)
+    import logging as _logging
+    _mig_log = _logging.getLogger("alembic.migration_safety")
+    try:
+        from alembic.runtime.migration import MigrationContext as _MC
+        _mc = _MC.configure(connection)
+        _current = _mc.get_current_revision()
+        _heads = context.get_head_revisions() if hasattr(context, "get_head_revisions") else ("head",)
+        _mig_log.info(
+            "Migration safety check | current_revision=%s target=%s",
+            _current or "<none>",
+            _heads,
+        )
+    except Exception as _e:
+        _mig_log.warning("Could not determine current revision: %s", _e)
+
     with context.begin_transaction():
         context.run_migrations()
 

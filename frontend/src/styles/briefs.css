@@ -209,7 +209,17 @@
   font-size: 13px;
   background-color: var(--bg-surface);
   border: 1px solid var(--border);
-  border-radius: 4px;
+}
+
+.briefs-generating__title {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.briefs-generating__subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
 }
 
 /* ── Brief Output ───────────────────────────────────────── */
@@ -332,6 +342,25 @@
   font-size: 40px;
   opacity: 0.5;
   margin-bottom: 4px;
+}
+
+.briefs-empty__title {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.briefs-empty__body {
+  font-size: 12px;
+  max-width: 360px;
+}
+
+.briefs-empty__cta {
+  margin-top: 8px;
+}
+
+.briefs-delete-confirm {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 /* ── Error state ────────────────────────────────────────── */

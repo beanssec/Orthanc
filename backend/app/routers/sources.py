@@ -6,7 +6,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.db import get_db
 from app.models import User, Source
@@ -60,6 +60,10 @@ def _to_response(source: Source) -> SourceResponse:
         default_reliability_prior=getattr(source, "default_reliability_prior", None),
         ecosystem=getattr(source, "ecosystem", None),
         risk_note=getattr(source, "risk_note", None),
+        # Sprint 32 C4 scheduling & filtering
+        poll_interval_seconds=getattr(source, "poll_interval_seconds", None),
+        filter_keywords=getattr(source, "filter_keywords", None),
+        filter_mode=getattr(source, "filter_mode", None),
     )
 
 
@@ -81,6 +85,9 @@ async def create_source(
         download_videos=body.download_videos,
         max_image_size_mb=body.max_image_size_mb,
         max_video_size_mb=body.max_video_size_mb,
+        poll_interval_seconds=body.poll_interval_seconds,
+        filter_keywords=body.filter_keywords,
+        filter_mode=body.filter_mode,
     )
     db.add(source)
     await db.commit()
@@ -103,18 +110,31 @@ async def create_source(
 @router.get("/", response_model=List[SourceResponse])
 async def list_sources(
     type: Optional[str] = Query(default=None),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> List[SourceResponse]:
-    q = (
+) -> dict:
+    """List sources — TASK-80 consistent pagination: {items, total, limit, offset}."""
+    base_q = (
         select(Source)
         .options(selectinload(Source.reliability))
         .where(Source.user_id == current_user.id)
     )
     if type:
-        q = q.where(Source.type == type)
-    result = await db.execute(q)
-    return [_to_response(s) for s in result.scalars().all()]
+        base_q = base_q.where(Source.type == type)
+
+    count_result = await db.execute(select(func.count()).select_from(base_q.subquery()))
+    total = count_result.scalar() or 0
+
+    paged_q = base_q.order_by(Source.handle).limit(limit).offset(offset)
+    result = await db.execute(paged_q)
+    return {
+        "items": [_to_response(s) for s in result.scalars().all()],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.get("/health")
@@ -122,7 +142,7 @@ async def source_health(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Per-source health status: last_polled, error_count, status."""
+    """Per-source health status: last_polled, error_count, last_error, last_success, healthy."""
     result = await db.execute(
         select(Source)
         .options(selectinload(Source.reliability))
@@ -130,6 +150,10 @@ async def source_health(
         .order_by(Source.handle)
     )
     sources = result.scalars().all()
+
+    # Default poll interval in seconds (5 minutes for most collectors)
+    DEFAULT_POLL_INTERVAL_S = 300
+    HEALTH_ERROR_THRESHOLD = 5
 
     health = []
     for s in sources:
@@ -141,6 +165,22 @@ async def source_health(
         elif (datetime.utcnow() - s.last_polled.replace(tzinfo=None)).total_seconds() > 3600:
             status_str = "stale"
 
+        # Determine poll interval: prefer config_json value, else default
+        poll_interval_s = DEFAULT_POLL_INTERVAL_S
+        if s.config_json and isinstance(s.config_json, dict):
+            poll_interval_s = s.config_json.get("poll_interval", DEFAULT_POLL_INTERVAL_S)
+
+        error_count = getattr(s, "error_count", 0) or 0
+        last_success = getattr(s, "last_success", None)
+        last_error = getattr(s, "last_error", None)
+
+        # Healthy = low error count AND last success within 2x poll interval
+        recently_successful = False
+        if last_success is not None:
+            age_s = (datetime.utcnow() - last_success.replace(tzinfo=None)).total_seconds()
+            recently_successful = age_s <= (poll_interval_s * 2)
+        healthy = (error_count < HEALTH_ERROR_THRESHOLD) and recently_successful
+
         rel = s.reliability
         health.append({
             "id": str(s.id),
@@ -151,6 +191,11 @@ async def source_health(
             "last_polled": s.last_polled.isoformat() if s.last_polled else None,
             "reliability_score": rel.reliability_score if rel else None,
             "confidence_band": rel.confidence_band if rel else None,
+            # Error health fields (migration 033)
+            "error_count": error_count,
+            "last_error": last_error,
+            "last_success": last_success.isoformat() if last_success else None,
+            "healthy": healthy,
         })
 
     return {"sources": health, "total": len(health)}
@@ -203,6 +248,12 @@ async def update_source(
         source.max_image_size_mb = body.max_image_size_mb
     if body.max_video_size_mb is not None:
         source.max_video_size_mb = body.max_video_size_mb
+    if body.poll_interval_seconds is not None:
+        source.poll_interval_seconds = body.poll_interval_seconds
+    if body.filter_keywords is not None:
+        source.filter_keywords = body.filter_keywords
+    if body.filter_mode is not None:
+        source.filter_mode = body.filter_mode
 
     await db.commit()
     await db.refresh(source, ["reliability"])

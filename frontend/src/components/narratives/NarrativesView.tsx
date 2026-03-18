@@ -4,6 +4,7 @@ import type { Narrative, NarrativeTracker, NarrativeTrackerMonthlyPoint } from '
 import { NarrativeCard } from './NarrativeCard';
 import { NarrativeDetail } from './NarrativeDetail';
 import { BiasCompass } from './BiasCompass';
+import { Skeleton } from '../common/Skeleton';
 import '../../styles/narratives.css';
 
 export function NarrativesView() {
@@ -243,7 +244,9 @@ export function NarrativesView() {
         {/* Left: narrative list */}
         <div className="narratives-list">
           {loading && (
-            <div className="narratives-loading">Loading narratives…</div>
+            <div className="narratives-loading">
+              <Skeleton rows={4} type="card" />
+            </div>
           )}
           {error && (
             <div className="narratives-error">{error}</div>

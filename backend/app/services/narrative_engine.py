@@ -3,19 +3,69 @@ import asyncio
 import json
 import logging
 import math
+import os
 import re
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import func, select, update
 
+from app.config import settings
 from app.db import AsyncSessionLocal
 from app.models.narrative import Narrative, NarrativePost, PostEmbedding
 from app.models.post import Post
 from app.services.embedding_service import embedding_service
 
 logger = logging.getLogger("orthanc.narrative")
+
+# ──────────────────────────────────────────────
+# Stale-lock helpers (file-based, timestamp TTL)
+# ──────────────────────────────────────────────
+
+_LOCK_FILE = "/tmp/orthanc_narrative_engine.lock"
+_LOCK_TTL_SECONDS = 300  # 5 minutes
+
+
+def _clear_stale_lock() -> None:
+    """Remove the lock file if it is absent or older than _LOCK_TTL_SECONDS."""
+    if not os.path.exists(_LOCK_FILE):
+        return
+    try:
+        with open(_LOCK_FILE) as f:
+            lock_ts = float(f.read().strip())
+        age = time.time() - lock_ts
+        if age > _LOCK_TTL_SECONDS:
+            os.remove(_LOCK_FILE)
+            logger.info(
+                "Narrative engine: cleared stale lock (age=%.0fs, TTL=%ds)",
+                age, _LOCK_TTL_SECONDS,
+            )
+    except Exception:
+        # Corrupt / unreadable lock — remove it
+        try:
+            os.remove(_LOCK_FILE)
+        except OSError:
+            pass
+
+
+def _write_lock() -> None:
+    """Write (or refresh) the lock file with the current timestamp."""
+    try:
+        with open(_LOCK_FILE, "w") as f:
+            f.write(str(time.time()))
+    except OSError as exc:
+        logger.warning("Narrative engine: could not write lock file: %s", exc)
+
+
+def _release_lock() -> None:
+    """Delete the lock file on clean shutdown."""
+    try:
+        if os.path.exists(_LOCK_FILE):
+            os.remove(_LOCK_FILE)
+    except OSError:
+        pass
 
 # ──────────────────────────────────────────────
 # Maths helpers
@@ -202,10 +252,16 @@ class NarrativeEngine:
     NEW_CLUSTER_SIMILARITY = 0.75   # min similarity for initial greedy clustering
     MIN_POSTS_FOR_NARRATIVE = 3     # a cluster needs at least this many posts …
     MIN_SOURCES_FOR_NARRATIVE = 2   # … from at least this many distinct source_types
-    STALE_HOURS = 12                # mark active narrative stale after N quiet hours
+    STALE_HOURS = 12                # legacy: used only as fallback if TTL config not available
     LOOKBACK_HOURS = 24             # only consider posts from the last N hours
     POLL_INTERVAL = 600             # seconds between full cycles (10 min)
     MAX_POSTS_PER_CYCLE = 200       # max posts to embed in one cycle
+    STARTUP_DELAY = 120             # seconds to wait before first cycle (allows providers to register via login)
+
+    @property
+    def _stale_ttl_hours(self) -> int:
+        """Configurable TTL for stale narratives (default 48h, from NARRATIVE_STALE_TTL_HOURS)."""
+        return getattr(settings, "NARRATIVE_STALE_TTL_HOURS", 48)
 
     def __init__(self) -> None:
         self._running = False
@@ -214,7 +270,10 @@ class NarrativeEngine:
     async def start(self) -> None:
         if self._running:
             return
+        # Clear any stale lock from a previous crashed run before starting
+        _clear_stale_lock()
         self._running = True
+        _write_lock()
         self._task = asyncio.create_task(self._loop())
         logger.info("Narrative clustering engine started")
 
@@ -226,6 +285,7 @@ class NarrativeEngine:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        _release_lock()
         logger.info("Narrative clustering engine stopped")
 
     # ──────────────────────────────────────────
@@ -233,6 +293,14 @@ class NarrativeEngine:
     # ──────────────────────────────────────────
 
     async def _loop(self) -> None:
+        # Delay first cycle to allow embedding providers to be registered via user login.
+        # Without this, the engine attempts embed() immediately at startup before any
+        # provider credentials are decrypted, producing empty vectors and log errors.
+        logger.info(
+            "Narrative engine: waiting %ds before first cycle (provider registration delay)",
+            self.STARTUP_DELAY,
+        )
+        await asyncio.sleep(self.STARTUP_DELAY)
         while self._running:
             try:
                 await self._cycle()
@@ -242,6 +310,8 @@ class NarrativeEngine:
 
     async def _cycle(self) -> None:
         """One full clustering cycle."""
+        # Refresh the lock timestamp so it doesn't expire mid-run
+        _write_lock()
         embedded = await self._embed_new_posts()
         if embedded:
             logger.info("Narrative engine: embedded %d new posts", embedded)
@@ -256,6 +326,7 @@ class NarrativeEngine:
 
         await self._update_narrative_stats()
         await self._mark_stale_narratives()
+        await self._detect_narrative_duplicates()
 
     # ──────────────────────────────────────────
     # Step 1 — embed new posts
@@ -582,19 +653,128 @@ class NarrativeEngine:
     # ──────────────────────────────────────────
 
     async def _mark_stale_narratives(self) -> None:
-        """Demote active narratives that have had no updates for STALE_HOURS."""
-        stale_cutoff = datetime.now(timezone.utc) - timedelta(hours=self.STALE_HOURS)
+        """Demote active narratives that have had no new posts within NARRATIVE_STALE_TTL_HOURS.
+
+        Narratives are marked 'stale' (status field) and a stale_at timestamp is set if the
+        column exists. They are never deleted — just demoted for downstream filtering.
+        """
+        ttl_hours = self._stale_ttl_hours
+        stale_cutoff = datetime.now(timezone.utc) - timedelta(hours=ttl_hours)
+        now = datetime.now(timezone.utc)
 
         async with AsyncSessionLocal() as session:
-            await session.execute(
+            # Build update values — include stale_at if the column exists on the model
+            update_values: dict = {"status": "stale"}
+            if hasattr(Narrative, "stale_at"):
+                update_values["stale_at"] = now
+
+            result = await session.execute(
                 update(Narrative)
                 .where(
                     Narrative.status == "active",
                     Narrative.last_updated < stale_cutoff,
                 )
-                .values(status="stale")
+                .values(**update_values)
+                .returning(Narrative.id)
             )
+            staled_ids = result.fetchall()
             await session.commit()
+
+        if staled_ids:
+            logger.info(
+                "Narrative engine: marked %d narrative(s) stale (TTL=%dh, cutoff=%s)",
+                len(staled_ids),
+                ttl_hours,
+                stale_cutoff.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
+
+    # ──────────────────────────────────────────
+    # Step 6 — detect duplicate / overlapping narratives
+    # ──────────────────────────────────────────
+
+    DUPLICATE_OVERLAP_THRESHOLD = 0.60  # >60% shared posts → candidate for merge
+
+    async def _detect_narrative_duplicates(self) -> None:
+        """
+        Compare pairs of active narratives by post overlap.
+
+        If two narratives share > DUPLICATE_OVERLAP_THRESHOLD of the *smaller*
+        narrative's posts, the smaller one is marked as a merge candidate by
+        setting merged_into → the larger narrative's id.
+
+        No posts are moved and no narrative is deleted — this stores the match
+        for admin review only.
+        """
+        async with AsyncSessionLocal() as session:
+            # Fetch active narratives that aren't already merged
+            result = await session.execute(
+                select(Narrative.id, Narrative.post_count)
+                .where(
+                    Narrative.status == "active",
+                    Narrative.merged_into.is_(None),
+                    Narrative.post_count >= self.MIN_POSTS_FOR_NARRATIVE,
+                )
+                .order_by(Narrative.post_count.desc())
+                .limit(100)
+            )
+            active = result.all()  # list of (id, post_count)
+
+        if len(active) < 2:
+            return
+
+        # Build post-id sets per narrative
+        narrative_post_sets: dict = {}
+        for nid, _pc in active:
+            async with AsyncSessionLocal() as session:
+                res = await session.execute(
+                    select(NarrativePost.post_id)
+                    .where(NarrativePost.narrative_id == nid)
+                )
+                narrative_post_sets[nid] = set(r[0] for r in res.all())
+
+        merged_this_cycle: set = set()
+
+        for i, (nid_a, pc_a) in enumerate(active):
+            if nid_a in merged_this_cycle:
+                continue
+            posts_a = narrative_post_sets.get(nid_a, set())
+            if not posts_a:
+                continue
+
+            for nid_b, pc_b in active[i + 1:]:
+                if nid_b in merged_this_cycle:
+                    continue
+                posts_b = narrative_post_sets.get(nid_b, set())
+                if not posts_b:
+                    continue
+
+                # Compute overlap relative to the smaller narrative
+                intersection = posts_a & posts_b
+                if not intersection:
+                    continue
+
+                smaller_count = min(len(posts_a), len(posts_b))
+                overlap_ratio = len(intersection) / smaller_count
+
+                if overlap_ratio > self.DUPLICATE_OVERLAP_THRESHOLD:
+                    # Smaller narrative is the duplicate; larger is canonical
+                    canonical_id = nid_a if pc_a >= pc_b else nid_b
+                    duplicate_id = nid_b if pc_a >= pc_b else nid_a
+
+                    logger.info(
+                        "Narrative duplicate detected: %s → canonical %s "
+                        "(overlap=%.2f, shared=%d posts) — flagged for admin review",
+                        duplicate_id, canonical_id, overlap_ratio, len(intersection),
+                    )
+
+                    async with AsyncSessionLocal() as session:
+                        dup = await session.get(Narrative, duplicate_id)
+                        if dup is not None and dup.merged_into is None:
+                            dup.merged_into = canonical_id
+                            dup.merge_candidate_score = round(overlap_ratio, 4)
+                            await session.commit()
+
+                    merged_this_cycle.add(duplicate_id)
 
     # ──────────────────────────────────────────
     # Canonical label generation — public entry point

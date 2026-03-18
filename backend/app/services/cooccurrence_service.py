@@ -21,6 +21,9 @@ logger = logging.getLogger("orthanc.cooccurrence")
 _LOOP_INTERVAL_SECONDS = 30 * 60  # 30 minutes
 _MAX_POSTS_PER_RUN = 1000
 _MAX_SAMPLE_POST_IDS = 10
+_MAX_ENTITIES_PER_POST = 100      # cap combinatorial explosion per post
+_UPSERT_BATCH_SIZE = 500          # DB upsert chunk size for large pair sets
+_DB_QUERY_TIMEOUT = 30.0          # seconds before aborting the mention-fetch query
 
 
 class CooccurrenceService:
@@ -95,7 +98,14 @@ class CooccurrenceService:
                     .where(EntityMention.post_id.in_(select(subq)))
                 )
 
-            result = await db.execute(stmt)
+            try:
+                result = await asyncio.wait_for(db.execute(stmt), timeout=_DB_QUERY_TIMEOUT)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Co-occurrence: DB query timed out after %.0fs — skipping this run",
+                    _DB_QUERY_TIMEOUT,
+                )
+                return
             rows = result.all()
 
         if not rows:
@@ -117,6 +127,13 @@ class CooccurrenceService:
             unique_entities = list(set(entity_ids))
             if len(unique_entities) < 2:
                 continue
+            # Cap entities per post to avoid O(n²) combinatorial explosion
+            if len(unique_entities) > _MAX_ENTITIES_PER_POST:
+                logger.debug(
+                    "Co-occurrence: post %s has %d entities — capping at %d",
+                    post_id, len(unique_entities), _MAX_ENTITIES_PER_POST,
+                )
+                unique_entities = unique_entities[:_MAX_ENTITIES_PER_POST]
 
             for a_id, b_id in combinations(sorted(unique_entities, key=str), 2):
                 # Always store with a < b to keep canonical order
@@ -132,42 +149,51 @@ class CooccurrenceService:
             self._last_run = datetime.now(tz=timezone.utc)
             return
 
-        logger.info("Co-occurrence: upserting %d entity pairs", len(pair_data))
+        total_pairs = len(pair_data)
+        logger.info("Co-occurrence: upserting %d entity pairs", total_pairs)
         now = datetime.now(tz=timezone.utc)
 
-        async with AsyncSessionLocal() as db:
-            for (a_id, b_id), data in pair_data.items():
-                # Try to fetch existing relationship
-                existing_stmt = select(EntityRelationship).where(
-                    EntityRelationship.entity_a_id == a_id,
-                    EntityRelationship.entity_b_id == b_id,
+        pair_items = list(pair_data.items())
+        for batch_start in range(0, total_pairs, _UPSERT_BATCH_SIZE):
+            batch = pair_items[batch_start : batch_start + _UPSERT_BATCH_SIZE]
+            if total_pairs > _UPSERT_BATCH_SIZE:
+                logger.info(
+                    "Co-occurrence: processing batch %d-%d / %d",
+                    batch_start + 1, batch_start + len(batch), total_pairs,
                 )
-                existing_result = await db.execute(existing_stmt)
-                rel = existing_result.scalars().first()
-
-                if rel is not None:
-                    rel.weight += data["weight"]
-                    rel.last_seen = now
-                    # Merge sample post IDs (keep max 10)
-                    existing_samples = rel.sample_post_ids or []
-                    new_samples = data["post_ids"]
-                    combined = list(dict.fromkeys(existing_samples + new_samples))
-                    rel.sample_post_ids = combined[:_MAX_SAMPLE_POST_IDS]
-                else:
-                    rel = EntityRelationship(
-                        entity_a_id=a_id,
-                        entity_b_id=b_id,
-                        weight=data["weight"],
-                        first_seen=now,
-                        last_seen=now,
-                        sample_post_ids=data["post_ids"][:_MAX_SAMPLE_POST_IDS],
+            async with AsyncSessionLocal() as db:
+                for (a_id, b_id), data in batch:
+                    # Try to fetch existing relationship
+                    existing_stmt = select(EntityRelationship).where(
+                        EntityRelationship.entity_a_id == a_id,
+                        EntityRelationship.entity_b_id == b_id,
                     )
-                    db.add(rel)
+                    existing_result = await db.execute(existing_stmt)
+                    rel = existing_result.scalars().first()
 
-            await db.commit()
+                    if rel is not None:
+                        rel.weight += data["weight"]
+                        rel.last_seen = now
+                        # Merge sample post IDs (keep max 10)
+                        existing_samples = rel.sample_post_ids or []
+                        new_samples = data["post_ids"]
+                        combined = list(dict.fromkeys(existing_samples + new_samples))
+                        rel.sample_post_ids = combined[:_MAX_SAMPLE_POST_IDS]
+                    else:
+                        rel = EntityRelationship(
+                            entity_a_id=a_id,
+                            entity_b_id=b_id,
+                            weight=data["weight"],
+                            first_seen=now,
+                            last_seen=now,
+                            sample_post_ids=data["post_ids"][:_MAX_SAMPLE_POST_IDS],
+                        )
+                        db.add(rel)
+
+                await db.commit()
 
         self._last_run = now
-        logger.info("Co-occurrence: computation complete (%d pairs processed)", len(pair_data))
+        logger.info("Co-occurrence: computation complete (%d pairs processed)", total_pairs)
 
     # ── Graph queries ─────────────────────────────────────────────────────────
 

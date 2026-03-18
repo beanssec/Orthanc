@@ -33,6 +33,9 @@ from app.models.event import Event
 
 logger = logging.getLogger("orthanc.collectors.official_sources")
 
+# Track sources that returned 403 to log once then suppress
+_blocked_sources: set[str] = set()
+
 # Realistic browser headers — used for sites that block plain bot user-agents (OPEC, etc.)
 _BROWSER_HEADERS = {
     "User-Agent": (
@@ -242,7 +245,9 @@ async def _fetch_state_dept_rss_fallback(url: str) -> list:
         item_xml = item_m.group(1)
 
         class _Entry:  # noqa: N801
-            pass
+            """Mimics feedparser entry interface (attribute + dict-style access)."""
+            def get(self, key, default=None):  # noqa: N805
+                return getattr(self, key, default) or default
 
         e = _Entry()
         e.title = _extract_tag("title", item_xml)
@@ -608,10 +613,13 @@ async def _collect_opec_press() -> int:
             html = resp.text
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 403:
-            logger.warning(
-                "OPEC press releases: 403 Forbidden — site may require alternative approach "
-                "(JS rendering or API). Skipping this poll cycle."
-            )
+            if url not in _blocked_sources:
+                _blocked_sources.add(url)
+                logger.warning(
+                    "OPEC press releases: 403 Forbidden — site may require JS rendering. "
+                    "Suppressing further 403 logs for this source."
+                )
+            # else: silently skip to avoid log spam
         else:
             logger.error("OPEC press releases fetch error: %s", exc)
         return 0

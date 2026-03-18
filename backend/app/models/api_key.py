@@ -47,6 +47,16 @@ class ApiKey(Base):
         ARRAY(String), nullable=False, server_default=text("ARRAY[]::text[]")
     )
 
+    # High-level access mode: "read_write" (default) or "read_only".
+    # read_only keys are blocked from POST/PUT/PATCH/DELETE endpoints.
+    # Added in migration 038.
+    scope: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default="read_write",
+        default="read_write",
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )

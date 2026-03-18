@@ -141,13 +141,13 @@ async def llm_refine_evidence_relation(
 
 async def llm_refine_batch(
     tracker: "NarrativeTracker",
-    candidates: list[tuple["Narrative", float, bool, bool, str]],
+    candidates: list[tuple],
     model_router: "ModelRouter",
-) -> list[tuple["Narrative", float, bool, bool, str]]:
+) -> list[tuple]:
     """Refine evidence_relation for a batch of heuristic candidates.
 
     ``candidates`` is a list of tuples:
-        (narrative, match_score, pattern_matched, entity_matched, heuristic_relation)
+        (narrative, match_score, pattern_matched, entity_matched, heuristic_relation, match_rationale)
 
     Returns the same structure with evidence_relation potentially updated by the
     model.  Heuristic values are preserved for any narrative where the model
@@ -164,14 +164,16 @@ async def llm_refine_batch(
     to_refine = sorted_candidates[:max_candidates]
     rest = sorted_candidates[max_candidates:]
 
-    refined: list[tuple["Narrative", float, bool, bool, str]] = []
-    for narrative, score, pat_matched, ent_matched, heuristic_rel in to_refine:
+    refined: list[tuple] = []
+    for entry in to_refine:
+        narrative, score, pat_matched, ent_matched, heuristic_rel = entry[0], entry[1], entry[2], entry[3], entry[4]
+        rationale = entry[5] if len(entry) > 5 else ""
         refined_rel = await llm_refine_evidence_relation(
             tracker=tracker,
             narrative=narrative,
             heuristic_relation=heuristic_rel,
             model_router=model_router,
         )
-        refined.append((narrative, score, pat_matched, ent_matched, refined_rel))
+        refined.append((narrative, score, pat_matched, ent_matched, refined_rel, rationale))
 
     return refined + rest

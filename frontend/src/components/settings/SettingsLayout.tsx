@@ -10,32 +10,16 @@ const TABS = [
 
 export function SettingsLayout() {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+    <div className="settings-layout">
       {/* Tab nav */}
-      <div style={{
-        display: 'flex',
-        borderBottom: '1px solid var(--border)',
-        backgroundColor: 'var(--bg-surface)',
-        flexShrink: 0,
-        padding: '0 20px',
-      }}>
+      <div className="settings-nav">
         {TABS.map(({ to, label }) => (
           <NavLink
             key={to}
             to={to}
-            style={({ isActive }) => ({
-              padding: '12px 16px',
-              fontSize: '12px',
-              fontWeight: 600,
-              letterSpacing: '0.05em',
-              textTransform: 'uppercase',
-              color: isActive ? 'var(--accent)' : 'var(--text-muted)',
-              textDecoration: 'none',
-              borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
-              marginBottom: '-1px',
-              transition: 'color 0.1s',
-              whiteSpace: 'nowrap',
-            })}
+            className={({ isActive }) =>
+              `settings-nav__link${isActive ? ' active' : ''}`
+            }
           >
             {label}
           </NavLink>
@@ -43,7 +27,7 @@ export function SettingsLayout() {
       </div>
 
       {/* Page content */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '20px' }}>
+      <div className="settings-content">
         <Outlet />
       </div>
     </div>
