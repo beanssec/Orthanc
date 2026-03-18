@@ -297,21 +297,34 @@ The divergence score (0–1) measures how differently Western and Russian source
 
 ## AI Intelligence Briefs
 
-Orthanc generates AI-powered intelligence briefs on demand or on a schedule.
+Orthanc generates comprehensive AI-powered intelligence briefs using a **smart post selector** that thinks like an analyst — not just "most recent."
 
-**Brief types:**
-- **Situation Report (SITREP)** — Current operational picture from all active sources
-- **Entity Profile** — Deep-dive on a specific person, organisation, or location
-- **Narrative Analysis** — How a specific narrative is evolving and where it diverges
-- **Custom** — Any prompt against the current intelligence corpus
+**Intelligent post selection (5-tier priority system):**
+1. **Fired alerts** — correlation triggers, velocity spikes, pattern matches
+2. **Fusion events** — multi-source corroborated intelligence
+3. **Narrative representatives** — best post from each active story
+4. **Trending entities** — actors with unusual mention spikes
+5. **Temporal fill** — even coverage across the full time window
+
+**Structured output sections:**
+- Executive Summary — 4-6 sentence operational picture
+- Key Developments — 8-15 detailed items with specifics
+- Regional Breakdown — grouped by geographic theatre
+- Entity Watch — key actors with role and trajectory assessments
+- Narrative Shifts — how stories are evolving
+- Risks & Outlook — forward-looking analysis
+- Recommendations — specific collection priorities
+
+**Context-aware scaling:**
+Post budget and content depth scale automatically with the model's context window (80–500 posts). OpenRouter model capabilities are cached at runtime — no manual registry updates needed for new models.
 
 **Models supported** (via OpenRouter):
+- Any OpenRouter-compatible model (context window auto-detected)
 - `x-ai/grok-3-mini` (default, fast)
-- `anthropic/claude-opus-4` (deep analysis)
-- `google/gemini-2.0-flash` (large context)
-- Any OpenRouter-compatible model
+- `anthropic/claude-sonnet-4` (deep analysis)
+- `google/gemini-2.5-flash` (1M context, maximum coverage)
 
-Briefs are stored with full provenance, exportable as PDF via reportlab.
+Briefs are stored with full provenance, exportable as formatted PDF intelligence reports via reportlab.
 
 ---
 
