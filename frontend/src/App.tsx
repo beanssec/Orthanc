@@ -16,6 +16,7 @@ import { DiagnosticsPage } from './components/settings/DiagnosticsPage';
 import { FeedView } from './components/feed/FeedView';
 import { MapView } from './components/map/MapView';
 import { DashboardView } from './components/dashboard/DashboardView';
+import { DashboardTabs } from './components/dashboard/DashboardTabs';
 import { EntitiesView } from './components/entities/EntitiesView';
 import { BriefsView } from './components/briefs/BriefsView';
 import { ScheduledBriefsView } from './components/briefs/ScheduledBriefsView';
@@ -132,7 +133,7 @@ export default function App() {
         }
       >
         <Route index element={<RootRedirect />} />
-        <Route path="dashboard" element={<DashboardView />} />
+        <Route path="dashboard" element={<DashboardTabs />} />
         <Route path="feed" element={<FeedView />} />
         <Route path="map" element={<MapView />} />
         <Route path="entities" element={<EntitiesView />} />

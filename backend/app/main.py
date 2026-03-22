@@ -33,6 +33,7 @@ from app.routers import api_keys as api_keys_router_module
 from app.routers import scheduled_briefs as scheduled_briefs_router_module
 from app.routers import digests as digests_router_module
 from app.routers import metrics as metrics_router_module
+from app.routers import dashboard_tabs as dashboard_tabs_router_module
 from app.middleware.rate_limit import rate_limit_middleware
 from app.collectors.orchestrator import orchestrator
 from app.collectors.satellite_collector import satellite_collector
@@ -432,6 +433,7 @@ _ALL_ROUTERS = [
     scheduled_briefs_router_module.router,
     digests_router_module.router,
     metrics_router_module.router,
+    dashboard_tabs_router_module.router,
 ]
 
 for _r in _ALL_ROUTERS:
