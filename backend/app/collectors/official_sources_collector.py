@@ -707,6 +707,31 @@ def _parse_opec_html(html: str) -> list[dict]:
     return entries
 
 
+# ── last_polled updater ───────────────────────────────────────────────────────
+
+async def _update_last_polled_official(source_handle: str) -> None:
+    """Update last_polled on Source records matching this official/scraper/rss handle."""
+    try:
+        from sqlalchemy import and_
+        from app.models.source import Source
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Source).where(
+                    and_(
+                        Source.type.in_(["official", "scraper", "rss"]),
+                        Source.handle == source_handle,
+                    )
+                )
+            )
+            sources = result.scalars().all()
+            for src in sources:
+                src.last_polled = datetime.now(timezone.utc)
+            if sources:
+                await session.commit()
+    except Exception as exc:
+        logger.debug("Failed to update last_polled for official source %s: %s", source_handle, exc)
+
+
 # ── Collector class ───────────────────────────────────────────────────────────
 
 class OfficialSourcesCollector:
@@ -758,6 +783,7 @@ class OfficialSourcesCollector:
         while self._running:
             try:
                 await collector_fn()
+                await _update_last_polled_official(name)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

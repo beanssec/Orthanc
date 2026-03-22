@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -464,7 +465,7 @@ class ModelRouter:
     DEFAULT_TASK_MODELS: dict[str, str] = {
         TASK_BRIEF: "grok-3-mini",
         TASK_STANCE: "grok-3-mini",
-        TASK_TRANSLATE: "grok-3-mini",
+        TASK_TRANSLATE: "google/gemini-2.5-flash",
         TASK_EMBED: "openai/text-embedding-3-small",
         TASK_SUMMARISE: "grok-3-mini",
         TASK_ENRICH: "grok-3-mini",
@@ -572,6 +573,25 @@ class ModelRouter:
         return result
 
     # ------------------------------------------------------------------
+    # Cost estimation
+    # ------------------------------------------------------------------
+
+    def _estimate_cost(self, model_id: str, tokens_in: int, tokens_out: int) -> float | None:
+        """Estimate USD cost based on known model pricing."""
+        # Import here to avoid circular imports
+        from app.services.ai_models import get_model, _live_model_cache  # type: ignore[import]
+
+        config = get_model(model_id)
+        if not config:
+            config = _live_model_cache.get(model_id)
+        if not config:
+            return None
+
+        cost_in = config.get("cost_per_1k_input", 0) * tokens_in / 1000
+        cost_out = config.get("cost_per_1k_output", 0) * tokens_out / 1000
+        return round(cost_in + cost_out, 6) if (cost_in + cost_out) > 0 else None
+
+    # ------------------------------------------------------------------
     # Core routing methods
     # ------------------------------------------------------------------
 
@@ -632,13 +652,28 @@ class ModelRouter:
                 )
 
             usage = result.get("usage", {})
+            tokens_in = usage.get("prompt_tokens", 0)
+            tokens_out = usage.get("completion_tokens", 0)
             logger.info(
                 "LLM chat | provider=%s model=%s task=%s latency_ms=%d "
                 "tokens_in=%d tokens_out=%d",
                 provider_name, model_id, task, latency_ms,
-                usage.get("prompt_tokens", 0),
-                usage.get("completion_tokens", 0),
+                tokens_in,
+                tokens_out,
             )
+            try:
+                from app.services.llm_usage_service import llm_usage_service  # noqa: PLC0415
+                asyncio.ensure_future(llm_usage_service.log_usage(
+                    provider=provider_name,
+                    model=model_id,
+                    task=task,
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
+                    latency_ms=latency_ms,
+                    cost_usd=self._estimate_cost(model_id, tokens_in, tokens_out),
+                ))
+            except Exception as _log_exc:
+                logger.debug("Usage logging skipped: %s", _log_exc)
             result["provider"] = provider_name
             return result
         except Exception as exc:
@@ -659,10 +694,25 @@ class ModelRouter:
                     latency_ms = int((time.monotonic() - t1) * 1000)
                     self._update_perf(model_id, latency_ms, error=False)
                     usage = result.get("usage", {})
+                    fb_tokens_in = usage.get("prompt_tokens", 0)
+                    fb_tokens_out = usage.get("completion_tokens", 0)
                     logger.info(
                         "LLM chat (fallback) | provider=%s model=%s task=%s latency_ms=%d",
                         fallback_name, model_id, task, latency_ms,
                     )
+                    try:
+                        from app.services.llm_usage_service import llm_usage_service  # noqa: PLC0415
+                        asyncio.ensure_future(llm_usage_service.log_usage(
+                            provider=fallback_name,
+                            model=model_id,
+                            task=task,
+                            tokens_in=fb_tokens_in,
+                            tokens_out=fb_tokens_out,
+                            latency_ms=latency_ms,
+                            cost_usd=self._estimate_cost(model_id, fb_tokens_in, fb_tokens_out),
+                        ))
+                    except Exception as _log_exc:
+                        logger.debug("Usage logging skipped (fallback): %s", _log_exc)
                     result["provider"] = fallback_name
                     return result
                 except Exception as fb_exc:
@@ -750,6 +800,21 @@ class ModelRouter:
                 "LLM embed | provider=%s model=%s task=%s latency_ms=%d dims=%d",
                 provider_name, model_id, task, latency_ms, len(result),
             )
+            try:
+                from app.services.llm_usage_service import llm_usage_service  # noqa: PLC0415
+                # Approximate tokens_in from text length; embed has no output tokens
+                approx_tokens = max(1, len(text) // 4)
+                asyncio.ensure_future(llm_usage_service.log_usage(
+                    provider=provider_name,
+                    model=model_id,
+                    task=task,
+                    tokens_in=approx_tokens,
+                    tokens_out=0,
+                    latency_ms=latency_ms,
+                    cost_usd=self._estimate_cost(model_id, approx_tokens, 0),
+                ))
+            except Exception as _log_exc:
+                logger.debug("Usage logging skipped (embed): %s", _log_exc)
             return result
         except Exception as exc:
             latency_ms = int((time.monotonic() - t0) * 1000)

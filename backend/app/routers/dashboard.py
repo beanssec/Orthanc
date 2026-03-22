@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from collections import defaultdict
+from datetime import date, datetime, timedelta, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, Query
@@ -10,7 +11,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.collectors.orchestrator import orchestrator
-from app.db import get_db
+from app.db import AsyncSessionLocal, get_db
 from app.middleware.auth import get_current_user
 from app.models import Credential, Event, Post, Source, User
 from app.models.entity import Entity
@@ -251,3 +252,46 @@ async def get_geo_hotspots(
         {"place_name": r.place_name, "lat": r.lat, "lng": r.lng, "count": r.event_count}
         for r in result.fetchall()
     ]
+
+
+@router.get("/strikes")
+async def get_strike_counts(
+    days: int = Query(14, ge=1, le=90),
+    current_user: User = Depends(get_current_user),
+):
+    """Get daily strike counts by actor for the last N days."""
+    from app.models.strike_count import StrikeCount
+
+    cutoff = date.today() - timedelta(days=days)
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(StrikeCount.date, StrikeCount.actor, StrikeCount.strike_count)
+            .where(StrikeCount.date >= cutoff)
+            .order_by(StrikeCount.date)
+        )
+        rows = result.all()
+
+    # Group by date
+    by_date: dict = defaultdict(dict)
+    for row_date, actor, count in rows:
+        by_date[row_date.isoformat()][actor] = count
+
+    return {
+        "days": days,
+        "data": [
+            {"date": d, "counts": counts}
+            for d, counts in sorted(by_date.items())
+        ],
+    }
+
+
+@router.post("/strikes/backfill")
+async def backfill_strikes(
+    days: int = Query(14, ge=1, le=30),
+    current_user: User = Depends(get_current_user),
+):
+    """Trigger strike count backfill for the last N days."""
+    from app.services.strike_tracker import strike_tracker
+
+    await strike_tracker.backfill(days)
+    return {"status": "ok", "days": days}

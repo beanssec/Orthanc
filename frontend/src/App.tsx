@@ -12,6 +12,7 @@ import { CredentialsPage } from './components/settings/CredentialsPage';
 import { AlertsPage } from './components/settings/AlertsPage';
 import { TelegramSetup } from './components/settings/TelegramSetup';
 import { ModelsView } from './components/settings/ModelsView';
+import { DiagnosticsPage } from './components/settings/DiagnosticsPage';
 import { FeedView } from './components/feed/FeedView';
 import { MapView } from './components/map/MapView';
 import { DashboardView } from './components/dashboard/DashboardView';
@@ -156,6 +157,7 @@ export default function App() {
           <Route path="alerts" element={<AlertsPage />} />
           <Route path="telegram" element={<TelegramSetup />} />
           <Route path="models" element={<ModelsView />} />
+          <Route path="diagnostics" element={<DiagnosticsPage />} />
         </Route>
       </Route>
 

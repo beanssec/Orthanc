@@ -332,6 +332,27 @@ class MaritimeAdvisoryCollector:
         else:
             logger.debug("Maritime advisory %s: no new items", source_name)
 
+        # Update last_polled on matching Source records
+        try:
+            from sqlalchemy import select as sa_select2, and_
+            from app.models.source import Source
+            async with AsyncSessionLocal() as upd_session:
+                result = await upd_session.execute(
+                    sa_select2(Source).where(
+                        and_(
+                            Source.type.in_(["official", "scraper", "rss", "maritime"]),
+                            Source.handle == short,
+                        )
+                    )
+                )
+                srcs = result.scalars().all()
+                for src in srcs:
+                    src.last_polled = datetime.now(timezone.utc)
+                if srcs:
+                    await upd_session.commit()
+        except Exception as exc:
+            logger.debug("Failed to update last_polled for maritime source %s: %s", short, exc)
+
     async def _ingest_item(self, item: dict, source_name: str) -> bool:
         """
         Insert one advisory item as a Post. Returns True if newly inserted,

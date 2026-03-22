@@ -113,7 +113,8 @@ class XCollector:
             source_id = str(source.id)
             if source_id in self._tasks:
                 continue
-            logger.info("Starting X poller for %s (source %s)", source.handle, source_id)
+            per_source_interval = source.poll_interval_seconds or self._poll_interval
+            logger.info("Starting X poller for %s (source %s, interval=%ds)", source.handle, source_id, per_source_interval)
             task = asyncio.create_task(
                 self._poll_loop(
                     user_id,
@@ -121,6 +122,7 @@ class XCollector:
                     source.handle,
                     x_api_bearer_token=x_api_bearer_token,
                     xai_api_key=xai_api_key,
+                    poll_interval=per_source_interval,
                 ),
                 name=f"x_poll_{source_id}",
             )
@@ -143,9 +145,10 @@ class XCollector:
         *,
         x_api_bearer_token: str,
         xai_api_key: str,
+        poll_interval: int,
     ) -> None:
         """Continuous polling loop for a single X account."""
-        backoff = self._poll_interval
+        backoff = poll_interval
         while True:
             try:
                 await self._poll_once(
@@ -155,7 +158,7 @@ class XCollector:
                     x_api_bearer_token=x_api_bearer_token,
                     xai_api_key=xai_api_key,
                 )
-                backoff = self._poll_interval  # reset on success
+                backoff = poll_interval  # reset on success
             except asyncio.CancelledError:
                 logger.info("X poller cancelled for @%s", handle)
                 raise

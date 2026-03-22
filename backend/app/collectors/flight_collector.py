@@ -5,8 +5,9 @@ import asyncio
 import logging
 import math
 import re
+import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from sqlalchemy import select
@@ -21,6 +22,30 @@ logger = logging.getLogger("orthanc.collectors.flight")
 
 OPENSKY_URL = "https://opensky-network.org/api/states/all"
 POLL_INTERVAL = 300  # 5 minutes (OpenSky anonymous rate limit: 10 req/min, 400/day)
+VIP_POLL_INTERVAL = 3600  # 1 hour — one request per hour for all VIP aircraft
+
+# VIP aircraft watchlist — ICAO24 hex codes for government/diplomatic aircraft
+# Used to detect unusual diplomatic flight activity that may indicate negotiations
+VIP_WATCHLIST = {
+    # Qatar Amiri Flight
+    "06a106": "Qatar Amiri Flight (A7-AAH)",
+    "06a1a4": "Qatar Amiri Flight (A7-HHE)",
+    "06a1a6": "Qatar Amiri Flight (A7-HHJ)",
+    "06a1b2": "Qatar Amiri Flight (A7-HHK)",
+    "06a1b3": "Qatar Amiri Flight (A7-HHM)",
+    # Oman Royal Flight
+    "704800": "Oman Royal Flight (A4O-HMS)",
+    "704801": "Oman Royal Flight (A4O-OMN)",
+    # Swiss Air Force VIP
+    "4b1800": "Swiss Air Force (T-785)",
+    "4b1801": "Swiss Air Force (T-786)",
+    # UAE Government
+    "896400": "UAE Government (A6-PFA)",
+    "896401": "UAE Government (A6-PFB)",
+    # Notable US Government (not Air Force One but diplomatic transport)
+    "ae01c7": "USAF VIP Transport (C-32A)",
+    "ae01c8": "USAF VIP Transport (C-32A)",
+}
 _RATE_LIMIT_BACKOFF_BASE = 60.0   # seconds — initial backoff on 429
 _RATE_LIMIT_BACKOFF_MAX = 900.0   # seconds — cap at 15 minutes
 
@@ -151,6 +176,7 @@ class FlightCollector:
         return list(self._current_flights.values())
 
     async def _poll_loop(self) -> None:
+        vip_last_check: float = 0.0
         while True:
             try:
                 await self._poll_once()
@@ -159,10 +185,140 @@ class FlightCollector:
                 raise
             except Exception as exc:
                 logger.exception("Flight poll error: %s", exc)
+
+            # VIP watchlist check (hourly — one request covers all aircraft)
+            now = time.time()
+            if now - vip_last_check >= VIP_POLL_INTERVAL:
+                try:
+                    await self._poll_vip_watchlist()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning("VIP watchlist poll error: %s", exc)
+                vip_last_check = time.time()
+
             try:
                 await asyncio.sleep(self._poll_interval)
             except asyncio.CancelledError:
                 raise
+
+    async def _poll_vip_watchlist(self) -> None:
+        """Query OpenSky for all VIP/government aircraft in a single request and persist sightings."""
+        logger.info("Polling VIP watchlist (%d aircraft)", len(VIP_WATCHLIST))
+        params = [("icao24", code) for code in VIP_WATCHLIST]
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(OPENSKY_URL, params=params)
+                if resp.status_code == 429:
+                    logger.warning("OpenSky rate limited on VIP poll — skipping")
+                    return
+                resp.raise_for_status()
+                data = resp.json()
+        except httpx.HTTPError as exc:
+            logger.warning("OpenSky VIP request failed: %s", exc)
+            return
+
+        states = data.get("states") or []
+        if not states:
+            logger.debug("VIP poll: no aircraft currently airborne")
+            return
+
+        now_dt = datetime.now(timezone.utc)
+        dedup_cutoff = now_dt - timedelta(hours=4)
+
+        for state in states:
+            if len(state) < 17:
+                continue
+
+            icao24 = (state[0] or "").lower()
+            on_ground = state[8]
+
+            if on_ground:
+                continue  # Only care about airborne VIP aircraft
+
+            aircraft_name = VIP_WATCHLIST.get(icao24)
+            if not aircraft_name:
+                continue  # Shouldn't happen but be safe
+
+            lat = state[6]
+            lng = state[5]
+            heading = _safe_float(state[10])
+            altitude = _safe_float(state[7])
+
+            if lat is None or lng is None:
+                continue
+
+            timestamp_epoch = int(now_dt.timestamp())
+            source_id = f"vip_{icao24}_{timestamp_epoch}"
+
+            content = (
+                f"🛩 VIP FLIGHT DETECTED: {aircraft_name} airborne. "
+                f"Position: {lat:.4f}, {lng:.4f}. "
+                f"Heading: {int(heading or 0)}°. "
+                f"Origin/destination unknown — monitor for diplomatic activity."
+            )
+
+            try:
+                async with AsyncSessionLocal() as session:
+                    # Dedup: check for any VIP post for this aircraft in the last 4 hours
+                    existing = await session.execute(
+                        select(Post).where(
+                            Post.source_type == "flight",
+                            Post.source_id.like(f"vip_{icao24}_%"),
+                            Post.timestamp >= dedup_cutoff,
+                        )
+                    )
+                    if existing.scalars().first():
+                        logger.debug("VIP dedup: %s already reported within 4h", icao24)
+                        continue
+
+                    post = Post(
+                        source_type="flight",
+                        source_id=source_id,
+                        author="VIP Flight Tracker",
+                        content=content,
+                        raw_json={
+                            "icao24": icao24,
+                            "aircraft_name": aircraft_name,
+                            "lat": lat,
+                            "lng": lng,
+                            "heading": heading,
+                            "altitude": altitude,
+                            "on_ground": on_ground,
+                            "vip": True,
+                            "updated_at": now_dt.isoformat(),
+                        },
+                        timestamp=now_dt,
+                    )
+                    session.add(post)
+                    await session.flush()
+
+                    event = Event(
+                        post_id=post.id,
+                        lat=lat,
+                        lng=lng,
+                        place_name=f"VIP flight: {aircraft_name}",
+                        confidence=0.90,
+                    )
+                    session.add(event)
+
+                    post_dict = {
+                        "id": str(post.id),
+                        "source_type": post.source_type,
+                        "source_id": post.source_id,
+                        "author": post.author,
+                        "content": post.content,
+                        "timestamp": post.timestamp.isoformat() if post.timestamp else None,
+                        "ingested_at": post.ingested_at.isoformat() if post.ingested_at else None,
+                        "event": None,
+                    }
+                    await broadcast_post(post_dict)
+                    await session.commit()
+                    logger.info("VIP sighting recorded: %s (%s)", aircraft_name, icao24)
+
+            except Exception as db_exc:
+                logger.warning("DB error storing VIP sighting %s: %s", icao24, db_exc)
 
     async def _poll_once(self) -> None:
         logger.info("Polling OpenSky Network for flights")

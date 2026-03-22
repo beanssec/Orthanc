@@ -144,6 +144,11 @@ function nextScheduledTime(hourUtc: number): string {
 // ── Structured JSON brief renderer ───────────────────────
 interface BriefStructured {
   executive_summary?: string;
+  changes_since_last?: {
+    new?: string[];
+    updated?: string[];
+    quiet?: string[];
+  };
   key_developments?: string[];
   regional_breakdown?: Array<{ region: string; summary: string }>;
   entity_watch?: Array<{ entity: string; role?: string; note: string }>;
@@ -163,6 +168,42 @@ function renderStructuredBrief(data: BriefStructured): React.ReactNode {
         <p className="brief-section__lead">{data.executive_summary}</p>
       </div>
     );
+  }
+
+  if (data.changes_since_last) {
+    const c = data.changes_since_last;
+    const hasChanges = (c.new && c.new.length > 0) || (c.updated && c.updated.length > 0) || (c.quiet && c.quiet.length > 0);
+    if (hasChanges) {
+      sections.push(
+        <div key={key++} className="brief-section brief-section--changes">
+          <h3 className="brief-section__heading">Changes Since Last Brief</h3>
+          {c.new && c.new.length > 0 && (
+            <>
+              <h4 className="brief-subsection__heading">🟢 New Developments</h4>
+              <ul className="brief-section__list">
+                {c.new.map((item, i) => <li key={`new-${i}`}>{item}</li>)}
+              </ul>
+            </>
+          )}
+          {c.updated && c.updated.length > 0 && (
+            <>
+              <h4 className="brief-subsection__heading">🟡 Updated Situations</h4>
+              <ul className="brief-section__list">
+                {c.updated.map((item, i) => <li key={`upd-${i}`}>{item}</li>)}
+              </ul>
+            </>
+          )}
+          {c.quiet && c.quiet.length > 0 && (
+            <>
+              <h4 className="brief-subsection__heading">⚪ Gone Quiet</h4>
+              <ul className="brief-section__list">
+                {c.quiet.map((item, i) => <li key={`quiet-${i}`}>{item}</li>)}
+              </ul>
+            </>
+          )}
+        </div>
+      );
+    }
   }
 
   if (data.key_developments && data.key_developments.length > 0) {
@@ -264,6 +305,7 @@ function renderBriefContent(text: string, navigate: (path: string) => void): Rea
       typeof parsed === 'object' &&
       (
         parsed.executive_summary !== undefined ||
+        parsed.changes_since_last !== undefined ||
         parsed.key_developments !== undefined ||
         parsed.entity_watch !== undefined ||
         parsed.narrative_shifts !== undefined ||

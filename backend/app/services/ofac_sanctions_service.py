@@ -35,11 +35,11 @@ logger = logging.getLogger("orthanc.sanctions.ofac")
 OFAC_SDN_SLS_URL = "https://sanctionslist.ofac.treas.gov/Home/SdnList"
 
 # Legacy OFAC XML download endpoints (fallback / consolidated)
-OFAC_SDN_URL = "https://ofac.treasury.gov/downloads/sdn_advanced.xml"
-OFAC_CONSOLIDATED_URL = "https://ofac.treasury.gov/downloads/consolidated.xml"
+OFAC_SDN_URL = "https://sanctionslistservice.ofac.treas.gov/api/publicationpreview/exports/sdn_advanced.xml"
+OFAC_CONSOLIDATED_URL = "https://sanctionslistservice.ofac.treas.gov/api/publicationpreview/exports/consolidated.xml"
 
-# SDN XML namespace
-SDN_NS = "http://tempuri.org/sdnList.xsd"
+# SDN XML namespace (new OFAC advanced XML schema)
+SDN_NS = "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/ADVANCED_XML"
 
 # Map OFAC sdnType → our entity_type
 OFAC_TYPE_MAP = {
@@ -179,125 +179,174 @@ class OFACSanctionsService:
 
     # ── XML Parser ────────────────────────────────────────────────────────────
 
+    # PartySubTypeID → entity_type mapping for the new advanced XML schema.
+    # 1 = Individual, 2 = Entity (generic), 3 = Entity (org), 4 = Individual,
+    # 5 = Vessel, 6 = Aircraft.  We keep it simple and map to our internal types.
+    _PARTY_SUBTYPE_MAP: dict[str, str] = {
+        "1": "person",
+        "2": "organization",
+        "3": "organization",
+        "4": "person",
+        "5": "vessel",
+        "6": "aircraft",
+    }
+
     def _parse_xml(self, xml_bytes: bytes, list_name: str) -> list[dict]:
-        """Parse OFAC advanced XML format into entity dicts."""
-        try:
-            from lxml import etree
-        except ImportError:
-            import xml.etree.ElementTree as etree  # type: ignore
+        """Parse OFAC advanced XML (new SLS schema) into entity dicts.
+
+        The new schema looks like:
+          <Sanctions xmlns="https://...ADVANCED_XML">
+            <DistinctParty FixedRef="36">
+              <Profile ID="36" PartySubTypeID="3">
+                <Identity ...>
+                  <Alias AliasTypeID="1403" Primary="true">
+                    <NamePartValue ...>PRIMARY NAME</NamePartValue>
+                  </Alias>
+                  <Alias AliasTypeID="1400" Primary="false">
+                    <NamePartValue ...>AKA NAME</NamePartValue>
+                  </Alias>
+                </Identity>
+              </Profile>
+            </DistinctParty>
+          </Sanctions>
+        """
+        import xml.etree.ElementTree as ET
 
         entities: list[dict] = []
 
         try:
-            root = etree.fromstring(xml_bytes)
+            root = ET.fromstring(xml_bytes)
         except Exception as exc:
             logger.error("OFAC XML root parse failed: %s", exc)
             return entities
 
-        # Try namespace-aware and namespace-free paths
-        ns = {"sdn": SDN_NS}
-        sdn_entries = (
-            root.findall(".//sdnEntry")
-            or root.findall(f".//{{{SDN_NS}}}sdnEntry")
-        )
+        # Detect namespace from root tag or use the known constant
+        ns = SDN_NS
+        # Strip namespace prefix helper
+        def _tag(local: str) -> str:
+            return f"{{{ns}}}{local}"
 
-        for entry in sdn_entries:
+        # Support both namespaced and namespace-stripped documents
+        def _findall(elem, local: str):
+            results = elem.findall(_tag(local))
+            if not results:
+                results = elem.findall(local)
+            return results
+
+        def _find(elem, local: str):
+            result = elem.find(_tag(local))
+            if result is None:
+                result = elem.find(local)
+            return result
+
+        def _attr(elem, name: str, default: str = "") -> str:
+            return (elem.get(name) or default).strip()
+
+        # Iterate DistinctParty elements — use iter() since they're nested
+        # under intermediate wrapper elements, not direct children of root
+        distinct_parties = list(root.iter(_tag("DistinctParty")))
+        if not distinct_parties:
+            distinct_parties = list(root.iter("DistinctParty"))
+        if not distinct_parties:
+            distinct_parties = _findall(root, "DistinctParty")
+
+        logger.info("OFAC %s: found %d DistinctParty elements", list_name, len(distinct_parties))
+
+        parse_errors = 0
+        parse_skipped = 0
+        for party in distinct_parties:
             try:
-                entity = self._parse_entry(entry, list_name)
+                entity = self._parse_distinct_party(party, list_name, _find, _findall, _attr)
                 if entity:
                     entities.append(entity)
+                else:
+                    parse_skipped += 1
             except Exception as exc:
-                logger.debug("OFAC entry parse error: %s", exc)
+                parse_errors += 1
+                if parse_errors <= 3:
+                    logger.warning("OFAC DistinctParty parse error (showing first 3): %s", exc)
 
+        if parse_errors or parse_skipped:
+            logger.warning("OFAC %s: %d parse errors, %d skipped (no name), %d successful", 
+                          list_name, parse_errors, parse_skipped, len(entities))
+
+        logger.info("OFAC %s: parsed %d entities", list_name, len(entities))
         return entities
 
-    def _parse_entry(self, entry, list_name: str) -> dict | None:
-        """Parse one <sdnEntry> element."""
+    def _parse_distinct_party(self, party, list_name: str, _find, _findall, _attr) -> dict | None:
+        """Parse one <DistinctParty> element from the new OFAC advanced XML schema."""
+        fixed_ref = _attr(party, "FixedRef")
 
-        def _find_text(elem, tag: str) -> str:
-            """Find text stripping namespaces."""
-            # Try bare tag
-            child = elem.find(tag)
-            if child is None:
-                # Try with namespace wildcard
-                child = elem.find(f"{{*}}{tag}")
-            return (child.text or "").strip() if child is not None else ""
-
-        def _find_all(elem, tag: str):
-            children = elem.findall(tag)
-            if not children:
-                children = elem.findall(f"{{*}}{tag}")
-            return children
-
-        uid = _find_text(entry, "uid")
-        if not uid:
+        profile = _find(party, "Profile")
+        if profile is None:
             return None
 
-        last_name = _find_text(entry, "lastName")
-        first_name = _find_text(entry, "firstName")
-        sdn_type = _find_text(entry, "sdnType").lower()
+        profile_id = _attr(profile, "ID") or fixed_ref
+        subtype_id = _attr(profile, "PartySubTypeID", "2")
+        entity_type = self._PARTY_SUBTYPE_MAP.get(subtype_id, "organization")
 
-        # Build primary name
-        if first_name and last_name:
-            name = f"{first_name} {last_name}".strip()
-        else:
-            name = last_name or first_name
-        if not name:
-            return None
-
-        entity_type = OFAC_TYPE_MAP.get(sdn_type, "organization")
-
-        # Collect aliases from akaList
+        # Collect all Identity/Alias elements
+        primary_name: str = ""
         aliases: list[str] = []
-        aka_list = entry.find("akaList") or entry.find("{*}akaList")
-        if aka_list is not None:
-            for aka in _find_all(aka_list, "aka"):
-                aka_last = _find_text(aka, "lastName")
-                aka_first = _find_text(aka, "firstName")
-                if aka_first and aka_last:
-                    alias = f"{aka_first} {aka_last}".strip()
-                elif aka_last:
-                    alias = aka_last
-                elif aka_first:
-                    alias = aka_first
-                else:
+
+        identities = _findall(profile, "Identity")
+        for identity in identities:
+            alias_elems = _findall(identity, "Alias")
+            for alias_elem in alias_elems:
+                alias_type_id = _attr(alias_elem, "AliasTypeID")
+                is_primary = _attr(alias_elem, "Primary").lower() == "true"
+
+                # Collect NamePartValues — nested under DocumentedName/DocumentedNamePart
+                # Use iter() to find them regardless of nesting depth or namespace
+                name_parts = [
+                    e for e in alias_elem.iter()
+                    if (e.tag.split('}')[-1] if '}' in e.tag else e.tag) == "NamePartValue"
+                ]
+                parts_text = " ".join(
+                    (p.text or "").strip() for p in name_parts if (p.text or "").strip()
+                ).strip()
+
+                if not parts_text:
                     continue
-                if alias and alias != name and alias not in aliases:
-                    aliases.append(alias)
 
-        # Nationalities / countries
-        countries: list[str] = []
-        nat_list = entry.find("nationalityList") or entry.find("{*}nationalityList")
-        if nat_list is not None:
-            for nat in _find_all(nat_list, "nationality"):
-                country = _find_text(nat, "country")
-                if country and country not in countries:
-                    countries.append(country)
+                # AliasTypeID 1403 = primary name, 1400 = aka/alias
+                if alias_type_id == "1403" and is_primary:
+                    primary_name = parts_text
+                elif alias_type_id == "1400":
+                    if parts_text not in aliases:
+                        aliases.append(parts_text)
+                else:
+                    # Any other alias type — add to aliases if not primary
+                    if not is_primary and parts_text not in aliases:
+                        aliases.append(parts_text)
 
-        # Programs (sanction regimes)
-        programs: list[str] = []
-        prog_list = entry.find("programList") or entry.find("{*}programList")
-        if prog_list is not None:
-            for prog in _find_all(prog_list, "program"):
-                prog_text = (prog.text or "").strip()
-                if prog_text:
-                    programs.append(prog_text)
+        # If no primary name found (edge case), use first alias
+        if not primary_name:
+            if aliases:
+                primary_name = aliases.pop(0)
+            else:
+                return None
 
-        entity_id = f"ofac-{list_name}-{uid}"
+        # Remove primary name from aliases list if it crept in
+        aliases = [a for a in aliases if a != primary_name]
+
+        entity_id = f"ofac-{list_name}-{profile_id}"
+
+        source_key = f"ofac_{list_name}"
 
         return {
             "id": entity_id,
-            "name": name,
+            "name": primary_name,
             "entity_type": entity_type,
             "aliases": aliases,
-            "datasets": [f"ofac_{list_name}"] + programs,
-            "countries": countries,
+            "datasets": [source_key],
+            "countries": [],
             "properties": {
                 **SOURCE_META,
-                "ofac_uid": uid,
-                "sdn_type": sdn_type,
+                "ofac_uid": profile_id,
+                "fixed_ref": fixed_ref,
+                "party_subtype_id": subtype_id,
                 "list": list_name,
-                "programs": programs,
             },
         }
 

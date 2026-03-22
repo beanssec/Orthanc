@@ -19,6 +19,8 @@ export function NarrativesView() {
   const [error, setError] = useState<string | null>(null);
   const [showCompass, setShowCompass] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [relabelling, setRelabelling] = useState(false);
+  const [relabelStatus, setRelabelStatus] = useState<string | null>(null);
 
   const [trackersEnabled, setTrackersEnabled] = useState(true);
   const [trackers, setTrackers] = useState<NarrativeTracker[]>([]);
@@ -105,6 +107,24 @@ export function NarrativesView() {
 
   const handleRefresh = () => {
     setRefreshKey((k) => k + 1);
+  };
+
+  const handleRelabel = async () => {
+    setRelabelling(true);
+    setRelabelStatus(null);
+    try {
+      const res = await api.post('/narratives/relabel?limit=200');
+      const data = res.data;
+      const relabelled = data.relabelled ?? data.updated ?? 0;
+      const failed = data.failed ?? data.errors ?? 0;
+      setRelabelStatus(`Relabelled ${relabelled}, failed ${failed}`);
+      setRefreshKey((k) => k + 1);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? 'Re-label failed';
+      setRelabelStatus(`Error: ${msg}`);
+    } finally {
+      setRelabelling(false);
+    }
   };
 
   const handleCreateTracker = async () => {
@@ -244,6 +264,16 @@ export function NarrativesView() {
           <button onClick={handleRefresh} title="Refresh narratives">
             ↻ Refresh
           </button>
+
+          <button className="btn btn-secondary" onClick={handleRelabel} disabled={relabelling} title="Re-label up to 20 narratives using AI">
+            {relabelling ? <><span className="spinner spinner-sm" /> Re-labelling…</> : '🔄 Re-label'}
+          </button>
+
+          {relabelStatus && (
+            <span className="narratives-relabel-status" title={relabelStatus}>
+              {relabelStatus}
+            </span>
+          )}
 
           {total > 0 && (
             <span className="narratives-total-count">

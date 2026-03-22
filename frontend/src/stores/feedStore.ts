@@ -25,6 +25,10 @@ export interface Post {
   authenticity_score: number | null
   authenticity_analysis: string | null
   authenticity_checked_at: string | null
+  // Translation fields (migration 042)
+  detected_language: string | null
+  translated_content: string | null
+  translation_model: string | null
 }
 
 export interface FeedFilters {

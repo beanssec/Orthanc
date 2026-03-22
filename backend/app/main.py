@@ -180,6 +180,11 @@ async def lifespan(app: FastAPI):
     await narrative_engine.start()
     logger.info("Narrative clustering engine started")
 
+    # Start strike tracker (extracts daily strike/sortie counts every hour)
+    from app.services.strike_tracker import strike_tracker
+    asyncio.create_task(strike_tracker.start_daily_loop(), name="strike_tracker")
+    logger.info("Strike tracker started")
+
     # Start frontline snapshot scheduler (polls every 6h, stores if changed)
     from app.services.frontline_service import frontline_service
     await frontline_service.start()

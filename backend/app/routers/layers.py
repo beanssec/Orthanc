@@ -169,6 +169,68 @@ async def get_flights_endpoint(
 
 
 # ---------------------------------------------------------------------------
+# VIP Flights
+# ---------------------------------------------------------------------------
+
+@router.get("/layers/flights/vip")
+async def get_vip_sightings(
+    hours: int = 24,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """
+    Get recent VIP aircraft sightings from the database.
+    Returns posts created by the VIP Flight Tracker within the last `hours` hours.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from app.db import AsyncSessionLocal
+    from app.models.post import Post
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Post).where(
+                    Post.source_type == "flight",
+                    Post.author == "VIP Flight Tracker",
+                    Post.timestamp >= cutoff,
+                ).order_by(Post.timestamp.desc())
+            )
+            posts = result.scalars().all()
+    except Exception as exc:
+        logger.warning("Failed to fetch VIP sightings: %s", exc)
+        posts = []
+
+    sightings = []
+    for p in posts:
+        raw = p.raw_json or {}
+        lat = raw.get("lat")
+        lng = raw.get("lng")
+        sightings.append({
+            "id": str(p.id),
+            "source_id": p.source_id,
+            "aircraft_name": raw.get("aircraft_name", "Unknown"),
+            "icao24": raw.get("icao24", ""),
+            "content": p.content,
+            "timestamp": p.timestamp.isoformat() if p.timestamp else None,
+            "lat": lat,
+            "lng": lng,
+            "heading": raw.get("heading"),
+            "altitude": raw.get("altitude"),
+        })
+
+    return {
+        "sightings": sightings,
+        "count": len(sightings),
+        "hours": hours,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Ships (AIS + demo data)
 # ---------------------------------------------------------------------------
 

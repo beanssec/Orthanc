@@ -37,6 +37,11 @@ class PostResponse(BaseModel):
     authenticity_analysis: Optional[str] = None
     authenticity_checked_at: Optional[datetime] = None
 
+    # Translation fields (migration 042)
+    detected_language: Optional[str] = None
+    translated_content: Optional[str] = None
+    translation_model: Optional[str] = None
+
     class Config:
         from_attributes = True
 

@@ -253,9 +253,9 @@ class NarrativeEngine:
     MIN_POSTS_FOR_NARRATIVE = 3     # a cluster needs at least this many posts …
     MIN_SOURCES_FOR_NARRATIVE = 2   # … from at least this many distinct source_types
     STALE_HOURS = 12                # legacy: used only as fallback if TTL config not available
-    LOOKBACK_HOURS = 24             # only consider posts from the last N hours
+    LOOKBACK_HOURS = 72             # consider posts from last 3 days (catches missed cycles/restarts)
     POLL_INTERVAL = 600             # seconds between full cycles (10 min)
-    MAX_POSTS_PER_CYCLE = 200       # max posts to embed in one cycle
+    MAX_POSTS_PER_CYCLE = 500       # max posts to embed in one cycle
     STARTUP_DELAY = 120             # seconds to wait before first cycle (allows providers to register via login)
 
     @property
@@ -1098,12 +1098,47 @@ class NarrativeEngine:
                         return candidate
                 return top_pn
 
-        # 3. Fall back to weighted top terms
+        # 3. Fall back to best representative sentence as title
+        # Instead of keyword soup, find the most informative short sentence
+        best_sentence = None
+        best_score = -1
+        for content in contents[:10]:
+            if not content:
+                continue
+            # Only consider English-ish content for heuristic titles
+            latin_ratio = len(re.findall(r"[a-zA-Z]", content)) / max(len(content), 1)
+            if latin_ratio < 0.4:
+                continue
+            sentences = re.split(r"(?<=[.!?])\s+", content.strip())
+            for sentence in sentences:
+                s = sentence.strip()
+                if len(s) < 20 or len(s) > 120:
+                    continue
+                # Score: prefer sentences with action words + proper nouns
+                score = 0
+                for w in s.lower().split():
+                    w_clean = re.sub(r"[^\w-]", "", w)
+                    if w_clean in _ACTION_WORDS:
+                        score += 3
+                    elif w_clean in _LOCATION_WORDS:
+                        score += 2
+                    elif w_clean and w_clean[0].isupper():
+                        score += 1
+                if score > best_score:
+                    best_score = score
+                    best_sentence = s
+
+        if best_sentence:
+            # Truncate to 80 chars
+            if len(best_sentence) > 80:
+                return best_sentence[:77] + "…"
+            return best_sentence
+
+        # Ultimate fallback to weighted top terms
         top = scored.most_common(8)
         if not top:
             return "Unclassified Event"
 
-        # Prefer action/location words in the title
         priority = [w for w, _ in top if w in _ACTION_WORDS or w in _LOCATION_WORDS]
         others = [w for w, _ in top if w not in _ACTION_WORDS and w not in _LOCATION_WORDS]
 
@@ -1254,7 +1289,7 @@ class NarrativeEngine:
     # Hard cap on how many post snippets we send to the LLM (token hygiene)
     _LLM_MAX_SNIPPETS = 6
     _LLM_SNIPPET_CHARS = 300
-    _LLM_TIMEOUT_SECONDS = 30
+    _LLM_TIMEOUT_SECONDS = 60
 
     async def _llm_label_narrative(
         self,

@@ -1417,3 +1417,75 @@ async def _build_source_group_map(db: AsyncSession) -> dict:
         .join(SourceGroup, SourceGroup.id == SourceGroupMember.source_group_id)
     )
     return {str(row[0]): row[1] for row in result.all()}
+
+
+# ─── Re-label narratives with bad/missing labels ──────────────────────────────
+
+@router.post("/relabel")
+async def relabel_narratives(
+    limit: int = Query(20, ge=1, le=500),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-run LLM labelling on narratives with heuristic/weak/missing labels."""
+    from app.services.narrative_engine import NarrativeEngine
+    from sqlalchemy import or_
+
+    result = await db.execute(
+        select(Narrative).where(
+            or_(
+                Narrative.confirmation_status.is_(None),
+                Narrative.confirmation_status.in_(["heuristic", "weak_cluster", "mixed_cluster"]),
+            )
+        ).order_by(Narrative.post_count.desc()).limit(limit)
+    )
+    narratives = result.scalars().all()
+
+    if not narratives:
+        return {"relabelled": 0, "failed": 0, "message": "No narratives need re-labelling"}
+
+    engine = NarrativeEngine.__new__(NarrativeEngine)
+    engine._LLM_TIMEOUT_SECONDS = 60
+
+    success = 0
+    failed = 0
+    results = []
+
+    for narr in narratives:
+        posts_result = await db.execute(
+            select(Post.content)
+            .join(NarrativePost, NarrativePost.post_id == Post.id)
+            .where(NarrativePost.narrative_id == narr.id)
+            .limit(6)
+        )
+        contents = [r[0] for r in posts_result.all() if r[0]]
+        if not contents:
+            failed += 1
+            continue
+
+        heuristic_labels = {
+            "canonical_title": narr.canonical_title or narr.title,
+            "canonical_claim": "",
+            "narrative_type": narr.narrative_type or "",
+            "label_confidence": narr.label_confidence or 0.5,
+        }
+
+        llm_result = await engine._llm_label_narrative(narr.id, contents, heuristic_labels)
+        if llm_result:
+            if llm_result.get("canonical_title"):
+                narr.canonical_title = llm_result["canonical_title"]
+                narr.title = llm_result["canonical_title"]
+            if llm_result.get("narrative_type"):
+                narr.narrative_type = llm_result["narrative_type"]
+            if llm_result.get("label_confidence"):
+                narr.label_confidence = llm_result["label_confidence"]
+            if llm_result.get("confirmation_status"):
+                narr.confirmation_status = llm_result["confirmation_status"]
+            success += 1
+            results.append({"id": str(narr.id), "title": narr.title, "status": "relabelled"})
+        else:
+            failed += 1
+            results.append({"id": str(narr.id), "title": narr.title, "status": "failed"})
+
+    await db.commit()
+    return {"relabelled": success, "failed": failed, "results": results}

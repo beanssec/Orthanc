@@ -466,6 +466,10 @@ class TelegramCollector:
                     self._check_authenticity(post.id, post.media_path, post.media_metadata or {})
                 )
 
+            # Auto-translate non-English posts
+            from app.services.auto_translator import schedule_auto_translate
+            schedule_auto_translate(post.id, post.content or "", self._user_id or "")
+
             # Broadcast
             await broadcast_post({
                 "id": str(post.id),
@@ -479,6 +483,8 @@ class TelegramCollector:
                 "media_type": post.media_type,
                 "media_thumbnail_path": post.media_thumbnail_path,
                 "authenticity_score": post.authenticity_score,
+                "detected_language": post.detected_language,
+                "translated_content": post.translated_content,
             })
             ingested += 1
 
@@ -582,6 +588,10 @@ class TelegramCollector:
                     self._check_authenticity(post.id, post.media_path, post.media_metadata or {})
                 )
 
+            # Auto-translate non-English posts
+            from app.services.auto_translator import schedule_auto_translate
+            schedule_auto_translate(post.id, post.content or "", self._user_id or "")
+
             # Broadcast over WebSocket
             await broadcast_post(
                 {
@@ -596,6 +606,8 @@ class TelegramCollector:
                     "media_type": post.media_type,
                     "media_thumbnail_path": post.media_thumbnail_path,
                     "authenticity_score": post.authenticity_score,
+                    "detected_language": post.detected_language,
+                    "translated_content": post.translated_content,
                 }
             )
 

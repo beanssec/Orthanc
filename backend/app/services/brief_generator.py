@@ -28,6 +28,11 @@ logger = logging.getLogger("orthanc.brief_generator")
 
 BRIEF_JSON_SCHEMA = """{
   "executive_summary": "<comprehensive 4-6 sentence overview of the key intelligence picture, covering major theatres and themes>",
+  "changes_since_last": {
+    "new": ["<development that was NOT in the previous brief — tag as genuinely new>", "..."],
+    "updated": ["<situation from previous brief that has evolved or changed — describe what changed>", "..."],
+    "quiet": ["<topic from previous brief that is no longer appearing in current sources>", "..."]
+  },
   "key_developments": ["<detailed development with specifics — who, what, where, when, sourcing>", "..."],
   "regional_breakdown": [
     {"region": "<region/theatre name>", "summary": "<2-3 sentence assessment of developments in this region>"}
@@ -43,20 +48,30 @@ BRIEF_JSON_SCHEMA = """{
 SYSTEM_PROMPT = (
     "You are a senior OSINT intelligence analyst producing a comprehensive intelligence brief. "
     "Analyze ALL provided posts thoroughly — do not skip or summarize away important developments.\n\n"
+    "CRITICAL — ANALYTICAL NEUTRALITY:\n"
+    "- Report WHAT sources say happened, not WHO is right or wrong\n"
+    "- Do NOT use loaded terms like 'belligerent', 'aggressor', 'regime', 'terrorist' unless directly quoting a source — and if so, attribute it\n"
+    "- Describe actions factually: 'X conducted strikes on Y' not 'X attacked Y'\n"
+    "- When sources disagree, present BOTH sides with attribution ('Source A claims... while Source B reports...')\n"
+    "- Entity roles should describe observable actions and posture, not assign moral judgement\n"
+    "- Distinguish between confirmed events (multi-source) and single-source claims\n"
+    "- Flag unverified claims explicitly\n\n"
     "Posts are tagged with their selection reason (ALERT, FUSION, NARRATIVE, TRENDING, TEMPORAL) "
     "indicating why they were flagged as significant. Weight ALERT and FUSION posts highest.\n\n"
     "Return ONLY a valid JSON object matching this schema (no markdown fences, no explanation):\n"
     f"{BRIEF_JSON_SCHEMA}\n\n"
+    "BREVITY IS CRITICAL. This is a BRIEF, not an encyclopaedia. Each section has strict limits.\n\n"
     "Requirements:\n"
-    "- executive_summary: 4-6 sentences covering all major themes\n"
-    "- key_developments: 8-15 items with specific details (names, numbers, locations, dates)\n"
-    "- regional_breakdown: group developments by geographic theatre (e.g., Middle East, Europe, Indo-Pacific)\n"
-    "- entity_watch: 6-10 key actors with detailed assessments\n"
-    "- narrative_shifts: identify how narratives are evolving, not just what happened\n"
-    "- risks_and_outlook: forward-looking analysis based on observed patterns\n"
-    "- recommendations: specific collection priorities and monitoring guidance\n\n"
-    "Be thorough, analytical, and professional. Cite specifics from the source material. "
-    "Avoid vague summaries — this brief should give a reader full situational awareness."
+    "- executive_summary: 4-6 sentences ONLY. High-level operational picture.\n"
+    "- changes_since_last: compare against PREVIOUS BRIEF if provided. MAX 5 new, 5 updated, 3 quiet. Group related items — do NOT list every individual post as a separate item. If no previous brief, omit or leave empty.\n"
+    "- key_developments: 8-12 items. One sentence each with specifics (who, what, where, when). Attribute sources in parentheses. Do NOT write paragraphs.\n"
+    "- regional_breakdown: 2-4 regions. Each summary is 2-3 sentences MAX.\n"
+    "- entity_watch: 5-8 key actors. Role is ONE sentence. Note is 2-3 sentences MAX.\n"
+    "- narrative_shifts: 3-5 items. One sentence each describing WHAT shifted and WHY it matters.\n"
+    "- risks_and_outlook: 3-5 items. One sentence each.\n"
+    "- recommendations: 3-5 items. One sentence each — specific collection priorities.\n\n"
+    "Be analytical and impartial. Cite sources. An intelligence brief reports facts — it does not take sides. "
+    "Prioritise significance over comprehensiveness — a decision-maker should read this in under 5 minutes."
 )
 
 DEFAULT_MODEL = "grok-3-mini"
@@ -463,6 +478,55 @@ class BriefGenerator:
             f"Generate an intelligence brief from these {len(posts)} recent "
             f"posts (last {hours} hours{filter_desc}):\n\n{context}"
         )
+
+        # ── Previous brief context for change detection ───────────────────────
+        logger.info("Attempting previous brief lookup for user %s", user_id)
+        try:
+            async with AsyncSessionLocal() as prev_session:
+                prev_result = await prev_session.execute(
+                    select(Brief)
+                    .where(Brief.user_id == uuid.UUID(user_id))
+                    .order_by(Brief.generated_at.desc())
+                    .limit(1)
+                )
+                prev_brief = prev_result.scalars().first()
+                if prev_brief and prev_brief.summary:
+                    # Extract key points from previous brief for comparison
+                    prev_summary = prev_brief.summary
+                    # Truncate to avoid blowing context — just need the key developments and executive summary
+                    prev_parsed = _parse_brief_json(prev_summary)
+                    if prev_parsed:
+                        prev_context_parts = []
+                        if prev_parsed.get("executive_summary"):
+                            prev_context_parts.append(f"Executive Summary: {prev_parsed['executive_summary']}")
+                        if prev_parsed.get("key_developments"):
+                            devs = "\n".join(f"- {d}" for d in prev_parsed["key_developments"][:15])
+                            prev_context_parts.append(f"Key Developments:\n{devs}")
+                        if prev_parsed.get("changes_since_last", {}).get("new"):
+                            new_items = "\n".join(f"- {n}" for n in prev_parsed["changes_since_last"]["new"][:10])
+                            prev_context_parts.append(f"Items flagged as NEW in previous brief:\n{new_items}")
+                        prev_context = "\n\n".join(prev_context_parts)
+                    else:
+                        # Fallback for markdown briefs — just use first 2000 chars
+                        prev_context = prev_summary[:2000]
+
+                    prev_generated = prev_brief.generated_at.strftime("%Y-%m-%d %H:%M UTC") if prev_brief.generated_at else "unknown"
+                    user_message += (
+                        f"\n\nPREVIOUS BRIEF (generated {prev_generated}):\n"
+                        f"{prev_context}\n\n"
+                        f"IMPORTANT: Compare current intelligence against the previous brief above. "
+                        f"In the 'changes_since_last' section:\n"
+                        f"- 'new': list developments that are genuinely NEW and were NOT covered in the previous brief\n"
+                        f"- 'updated': list situations from the previous brief that have EVOLVED or CHANGED — describe specifically what changed\n"
+                        f"- 'quiet': list topics from the previous brief that are NO LONGER appearing in current sources\n"
+                        f"If there is no previous brief, leave changes_since_last empty."
+                    )
+                    logger.info(
+                        "Attached previous brief context (generated %s) for change detection",
+                        prev_generated,
+                    )
+        except Exception as exc:
+            logger.warning("Failed to fetch previous brief for change detection: %s", exc)
 
         # ── Append confidence context ─────────────────────────────────────────
         if confidence:

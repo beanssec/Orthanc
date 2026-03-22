@@ -37,9 +37,10 @@ class RedditCollector:
             if source_id in self._tasks:
                 continue
             subreddit = source.handle.lstrip("r/").lstrip("/")
-            logger.info("Starting Reddit poller for r/%s (source %s)", subreddit, source_id)
+            per_source_interval = source.poll_interval_seconds or self._poll_interval
+            logger.info("Starting Reddit poller for r/%s (source %s, interval=%ds)", subreddit, source_id, per_source_interval)
             task = asyncio.create_task(
-                self._poll_loop(source_id, subreddit),
+                self._poll_loop(source_id, subreddit, per_source_interval),
                 name=f"reddit_poll_{source_id}",
             )
             self._tasks[source_id] = task
@@ -53,7 +54,7 @@ class RedditCollector:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
         self._tasks.clear()
 
-    async def _poll_loop(self, source_id: str, subreddit: str) -> None:
+    async def _poll_loop(self, source_id: str, subreddit: str, poll_interval: int) -> None:
         """Continuous polling loop for a single subreddit."""
         while True:
             try:
@@ -65,7 +66,7 @@ class RedditCollector:
                 logger.exception("Reddit poll error for r/%s: %s", subreddit, exc)
 
             try:
-                await asyncio.sleep(self._poll_interval)
+                await asyncio.sleep(poll_interval)
             except asyncio.CancelledError:
                 logger.info("Reddit poller cancelled during sleep for r/%s", subreddit)
                 raise

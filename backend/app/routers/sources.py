@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy import func, select
 
-from app.db import get_db
+from app.db import get_db, AsyncSessionLocal
 from app.models import User, Source
 from app.models.source_reliability import SourceReliability
 from app.schemas.sources import SourceCreate, SourceUpdate, SourceResponse, SourceReliabilityInfo, SourceReliabilityOverride
@@ -201,6 +201,73 @@ async def source_health(
     return {"sources": health, "total": len(health)}
 
 
+# ── System Diagnostics (must be before /{source_id} to avoid route conflict) ─
+
+@router.get("/diagnostics")
+async def system_diagnostics(
+    hours: int = Query(24, ge=1, le=168),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """System diagnostics — collector status, source health, LLM usage."""
+    from datetime import datetime, timedelta, timezone
+    from app.db import AsyncSessionLocal
+    from app.models.llm_usage import LLMUsage
+    from app.models.task_model_override import TaskModelOverride
+    from app.services.llm_usage_service import llm_usage_service
+    from app.collectors.orchestrator import orchestrator
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    async with AsyncSessionLocal() as db:
+        sources_result = await db.execute(
+            select(
+                Source.type, Source.handle, Source.last_polled,
+                Source.error_count, Source.last_error, Source.enabled,
+            ).where(Source.enabled == True).order_by(Source.error_count.desc())
+        )
+        sources_list = sources_result.all()
+
+        overrides_result = await db.execute(
+            select(TaskModelOverride.task, TaskModelOverride.model_id, TaskModelOverride.updated_at)
+            .order_by(TaskModelOverride.task)
+        )
+        overrides_list = overrides_result.all()
+
+        recent_result = await db.execute(
+            select(LLMUsage).where(LLMUsage.timestamp >= cutoff)
+            .order_by(LLMUsage.timestamp.desc()).limit(50)
+        )
+        recent_list = recent_result.scalars().all()
+
+    usage = await llm_usage_service.get_usage_summary(hours=hours)
+
+    try:
+        collector_status = orchestrator.get_collector_status()
+    except Exception as exc:
+        collector_status = {"error": str(exc)}
+
+    return {
+        "collector_status": collector_status,
+        "source_health": [
+            {"type": s.type, "handle": s.handle,
+             "last_polled": s.last_polled.isoformat() if s.last_polled else None,
+             "error_count": s.error_count, "last_error": s.last_error, "enabled": s.enabled}
+            for s in sources_list
+        ],
+        "task_models": [
+            {"task": o.task, "model_id": o.model_id, "updated_at": o.updated_at.isoformat()}
+            for o in overrides_list
+        ],
+        "llm_usage_summary": usage,
+        "recent_llm_calls": [
+            {"timestamp": r.timestamp.isoformat(), "provider": r.provider, "model": r.model,
+             "task": r.task, "tokens_in": r.tokens_in, "tokens_out": r.tokens_out,
+             "latency_ms": r.latency_ms, "cost_usd": r.cost_usd, "error": r.error}
+            for r in recent_list
+        ],
+    }
+
+
 @router.get("/{source_id}", response_model=SourceResponse)
 async def get_source(
     source_id: uuid.UUID,
@@ -376,3 +443,64 @@ async def score_all_reliability(
 
     await db.commit()
     return {"processed": processed, "errors": errors}
+
+
+
+# ── Embedding backfill ──────────────────────────────────────────────────────
+
+@router.post("/embeddings/backfill")
+async def backfill_embeddings(
+    limit: int = Query(500, ge=1, le=2000),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Backfill embeddings for posts that were missed. Processes oldest-first."""
+    from app.models.narrative import PostEmbedding
+    from app.services.embedding_service import embedding_service
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Post.id, Post.content)
+            .outerjoin(PostEmbedding, PostEmbedding.post_id == Post.id)
+            .where(
+                PostEmbedding.post_id.is_(None),
+                Post.content.isnot(None),
+                func.length(Post.content) > 50,
+            )
+            .order_by(Post.timestamp.asc())
+            .limit(limit)
+        )
+        rows = result.all()
+
+    if not rows:
+        return {"embedded": 0, "remaining": 0, "message": "All posts are embedded"}
+
+    post_ids = [r[0] for r in rows]
+    texts = [r[1][:2000] for r in rows]
+
+    try:
+        embeddings = await embedding_service.embed_batch(texts)
+    except Exception as exc:
+        return {"error": f"Embedding failed: {exc}", "attempted": len(rows)}
+
+    model_name = "text-embedding-3-small"
+    async with AsyncSessionLocal() as session:
+        for post_id, emb in zip(post_ids, embeddings):
+            pe = PostEmbedding(post_id=post_id, embedding=emb, model=model_name)
+            session.add(pe)
+        await session.commit()
+
+    # Count remaining
+    async with AsyncSessionLocal() as session:
+        remaining_result = await session.execute(
+            select(func.count())
+            .select_from(Post)
+            .outerjoin(PostEmbedding, PostEmbedding.post_id == Post.id)
+            .where(
+                PostEmbedding.post_id.is_(None),
+                Post.content.isnot(None),
+                func.length(Post.content) > 50,
+            )
+        )
+        remaining = remaining_result.scalar() or 0
+
+    return {"embedded": len(post_ids), "remaining": remaining}

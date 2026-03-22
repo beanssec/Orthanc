@@ -88,9 +88,10 @@ class RSSCollector:
             source_id = str(source.id)
             if source_id in self._tasks:
                 continue  # already running
-            logger.info("Starting RSS poller for source %s (%s)", source_id, source.handle)
+            per_source_interval = source.poll_interval_seconds or self._poll_interval
+            logger.info("Starting RSS poller for source %s (%s, interval=%ds)", source_id, source.handle, per_source_interval)
             task = asyncio.create_task(
-                self._poll_loop(source_id, source.handle),
+                self._poll_loop(source_id, source.handle, per_source_interval),
                 name=f"rss_poll_{source_id}",
             )
             self._tasks[source_id] = task
@@ -104,18 +105,18 @@ class RSSCollector:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
         self._tasks.clear()
 
-    async def _poll_loop(self, source_id: str, feed_url: str) -> None:
+    async def _poll_loop(self, source_id: str, feed_url: str, poll_interval: int) -> None:
         """Continuous polling loop for a single RSS feed with exponential backoff."""
         from app.services.collector_manager import collector_manager
 
-        backoff = self._poll_interval
-        MAX_BACKOFF = self._poll_interval * 16  # cap at ~80 minutes for 5-min base
+        backoff = poll_interval
+        MAX_BACKOFF = poll_interval * 16  # cap at ~80 minutes for 5-min base
         while True:
             try:
                 await self._poll_once(source_id, feed_url)
                 # Success — reset backoff, failure counter, and DB error tracking
                 self._consecutive_failures[feed_url] = 0
-                backoff = self._poll_interval
+                backoff = poll_interval
                 await collector_manager.record_source_success(source_id)
             except asyncio.CancelledError:
                 logger.info("RSS poller cancelled for source %s", source_id)
@@ -125,7 +126,7 @@ class RSSCollector:
                 self._consecutive_failures[feed_url] = failures
                 logger.exception("RSS poll error for source %s: %s", source_id, exc)
                 # Exponential backoff on consecutive failures
-                backoff = min(self._poll_interval * (2 ** min(failures - 1, 4)), MAX_BACKOFF)
+                backoff = min(poll_interval * (2 ** min(failures - 1, 4)), MAX_BACKOFF)
                 # Record error in DB; auto-disable if threshold reached
                 auto_disabled = await collector_manager.record_source_error(source_id, str(exc))
                 if auto_disabled:

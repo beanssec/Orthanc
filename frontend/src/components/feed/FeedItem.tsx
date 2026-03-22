@@ -146,9 +146,21 @@ const FeedItem: React.FC<FeedItemProps> = ({ post, isSelected, isNew, keyword, o
     }
   }, [post.content, translating, translatedPreview])
 
+  // Use server-side auto-translation if available and not English
+  const hasAutoTranslation = !!(
+    post.translated_content &&
+    post.detected_language &&
+    post.detected_language !== 'en'
+  )
+  const autoTranslatedPreview = hasAutoTranslation
+    ? decodeHtmlEntities(post.translated_content!.slice(0, 200)) + (post.translated_content!.length > 200 ? '…' : '')
+    : null
+
   const rawPreview = post.content ? decodeHtmlEntities(post.content.slice(0, 200)) : ''
   const truncated = post.content && post.content.length > 200
-  const displayPreview = translatedPreview ?? rawPreview
+  // Priority: manual inline translation > server auto-translation > raw content
+  const displayPreview = translatedPreview ?? autoTranslatedPreview ?? rawPreview
+  const isTranslated = !!(translatedPreview || autoTranslatedPreview)
 
   const classes = [
     'feed-item',
@@ -177,9 +189,9 @@ const FeedItem: React.FC<FeedItemProps> = ({ post, isSelected, isNew, keyword, o
           </span>
           <span className="feed-item__time">{relativeTime(post.timestamp)}</span>
           <button
-            className={`feed-item__translate-icon${translatedPreview ? ' feed-item__translate-icon--active' : ''}`}
+            className={`feed-item__translate-icon${isTranslated ? ' feed-item__translate-icon--active' : ''}`}
             onClick={handleTranslateClick}
-            title={translatedPreview ? 'Show original' : 'Translate to English'}
+            title={isTranslated ? 'Show original' : 'Translate to English'}
             disabled={translating}
           >
             {translating ? '…' : '🌐'}
@@ -187,11 +199,23 @@ const FeedItem: React.FC<FeedItemProps> = ({ post, isSelected, isNew, keyword, o
         </div>
 
         {displayPreview && (
-          <div className={`feed-item__content${translatedPreview ? ' feed-item__content--translated' : ''}`}>
-            {keyword && !translatedPreview
-              ? highlightContent(displayPreview + (truncated ? '…' : ''), keyword)
-              : displayPreview + (!translatedPreview && truncated ? '…' : '')}
+          <div className={`feed-item__content${isTranslated ? ' feed-item__content--translated' : ''}`}>
+            {keyword && !isTranslated
+              ? highlightContent(displayPreview + (truncated && !isTranslated ? '…' : ''), keyword)
+              : displayPreview + (!isTranslated && truncated ? '…' : '')}
           </div>
+        )}
+
+        {/* Show original language label when auto-translation is active */}
+        {autoTranslatedPreview && !translatedPreview && post.detected_language && (
+          <details className="feed-item__original-toggle">
+            <summary className="feed-item__original-label">
+              Original ({post.detected_language.toUpperCase()})
+            </summary>
+            <div className="feed-item__original-content">
+              {rawPreview}{truncated ? '…' : ''}
+            </div>
+          </details>
         )}
 
         {/* Media thumbnail + authenticity badge */}

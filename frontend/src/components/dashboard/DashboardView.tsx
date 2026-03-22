@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import '../../styles/dashboard.css';
+import { StrikeChart } from './StrikeChart';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -743,6 +744,9 @@ export function DashboardView() {
           <VelocityChart buckets={velocity} />
         </div>
       </div>
+
+      {/* ── Row 3b: Strike Activity Chart ────────────── */}
+      <StrikeChart />
 
       {/* ── Row 4: Trending Entities + Trending Narratives + Geographic Hotspots */}
       <div className="dashboard-row dashboard-row--3col">

@@ -165,3 +165,9 @@ class LLMUsageService:
                 }
                 for row in result
             ]
+
+
+# Module-level singleton — lazy init with default session factory
+from app.db import AsyncSessionLocal as _DefaultSessionFactory
+llm_usage_service = LLMUsageService(_DefaultSessionFactory)
+

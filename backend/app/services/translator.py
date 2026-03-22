@@ -50,8 +50,9 @@ class Translator:
         hebrew_count = len(HEBREW_RE.findall(text))
         total = max(len(text.strip()), 1)
 
-        # Threshold: 10% of chars in a script → that language
-        if cyrillic_count / total > 0.10:
+        # Threshold: non-Latin scripts need 20% to trigger (reduces false positives
+        # from emoji, Unicode punctuation, and mixed-script posts)
+        if cyrillic_count / total > 0.20:
             # Distinguish Ukrainian from Russian (rough heuristic)
             # Ukrainian-specific letters: і, ї, є, ґ
             ua_specific = len(re.findall(r"[іїєґІЇЄҐ]", text))
@@ -59,18 +60,18 @@ class Translator:
                 return "uk"
             return "ru"
 
-        if arabic_count / total > 0.10:
+        if arabic_count / total > 0.20:
             if farsi_count > 3:
                 return "fa"
             return "ar"
 
-        if chinese_count / total > 0.10:
+        if chinese_count / total > 0.20:
             return "zh"
 
-        if korean_count / total > 0.10:
+        if korean_count / total > 0.20:
             return "ko"
 
-        if hebrew_count / total > 0.10:
+        if hebrew_count / total > 0.20:
             return "he"
 
         return "en"

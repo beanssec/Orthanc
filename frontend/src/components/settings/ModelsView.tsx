@@ -293,6 +293,7 @@ function TasksSection() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [saveStates, setSaveStates] = useState<Record<string, 'saving' | 'saved' | 'error'>>({});
+  const [searchFilters, setSearchFilters] = useState<Record<string, string>>({});
 
   const fetchData = useCallback(async () => {
     try {
@@ -353,7 +354,15 @@ function TasksSection() {
                 const currentModel = tasks[key] ?? '';
                 const saveState = saveStates[key];
                 const providerGuess = guessProvider(currentModel);
-                const filteredModels = filterModelsForTask(models, key);
+                const filteredModels = filterModelsForTask(models, key)
+                  .sort((a, b) => (a.name ?? a.id).localeCompare(b.name ?? b.id));
+                const searchTerm = (searchFilters[key] ?? '').toLowerCase();
+                const displayModels = searchTerm
+                  ? filteredModels.filter((m) =>
+                      (m.name ?? m.id).toLowerCase().includes(searchTerm) ||
+                      m.id.toLowerCase().includes(searchTerm)
+                    )
+                  : filteredModels;
 
                 return (
                   <tr key={key}>
@@ -362,21 +371,29 @@ function TasksSection() {
                     </td>
                     <td>
                       <div className="models-task-cell">
+                        <input
+                          type="text"
+                          className="models-search"
+                          placeholder="Search models…"
+                          value={searchFilters[key] ?? ''}
+                          onChange={(e) => setSearchFilters((f) => ({ ...f, [key]: e.target.value }))}
+                          style={{ fontSize: 11, padding: '3px 6px', marginBottom: 4, width: '100%', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)' }}
+                        />
                         <select
                           className="models-select"
                           value={currentModel}
                           onChange={(e) => handleChange(key, e.target.value)}
-                          disabled={filteredModels.length === 0}
+                          disabled={displayModels.length === 0}
                         >
-                          {currentModel && !filteredModels.find((m) => m.id === currentModel) && (
-                            <option value={currentModel}>{currentModel} (incompatible)</option>
+                          {currentModel && !displayModels.find((m) => m.id === currentModel) && (
+                            <option value={currentModel}>{currentModel}{filteredModels.find((m) => m.id === currentModel) ? '' : ' (incompatible)'}</option>
                           )}
-                          {filteredModels.map((m) => (
+                          {displayModels.map((m) => (
                             <option key={m.id} value={m.id}>
                               {m.name ?? m.id}
                             </option>
                           ))}
-                          {filteredModels.length === 0 && (
+                          {displayModels.length === 0 && (
                             <option value="">No matching models</option>
                           )}
                         </select>

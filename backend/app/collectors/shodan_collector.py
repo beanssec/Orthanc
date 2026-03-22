@@ -68,9 +68,10 @@ class ShodanCollector:
             if source_id in self._tasks:
                 continue
             query = source.handle
-            logger.info("Starting Shodan poller for query %r (source %s)", query, source_id)
+            per_source_interval = source.poll_interval_seconds or self._poll_interval
+            logger.info("Starting Shodan poller for query %r (source %s, interval=%ds)", query, source_id, per_source_interval)
             task = asyncio.create_task(
-                self._poll_loop(user_id, source_id, query, api_key),
+                self._poll_loop(user_id, source_id, query, api_key, per_source_interval),
                 name=f"shodan_poll_{source_id}",
             )
             self._tasks[source_id] = task
@@ -85,9 +86,10 @@ class ShodanCollector:
         self._tasks.clear()
 
     async def _poll_loop(
-        self, user_id: str, source_id: str, query: str, api_key: str
+        self, user_id: str, source_id: str, query: str, api_key: str, poll_interval: int = 0
     ) -> None:
         """Continuous polling loop for a single Shodan query."""
+        effective_interval = poll_interval or self._poll_interval
         while True:
             try:
                 await self._poll_once(user_id, source_id, query, api_key)
@@ -106,7 +108,7 @@ class ShodanCollector:
                 logger.exception("Shodan poll error for query %r: %s", query, exc)
 
             try:
-                await asyncio.sleep(self._poll_interval)
+                await asyncio.sleep(effective_interval)
             except asyncio.CancelledError:
                 logger.info("Shodan poller cancelled during sleep for query %r", query)
                 raise

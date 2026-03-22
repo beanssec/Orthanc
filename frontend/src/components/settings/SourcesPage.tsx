@@ -32,6 +32,7 @@ interface Source {
   default_reliability_prior?: string | null;
   ecosystem?: string | null;
   risk_note?: string | null;
+  poll_interval_seconds?: number | null;
 }
 
 const TYPE_COLORS: Record<string, string> = {
@@ -317,6 +318,12 @@ function SourceModal({
   const [downloadVideos, setDownloadVideos] = useState(initial?.download_videos ?? false);
   const [maxImageSizeMb, setMaxImageSizeMb] = useState(initial?.max_image_size_mb ?? 10);
   const [maxVideoSizeMb, setMaxVideoSizeMb] = useState(initial?.max_video_size_mb ?? 100);
+  const [xApiMethod, setXApiMethod] = useState<string>(
+    (initial?.config_json?.api_method as string | undefined) ?? 'auto'
+  );
+  const [pollInterval, setPollInterval] = useState<number | ''>(
+    initial?.poll_interval_seconds ?? ''
+  );
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -332,10 +339,14 @@ function SourceModal({
         max_image_size_mb: maxImageSizeMb,
         max_video_size_mb: maxVideoSizeMb,
       } : {};
+      const isXSource = type === 'x' || initial?.type === 'x';
+      const configJson = isXSource ? { api_method: xApiMethod } : {};
       if (initial) {
-        await api.put(`/sources/${initial.id}`, { display_name: displayName.trim(), ...mediaPayload });
+        const updatePayload: Record<string, unknown> = { display_name: displayName.trim(), ...mediaPayload, poll_interval_seconds: pollInterval || null };
+        if (isXSource) updatePayload.config_json = { ...(initial.config_json ?? {}), api_method: xApiMethod };
+        await api.put(`/sources/${initial.id}`, updatePayload);
       } else {
-        await api.post('/sources/', { type, handle: handle.trim(), display_name: displayName.trim(), config_json: {}, ...mediaPayload });
+        await api.post('/sources/', { type, handle: handle.trim(), display_name: displayName.trim(), config_json: configJson, ...mediaPayload, poll_interval_seconds: pollInterval || null });
       }
       onSave();
     } catch (err: unknown) {
@@ -403,6 +414,43 @@ function SourceModal({
             onChange={(e) => setDisplayName(e.target.value)}
           />
         </div>
+
+        {/* Poll interval */}
+        <div className="form-group">
+          <label className="form-label">Poll Interval (seconds)</label>
+          <input
+            className="input"
+            type="number"
+            min={30}
+            max={86400}
+            placeholder="Default (varies by source type)"
+            value={pollInterval}
+            onChange={(e) => setPollInterval(e.target.value ? parseInt(e.target.value) : '')}
+          />
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+            Leave empty to use the default. RSS: 300s, X: 60s, Reddit: 300s, Shodan: 3600s.
+          </p>
+        </div>
+
+        {/* API method picker — X sources only */}
+        {(type === 'x' || initial?.type === 'x') && (
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+              X API Method
+            </div>
+            <div className="form-group">
+              <label className="form-label">Retrieval Method</label>
+              <select className="select" value={xApiMethod} onChange={(e) => setXApiMethod(e.target.value)}>
+                <option value="auto">Auto (prefer X API, fallback to xAI)</option>
+                <option value="x_api">X API only (v2 Bearer Token)</option>
+                <option value="xai">xAI Grok only</option>
+              </select>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                Auto requires both credentials. X API only requires an X API Bearer Token. xAI only requires an xAI API key.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Media download toggles — Telegram only */}
         {(type === 'telegram' || initial?.type === 'telegram') && (

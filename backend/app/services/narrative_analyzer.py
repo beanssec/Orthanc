@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import uuid
 from collections import Counter, defaultdict
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import func, select
@@ -46,13 +47,51 @@ from app.services.source_reliability_helper import (  # Sprint 29 CP2
 
 logger = logging.getLogger("orthanc.analyzer")
 
-# Divergence matrix: stances that represent meaningful disagreement
-_OPPOSING_PAIRS = frozenset({
-    frozenset({"confirming", "denying"}),
-    frozenset({"confirming", "deflecting"}),
-    frozenset({"attributing", "denying"}),
-    frozenset({"attributing", "deflecting"}),
-})
+# ──────────────────────────────────────────────────────────────────────────────
+# JSD helpers for divergence scoring
+# ──────────────────────────────────────────────────────────────────────────────
+
+STANCES = ["confirming", "denying", "attributing", "contextualizing", "deflecting", "speculating"]
+
+
+def _jsd(distributions: list[list[float]]) -> float:
+    """Compute multi-distribution Jensen-Shannon Divergence.
+
+    Args:
+        distributions: list of probability distributions (each sums to 1.0)
+    Returns:
+        JSD value between 0.0 (identical) and 1.0 (maximally different)
+    """
+    if len(distributions) < 2:
+        return 0.0
+
+    n = len(distributions)
+    # Mean distribution
+    m = [sum(d[i] for d in distributions) / n for i in range(len(distributions[0]))]
+
+    # KL divergence from each distribution to mean
+    def _kl(p: list[float], q: list[float]) -> float:
+        total = 0.0
+        for pi, qi in zip(p, q):
+            if pi > 0 and qi > 0:
+                total += pi * math.log2(pi / qi)
+        return total
+
+    jsd = sum(_kl(d, m) for d in distributions) / n
+    # Normalise to 0-1 (max JSD for binary distributions = 1.0 with log2)
+    return min(1.0, jsd)
+
+
+def _stance_distribution(stances: list[tuple[str, float]]) -> list[float]:
+    """Convert list of (stance, weight) pairs to a probability distribution over STANCES."""
+    counts = {s: 0.0 for s in STANCES}
+    for stance, weight in stances:
+        if stance in counts:
+            counts[stance] += weight
+    total = sum(counts.values())
+    if total == 0:
+        return [1.0 / len(STANCES)] * len(STANCES)  # uniform
+    return [counts[s] / total for s in STANCES]
 
 
 class NarrativeAnalyzer:
@@ -182,153 +221,120 @@ class NarrativeAnalyzer:
     # ──────────────────────────────────────────────
 
     async def _compute_divergence(self, narrative_id: uuid.UUID) -> float:
-        """Compute divergence score: how much do source groups disagree?
+        """Compute divergence: how much do source groups disagree?
 
-        Algorithm (Sprint 29 CP2: reliability-weighted):
-        - Get dominant stance per source group using reliability-weighted voting.
-          High-reliability sources contribute more weight to their group's stance.
-          Sources with no reliability data are treated as neutral weight (0.5).
-        - If all groups agree → low divergence (0.0–0.3).
-        - If groups have opposing stances → high divergence (0.7–1.0).
-        - Western vs Russian disagreement weighted extra.
+        Uses Jensen-Shannon Divergence on stance distributions per source group,
+        combined with contradiction ratio and temporal spread.
 
-        Fallback: if SourceReliability table is absent or empty, degrades to
-        unweighted counting (identical to previous behaviour).
+        Combined score = 0.50 * JSD + 0.30 * contradiction_ratio + 0.20 * temporal_divergence
+
+        Source group is determined by matching Post.author against Source handles/display names
+        (avoids the broken join on Source.handle == Post.source_id which never matches
+        Telegram or RSS posts).
         """
-        # Collect (source_group_name, stance, reliability_weight) tuples
-        # group_stances maps group_name → list of (stance, weight) pairs
         group_stances: dict[str, list[tuple[str, float]]] = defaultdict(list)
-
-        try:
-            from app.models.source_reliability import SourceReliability  # noqa: PLC0415
-            reliability_available = True
-        except ImportError:
-            reliability_available = False
+        group_timestamps: dict[str, list[datetime]] = defaultdict(list)
 
         async with AsyncSessionLocal() as session:
-            if reliability_available:
-                try:
-                    result = await session.execute(
-                        select(
-                            NarrativePost.stance,
-                            SourceGroup.name,
-                            SourceReliability.reliability_score,
-                            SourceReliability.analyst_override,
-                            SourceReliability.confidence_band,
-                        )
-                        .join(Post, NarrativePost.post_id == Post.id)
-                        .join(
-                            Source,
-                            (Source.type == Post.source_type) & (Source.handle == Post.source_id),
-                            isouter=True,
-                        )
-                        .join(
-                            SourceGroupMember,
-                            SourceGroupMember.source_id == Source.id,
-                            isouter=True,
-                        )
-                        .join(
-                            SourceGroup,
-                            SourceGroup.id == SourceGroupMember.source_group_id,
-                            isouter=True,
-                        )
-                        .join(
-                            SourceReliability,
-                            SourceReliability.source_id == Source.id,
-                            isouter=True,
-                        )
-                        .where(
-                            NarrativePost.narrative_id == narrative_id,
-                            NarrativePost.stance.isnot(None),
-                        )
-                    )
-                    rows = result.all()
-                    for stance, group_name, rs, ao, band in rows:
-                        if not stance:
-                            continue
-                        gname = group_name or "unknown"
+            # Step 1: Build source handle → group mapping
+            group_result = await session.execute(
+                select(Source.handle, Source.type, SourceGroup.name)
+                .join(SourceGroupMember, SourceGroupMember.source_id == Source.id)
+                .join(SourceGroup, SourceGroup.id == SourceGroupMember.source_group_id)
+            )
+            handle_to_group: dict[str, str] = {}
+            for handle, src_type, group_name in group_result.all():
+                if handle:
+                    handle_to_group[handle.lower()] = group_name
 
-                        # Build a lightweight stand-in for effective_score
-                        class _Stub:
-                            reliability_score = rs
-                            analyst_override = ao
-                            confidence_band = band
-
-                        w = reliability_weight(effective_score(_Stub()))
-                        group_stances[gname].append((stance, w))
-                except Exception as exc:
-                    # source_reliability table not yet migrated — fall back to legacy path
-                    logger.debug(
-                        "_compute_divergence: reliability join failed (%s) — using equal weights",
-                        exc,
-                    )
-                    reliability_available = False
-
-            if not reliability_available:
-                # Legacy path: equal weight 1.0 for all stances
-                result = await session.execute(
-                    select(NarrativePost.stance, SourceGroup.name)
-                    .join(Post, NarrativePost.post_id == Post.id)
-                    .join(
-                        Source,
-                        (Source.type == Post.source_type) & (Source.handle == Post.source_id),
-                        isouter=True,
-                    )
-                    .join(
-                        SourceGroupMember,
-                        SourceGroupMember.source_id == Source.id,
-                        isouter=True,
-                    )
-                    .join(
-                        SourceGroup,
-                        SourceGroup.id == SourceGroupMember.source_group_id,
-                        isouter=True,
-                    )
-                    .where(
-                        NarrativePost.narrative_id == narrative_id,
-                        NarrativePost.stance.isnot(None),
-                    )
+            # Step 2: Get posts with stance, author, source info, and timestamp
+            posts_result = await session.execute(
+                select(
+                    NarrativePost.stance,
+                    Post.author,
+                    Post.source_type,
+                    Post.source_id,
+                    Post.timestamp,
                 )
-                for stance, group_name in result.all():
-                    if stance:
-                        group_stances[group_name or "unknown"].append((stance, 1.0))
+                .join(Post, NarrativePost.post_id == Post.id)
+                .where(
+                    NarrativePost.narrative_id == narrative_id,
+                    NarrativePost.stance.isnot(None),
+                )
+            )
 
-        if not group_stances:
-            return 0.0
+            for stance, author, source_type, source_id, timestamp in posts_result.all():
+                if not stance:
+                    continue
 
-        # Reliability-weighted dominant stance per group
-        # Instead of a raw Counter, accumulate weights per stance
-        dominant: dict[str, str] = {}
-        for grp, stance_weight_pairs in group_stances.items():
-            stance_scores: dict[str, float] = defaultdict(float)
-            for stance, w in stance_weight_pairs:
-                stance_scores[stance] += w
-            if stance_scores:
-                dominant[grp] = max(stance_scores, key=lambda s: stance_scores[s])
+                # Find source group by matching author against known handles
+                group = "unknown"
+                if author:
+                    author_lower = author.lower()
+                    # Direct match on author string
+                    group = handle_to_group.get(author_lower, "unknown")
+                    # Substring match for Telegram channel titles vs handles
+                    if group == "unknown":
+                        for handle, gname in handle_to_group.items():
+                            if handle in author_lower or author_lower in handle:
+                                group = gname
+                                break
+                # For RSS, try matching source_id against known handles
+                if group == "unknown" and source_type == "rss":
+                    for handle, gname in handle_to_group.items():
+                        if handle in (source_id or ""):
+                            group = gname
+                            break
 
-        if len(dominant) <= 1:
-            return 0.1  # single group — minimal divergence
+                group_stances[group].append((stance, 1.0))
+                if timestamp:
+                    group_timestamps[group].append(timestamp)
 
-        # Count opposing pairs across groups
-        group_list = list(dominant.items())
-        opposing_count = 0
-        total_pairs = 0
-        for i in range(len(group_list)):
-            for j in range(i + 1, len(group_list)):
-                g1, s1 = group_list[i]
-                g2, s2 = group_list[j]
-                total_pairs += 1
-                pair = frozenset({s1, s2})
-                if pair in _OPPOSING_PAIRS:
-                    # Extra weight for the canonical Western vs Russian axis
-                    axis_weight = 2 if frozenset({g1, g2}) == frozenset({"western", "russian"}) else 1
-                    opposing_count += axis_weight
+            # Step 3: Get contradiction ratio from evidence roles
+            evidence_result = await session.execute(
+                select(NarrativePost.evidence_role, func.count())
+                .where(
+                    NarrativePost.narrative_id == narrative_id,
+                    NarrativePost.evidence_role.isnot(None),
+                )
+                .group_by(NarrativePost.evidence_role)
+            )
+            evidence_counts = {role: count for role, count in evidence_result.all()}
 
-        if total_pairs == 0:
-            return 0.0
+        # Need at least 2 known groups (not just "unknown")
+        known_groups = {g: s for g, s in group_stances.items() if g != "unknown"}
+        if len(known_groups) < 2:
+            # Fall back to including unknown if it has enough data
+            if len(group_stances) < 2:
+                return 0.0
+            known_groups = dict(group_stances)
 
-        raw = opposing_count / (total_pairs * 2)  # max weight per pair is 2
-        return round(min(1.0, raw), 3)
+        # Compute JSD across stance distributions
+        distributions = [_stance_distribution(stances) for stances in known_groups.values()]
+        jsd = _jsd(distributions)
+
+        # Compute contradiction ratio from evidence roles
+        supports = evidence_counts.get("supports", 0)
+        contradicts = evidence_counts.get("contradicts", 0)
+        if supports + contradicts > 0:
+            contradiction_ratio = contradicts / (supports + contradicts)
+        else:
+            contradiction_ratio = 0.0
+
+        # Compute temporal divergence (normalised std dev of first-post-per-group timestamps)
+        temporal_div = 0.0
+        if len(group_timestamps) >= 2:
+            first_per_group = [min(ts) for ts in group_timestamps.values() if ts]
+            if len(first_per_group) >= 2:
+                mean_ts = sum(t.timestamp() for t in first_per_group) / len(first_per_group)
+                variance = sum((t.timestamp() - mean_ts) ** 2 for t in first_per_group) / len(first_per_group)
+                std_seconds = variance ** 0.5
+                # Normalise: 0 = simultaneous, 1.0 = 6+ hours apart
+                temporal_div = min(1.0, std_seconds / (6 * 3600))
+
+        # Combined score
+        combined = 0.50 * jsd + 0.30 * contradiction_ratio + 0.20 * temporal_div
+        return round(min(1.0, combined), 3)
 
     async def _compute_evidence_score(self, narrative_id: uuid.UUID) -> float:
         """Average confidence across all claim evidence records for this narrative."""

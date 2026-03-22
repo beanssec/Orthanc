@@ -93,7 +93,7 @@ AI_MODELS = [
         "key_field": "api_key",
     },
     {
-        "id": "google/gemini-2.5-flash-preview",
+        "id": "google/gemini-2.5-flash",
         "provider": "openrouter",
         "name": "Gemini 2.5 Flash",
         "description": "Google's fast model with massive 1M context. Can process far more posts per brief.",

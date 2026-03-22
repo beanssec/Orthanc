@@ -321,6 +321,39 @@ class OrthanIntelReport:
             ))
             flowables.append(Spacer(1, 4 * mm))
 
+        # Changes Since Last Brief
+        changes = data.get('changes_since_last', {})
+        if isinstance(changes, dict):
+            has_changes = (
+                (changes.get('new') and len(changes['new']) > 0) or
+                (changes.get('updated') and len(changes['updated']) > 0) or
+                (changes.get('quiet') and len(changes['quiet']) > 0)
+            )
+            if has_changes:
+                flowables.append(Paragraph("CHANGES SINCE LAST BRIEF", self.styles['SectionHead']))
+                if changes.get('new'):
+                    flowables.append(Paragraph("New Developments", self.styles['H3Text']))
+                    for item in changes['new']:
+                        flowables.append(Paragraph(
+                            '🟢 ' + self._inline(str(item)),
+                            self.styles['BulletText'],
+                        ))
+                if changes.get('updated'):
+                    flowables.append(Paragraph("Updated Situations", self.styles['H3Text']))
+                    for item in changes['updated']:
+                        flowables.append(Paragraph(
+                            '🟡 ' + self._inline(str(item)),
+                            self.styles['BulletText'],
+                        ))
+                if changes.get('quiet'):
+                    flowables.append(Paragraph("Gone Quiet", self.styles['H3Text']))
+                    for item in changes['quiet']:
+                        flowables.append(Paragraph(
+                            '⚪ ' + self._inline(str(item)),
+                            self.styles['BulletText'],
+                        ))
+                flowables.append(Spacer(1, 4 * mm))
+
         # Key Developments
         if data.get('key_developments'):
             flowables.append(Paragraph("KEY DEVELOPMENTS", self.styles['SectionHead']))

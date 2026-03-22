@@ -6,6 +6,7 @@ const TABS = [
   { to: '/settings/alerts', label: 'Alerts' },
   { to: '/settings/telegram', label: 'Telegram' },
   { to: '/settings/models', label: 'Models' },
+  { to: '/settings/diagnostics', label: '🔧 Diagnostics' },
 ];
 
 export function SettingsLayout() {

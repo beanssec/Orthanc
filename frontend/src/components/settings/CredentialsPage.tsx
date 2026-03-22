@@ -36,21 +36,23 @@ const PROVIDERS = [
   },
   {
     id: 'x',
-    label: 'X / Twitter (xAI)',
+    label: 'xAI / Grok + X API',
     icon: '✕',
-    description: 'Monitor X posts and cashtag ($TICKER) mentions via xAI Grok API.',
+    description: 'xAI API key powers Grok LLM (briefs, translation, analysis). X API Bearer Token enables direct tweet retrieval via X API v2.',
     fields: [
       { key: 'api_key', label: 'xAI API Key', placeholder: 'xai-...', type: 'password' as const },
+      { key: 'x_api_bearer_token', label: 'X API Bearer Token', placeholder: 'AAAA...', type: 'password' as const, optional: true },
     ],
     guide: {
-      title: 'How to get an xAI API key',
+      title: 'How to get these credentials',
       steps: [
-        'Go to https://console.x.ai and create an account',
-        'Navigate to API Keys section',
-        'Create a new API key',
-        'Copy the key (starts with xai-...)',
+        'xAI API Key: Go to https://console.x.ai → API Keys → Create new key',
+        'X API Bearer Token: Go to https://developer.x.com → Projects & Apps → Create App → Get Bearer Token',
+        'The xAI key is used for Grok AI models (briefs, cashtag monitoring, translation)',
+        'The X API token enables direct tweet data retrieval (structured, more reliable)',
+        'You can configure one or both — the platform uses whichever is available',
       ],
-      note: 'This key is also used for AI intelligence briefs (Grok models) and cashtag monitoring for your portfolio.',
+      note: 'If both are configured, the X API is preferred for tweet retrieval, with xAI/Grok as fallback.',
     },
   },
   {
@@ -187,12 +189,17 @@ function CredentialModal({
     e.preventDefault();
     if (!password.trim()) { setError('Password is required for encryption.'); return; }
     for (const f of provider.fields) {
-      if (!values[f.key]?.trim()) { setError(`${f.label} is required.`); return; }
+      if (!(f as { optional?: boolean }).optional && !values[f.key]?.trim()) { setError(`${f.label} is required.`); return; }
     }
     setError('');
     setLoading(true);
     try {
-      const api_keys: Record<string, string> = { _password: password, ...values };
+      // Only include non-empty values (optional fields may be blank)
+      const filteredValues: Record<string, string> = {};
+      for (const f of provider.fields) {
+        if (values[f.key]?.trim()) filteredValues[f.key] = values[f.key];
+      }
+      const api_keys: Record<string, string> = { _password: password, ...filteredValues };
       await api.post('/credentials/', { provider: provider.id, api_keys });
       onSave();
     } catch (err: unknown) {

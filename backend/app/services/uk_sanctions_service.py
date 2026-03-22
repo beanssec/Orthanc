@@ -158,152 +158,142 @@ class UKSanctionsService:
     # ── FCDO XML Parser ───────────────────────────────────────────────────────
 
     def _parse_fcdo_xml(self, xml_data: bytes) -> list[dict]:
-        """Parse the FCDO XML format for the UK Sanctions List."""
-        try:
-            from lxml import etree
-        except ImportError:
-            import xml.etree.ElementTree as etree  # type: ignore
+        """Parse the UK FCDO XML sanctions list (Designations format).
+
+        Expected structure:
+          <Designations>
+            <Designation>
+              <UniqueID>AFG0001</UniqueID>
+              <Names>
+                <Name>
+                  <Name6>FULL ENTITY NAME</Name6>
+                  <NameType>Primary Name</NameType>
+                </Name>
+                <Name>
+                  <Name6>AKA NAME</Name6>
+                  <NameType>Alias</NameType>
+                </Name>
+              </Names>
+              <IndividualEntityShip>Entity</IndividualEntityShip>
+              <RegimeName>...</RegimeName>
+              <SanctionsImposed>Asset freeze</SanctionsImposed>
+            </Designation>
+          </Designations>
+
+        No XML namespace on this document.
+        """
+        import xml.etree.ElementTree as ET
 
         entities: list[dict] = []
         seen_ids: set[str] = set()
 
         try:
-            root = etree.fromstring(xml_data)
+            root = ET.fromstring(xml_data)
         except Exception as exc:
             logger.error("UK FCDO XML parse error: %s", exc)
             return entities
 
         def _get_text(elem, tag: str) -> str:
             child = elem.find(tag)
-            if child is None:
-                child = elem.find(f"{{*}}{tag}")
             return (child.text or "").strip() if child is not None else ""
 
-        # The FCDO XML structure uses FinancialSanctionsTarget or similar
-        # Try multiple element names used across different schema versions
-        target_tags = {
-            "FinancialSanctionsTarget", "Target", "sanctionEntity",
-            "UKSanctionsListItem", "ListedEntity",
-        }
+        def _name_from_name_elem(name_elem) -> str:
+            """Extract a display name from a <Name> element.
 
-        for elem in root.iter():
-            tag = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
-            if tag not in target_tags:
-                continue
+            Prefers Name6 (full name field); falls back to joining Name1-Name5
+            (title, first, middle, middle2, surname).
+            """
+            name6 = _get_text(name_elem, "Name6")
+            if name6:
+                return name6
+            parts = []
+            for i in range(1, 6):
+                part = _get_text(name_elem, f"Name{i}")
+                if part:
+                    parts.append(part)
+            return " ".join(parts).strip()
 
+        # Find all <Designation> elements under root
+        designations = root.findall("Designation")
+        if not designations:
+            # Root might itself be a <Designation> list at a different depth
+            designations = list(root.iter("Designation"))
+
+        logger.debug("UK FCDO: found %d Designation elements", len(designations))
+
+        for desig in designations:
             try:
-                # Try to get a unique ID
-                entity_id = (
-                    elem.get("id", "") or elem.get("Id", "") or
-                    _get_text(elem, "UniqueID") or _get_text(elem, "GroupID") or
-                    _get_text(elem, "Id") or _get_text(elem, "id")
-                )
-
-                # Collect names
-                full_name = (
-                    _get_text(elem, "FullName") or _get_text(elem, "Name6") or
-                    _get_text(elem, "wholeName") or _get_text(elem, "WholeName")
-                )
-
-                if not full_name:
-                    # Try building from parts
-                    parts = []
-                    for i in range(1, 7):
-                        p = _get_text(elem, f"Name{i}") or _get_text(elem, f"name{i}")
-                        if p:
-                            parts.append(p)
-                    full_name = " ".join(parts).strip()
-
-                if not full_name:
-                    # Last resort: find any nameAlias child
-                    for child in elem.iter():
-                        ctag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
-                        if ctag == "nameAlias":
-                            wn = child.get("wholeName", "").strip()
-                            if wn:
-                                full_name = wn
-                                break
-
-                if not full_name:
+                unique_id = _get_text(desig, "UniqueID")
+                if not unique_id:
                     continue
 
-                if not entity_id:
-                    entity_id = full_name[:100]
-
-                db_id = f"uk-fcdo-{entity_id}"
+                db_id = f"uk-fcdo-{unique_id}"
                 if db_id in seen_ids:
                     continue
                 seen_ids.add(db_id)
 
-                # Entity type
-                group_type = (
-                    _get_text(elem, "GroupType") or _get_text(elem, "Type") or
-                    elem.get("subjectType", "")
-                ).lower()
-                if "individual" in group_type or "person" in group_type:
+                # Names block
+                primary_name: str = ""
+                aliases: list[str] = []
+
+                names_elem = desig.find("Names")
+                if names_elem is not None:
+                    for name_elem in names_elem.findall("Name"):
+                        name_type = _get_text(name_elem, "NameType")
+                        display = _name_from_name_elem(name_elem)
+                        if not display:
+                            continue
+                        if name_type == "Primary Name":
+                            primary_name = display
+                        else:
+                            # "Alias", "Primary Name Alias", or anything else
+                            if display not in aliases:
+                                aliases.append(display)
+
+                if not primary_name:
+                    # Use first alias as primary if no Primary Name found
+                    if aliases:
+                        primary_name = aliases.pop(0)
+                    else:
+                        continue
+
+                # Remove primary from aliases in case of duplicate
+                aliases = [a for a in aliases if a != primary_name]
+
+                # Entity type from <IndividualEntityShip>
+                ies_text = _get_text(desig, "IndividualEntityShip").lower()
+                if "individual" in ies_text:
                     entity_type = "person"
+                elif "ship" in ies_text or "vessel" in ies_text:
+                    entity_type = "vessel"
                 else:
                     entity_type = "organization"
 
-                # Collect aliases
-                aliases: list[str] = []
-                for child in elem.iter():
-                    ctag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
-                    if ctag in ("Alias", "alias", "nameAlias", "AliasName"):
-                        alias_val = (
-                            child.get("wholeName", "") or child.get("WholeName", "") or
-                            (child.text or "")
-                        ).strip()
-                        if alias_val and alias_val != full_name and alias_val not in aliases:
-                            aliases.append(alias_val)
-
-                # Country / regime
-                country = _get_text(elem, "Country") or _get_text(elem, "Nationality")
-                regime = _get_text(elem, "Regime") or _get_text(elem, "regime")
+                regime = _get_text(desig, "RegimeName")
+                sanctions_imposed = _get_text(desig, "SanctionsImposed")
 
                 datasets = ["uk_fcdo"]
-                if regime:
-                    datasets.append(f"uk_{regime.lower().replace(' ', '_')[:30]}")
 
                 entities.append({
                     "id": db_id,
-                    "name": full_name,
+                    "name": primary_name,
                     "entity_type": entity_type,
                     "aliases": aliases,
                     "datasets": datasets,
-                    "countries": [country] if country else [],
+                    "countries": [],
                     "properties": {
                         **SOURCE_META,
-                        "source_id": entity_id,
+                        "source_id": unique_id,
                         "regime": regime,
+                        "sanctions_imposed": sanctions_imposed,
+                        "individual_entity_ship": ies_text,
                     },
                 })
             except Exception as exc:
-                logger.debug("UK FCDO entity parse error: %s", exc)
+                logger.debug("UK FCDO Designation parse error: %s", exc)
                 continue
 
-        # If we got nothing from structured parsing, fall back to nameAlias sweep
-        if not entities:
-            logger.warning("UK FCDO structured parse yielded no entities — trying nameAlias sweep")
-            seen_names: set[str] = set()
-            idx = 0
-            for elem in root.iter():
-                tag = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
-                if tag == "nameAlias":
-                    name = elem.get("wholeName", "").strip()
-                    if name and name not in seen_names:
-                        seen_names.add(name)
-                        idx += 1
-                        entities.append({
-                            "id": f"uk-fcdo-alias-{idx}",
-                            "name": name,
-                            "entity_type": "unknown",
-                            "aliases": [],
-                            "datasets": ["uk_fcdo"],
-                            "countries": [],
-                            "properties": SOURCE_META,
-                        })
-
+        logger.info("UK FCDO: parsed %d entities from XML", len(entities))
         return entities
 
     # ── CSV Parser (OFSI legacy) ──────────────────────────────────────────────

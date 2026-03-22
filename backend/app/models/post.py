@@ -51,5 +51,10 @@ class Post(Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # ── Translation fields ────────────────────────────────────────────────────
+    detected_language: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    translated_content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    translation_model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
     events: Mapped[list["Event"]] = relationship(back_populates="post")  # noqa: F821
     alert_hits: Mapped[list["AlertHit"]] = relationship(back_populates="post")  # noqa: F821
