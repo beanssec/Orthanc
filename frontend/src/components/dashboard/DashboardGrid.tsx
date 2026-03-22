@@ -1,20 +1,25 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { ResponsiveGridLayout, useContainerWidth } from 'react-grid-layout';
 import type { Layout } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 import { WidgetCard, WidgetConfig } from './WidgetCard';
+import { WidgetTemplatePicker } from './WidgetTemplatePicker';
 import api from '../../services/api';
 
 interface DashboardGridProps {
   tabId: string;
+  tabName?: string;
   widgets: WidgetConfig[];
   onLayoutChange?: (widgets: WidgetConfig[]) => void;
 }
 
-function GridContainer({ tabId, widgets, onLayoutChange }: DashboardGridProps) {
+function GridContainer({ tabId, tabName, widgets, onLayoutChange }: DashboardGridProps) {
   const { width, containerRef, mounted } = useContainerWidth();
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
+
+  const isOverview = tabName === 'Overview';
 
   // Convert widgets to react-grid-layout layout format
   const layout: Layout[] = widgets.map((w) => ({
@@ -28,6 +33,24 @@ function GridContainer({ tabId, widgets, onLayoutChange }: DashboardGridProps) {
   }));
 
   const layouts = { lg: layout, md: layout, sm: layout, xs: layout };
+
+  const saveToBackend = useCallback(
+    async (updatedWidgets: WidgetConfig[]) => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+      saveTimerRef.current = setTimeout(async () => {
+        try {
+          await api.put(`/dashboard-tabs/${tabId}`, {
+            layout: updatedWidgets,
+          });
+        } catch {
+          // Non-critical — layout save failure is silent
+        }
+      }, 500);
+    },
+    [tabId]
+  );
 
   const handleLayoutChange = useCallback(
     (newLayout: Layout[]) => {
@@ -47,22 +70,9 @@ function GridContainer({ tabId, widgets, onLayoutChange }: DashboardGridProps) {
       });
 
       onLayoutChange?.(updatedWidgets);
-
-      // Debounced save to backend
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-      }
-      saveTimerRef.current = setTimeout(async () => {
-        try {
-          await api.put(`/dashboard-tabs/${tabId}`, {
-            layout: updatedWidgets,
-          });
-        } catch {
-          // Non-critical — layout save failure is silent
-        }
-      }, 500);
+      saveToBackend(updatedWidgets);
     },
-    [tabId, widgets, onLayoutChange]
+    [widgets, onLayoutChange, saveToBackend]
   );
 
   const handleDeleteWidget = useCallback(
@@ -80,52 +90,130 @@ function GridContainer({ tabId, widgets, onLayoutChange }: DashboardGridProps) {
     [tabId, widgets, onLayoutChange]
   );
 
+  const handleEditWidget = useCallback(
+    async (updated: WidgetConfig) => {
+      const updatedWidgets = widgets.map((w) => (w.id === updated.id ? updated : w));
+      onLayoutChange?.(updatedWidgets);
+      try {
+        await api.put(`/dashboard-tabs/${tabId}`, {
+          layout: updatedWidgets,
+        });
+      } catch {
+        // Non-critical
+      }
+    },
+    [tabId, widgets, onLayoutChange]
+  );
+
+  const handleAddWidget = useCallback(
+    async (newWidget: WidgetConfig) => {
+      const updatedWidgets = [...widgets, newWidget];
+      onLayoutChange?.(updatedWidgets);
+      setShowPicker(false);
+      try {
+        await api.put(`/dashboard-tabs/${tabId}`, {
+          layout: updatedWidgets,
+        });
+      } catch {
+        // Non-critical
+      }
+    },
+    [tabId, widgets, onLayoutChange]
+  );
+
+  const addWidgetButton = !isOverview && (
+    <button
+      className="dashboard-add-widget-btn"
+      onClick={() => setShowPicker(true)}
+    >
+      <span className="dashboard-add-widget-btn__icon">＋</span>
+      Add Widget
+    </button>
+  );
+
   if (widgets.length === 0) {
     return (
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '200px',
-          color: 'var(--text-muted)',
-          gap: '8px',
-          fontSize: '13px',
-        }}
-      >
-        <span style={{ fontSize: '24px' }}>📋</span>
-        <span>No widgets on this tab yet</span>
-        <span style={{ fontSize: '11px' }}>Widget configuration coming in Phase 2</span>
-      </div>
+      <>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '200px',
+            color: 'var(--text-muted)',
+            gap: '8px',
+            fontSize: '13px',
+          }}
+        >
+          <span style={{ fontSize: '24px' }}>📋</span>
+          <span>No widgets on this tab yet</span>
+          {!isOverview && (
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+              Click "Add Widget" below to get started
+            </span>
+          )}
+        </div>
+        {!isOverview && (
+          <div style={{ padding: '0 12px 12px' }}>
+            {addWidgetButton}
+          </div>
+        )}
+        {showPicker && (
+          <WidgetTemplatePicker
+            tabId={tabId}
+            widgets={widgets}
+            onAdd={handleAddWidget}
+            onClose={() => setShowPicker(false)}
+          />
+        )}
+      </>
     );
   }
 
   return (
-    <div ref={containerRef as React.RefObject<HTMLDivElement>} style={{ width: '100%' }}>
-      {mounted && (
-        <ResponsiveGridLayout
-          width={width}
-          layouts={layouts}
-          breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
-          cols={{ lg: 12, md: 8, sm: 4, xs: 2 }}
-          rowHeight={60}
-          dragConfig={{ handle: '.widget-card__header' }}
-          onLayoutChange={handleLayoutChange}
-          margin={[8, 8]}
-          containerPadding={[0, 0]}
-        >
-          {widgets.map((widget) => (
-            <div key={widget.id}>
-              <WidgetCard
-                widget={widget}
-                onDelete={handleDeleteWidget}
-              />
-            </div>
-          ))}
-        </ResponsiveGridLayout>
+    <>
+      <div ref={containerRef as React.RefObject<HTMLDivElement>} style={{ width: '100%' }}>
+        {mounted && (
+          <ResponsiveGridLayout
+            width={width}
+            layouts={layouts}
+            breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
+            cols={{ lg: 12, md: 8, sm: 4, xs: 2 }}
+            rowHeight={60}
+            dragConfig={{ handle: '.widget-card__header' }}
+            onLayoutChange={handleLayoutChange}
+            margin={[8, 8]}
+            containerPadding={[0, 0]}
+          >
+            {widgets.map((widget) => (
+              <div key={widget.id}>
+                <WidgetCard
+                  widget={widget}
+                  onDelete={handleDeleteWidget}
+                  onEdit={handleEditWidget}
+                />
+              </div>
+            ))}
+          </ResponsiveGridLayout>
+        )}
+      </div>
+
+      {!isOverview && (
+        <div style={{ padding: '4px 8px 12px' }}>
+          {addWidgetButton}
+        </div>
       )}
-    </div>
+
+      {showPicker && (
+        <WidgetTemplatePicker
+          tabId={tabId}
+          widgets={widgets}
+          onAdd={handleAddWidget}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
+    </>
   );
 }
 

@@ -278,6 +278,7 @@ export function DashboardTabs() {
       <div className="tab-content tab-content--scrollable">
         <DashboardGrid
           tabId={tab.id}
+          tabName={tab.name}
           widgets={tab.layout ?? []}
           onLayoutChange={(widgets) => handleLayoutChange(tab.id, widgets)}
         />
