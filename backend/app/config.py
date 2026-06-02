@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "*"
 
     # Feature flags
-    NARRATIVE_TRACKERS_ENABLED: bool = False
+    NARRATIVE_TRACKERS_ENABLED: bool = True
 
     # Narrative lifecycle
     NARRATIVE_STALE_TTL_HOURS: int = 48  # Mark narrative stale after N hours of no new posts

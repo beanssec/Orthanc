@@ -14,7 +14,7 @@ from sqlalchemy import func, select, update
 
 from app.config import settings
 from app.db import AsyncSessionLocal
-from app.models.narrative import Narrative, NarrativePost, PostEmbedding
+from app.models.narrative import Narrative, NarrativeArc, NarrativePost, PostEmbedding
 from app.models.post import Post
 from app.services.embedding_service import embedding_service
 
@@ -255,7 +255,7 @@ class NarrativeEngine:
     STALE_HOURS = 12                # legacy: used only as fallback if TTL config not available
     LOOKBACK_HOURS = 72             # consider posts from last 3 days (catches missed cycles/restarts)
     POLL_INTERVAL = 600             # seconds between full cycles (10 min)
-    MAX_POSTS_PER_CYCLE = 500       # max posts to embed in one cycle
+    MAX_POSTS_PER_CYCLE = 2000      # max posts to embed in one cycle
     STARTUP_DELAY = 120             # seconds to wait before first cycle (allows providers to register via login)
 
     @property
@@ -327,12 +327,117 @@ class NarrativeEngine:
         await self._update_narrative_stats()
         await self._mark_stale_narratives()
         await self._detect_narrative_duplicates()
+        await self._link_narratives_to_arcs()
+        await self._summarise_arcs()
+        await self._relabel_heuristic_narratives()
+        await self._compute_consensus()
         await self._extract_narrative_claims()
         await self._classify_narrative_evidence()
+
+    async def _summarise_arcs(self) -> None:
+        """Run arc summarisation."""
+        try:
+            from app.services.arc_summariser import arc_summariser
+            count = await arc_summariser.summarise_arcs()
+            if count:
+                logger.info("Arc summariser: updated %d arc summaries", count)
+        except Exception as exc:
+            logger.warning("Arc summariser failed (non-fatal): %s", exc)
+
+    _MAX_RELABEL_PER_CYCLE = 5  # don't overwhelm with LLM calls
+
+    async def _relabel_heuristic_narratives(self) -> None:
+        """Auto-relabel narratives stuck on heuristic/weak_cluster/mixed_cluster status.
+
+        These are narratives where the LLM label step failed (usually because
+        no provider was registered at creation time). Re-attempts the LLM label
+        call for a small batch each cycle.
+        """
+        try:
+            from app.services.model_router import model_router  # noqa: PLC0415
+            if not model_router._providers:
+                logger.debug("Auto-relabel: no providers registered, skipping")
+                return
+
+            async with AsyncSessionLocal() as session:
+                from sqlalchemy import or_
+                result = await session.execute(
+                    select(Narrative)
+                    .where(
+                        Narrative.status == "active",
+                        or_(
+                            Narrative.confirmation_status.in_(["heuristic", "weak_cluster", "mixed_cluster"]),
+                            Narrative.confirmation_status.is_(None),
+                        ),
+                    )
+                    .order_by(Narrative.post_count.desc())
+                    .limit(self._MAX_RELABEL_PER_CYCLE)
+                )
+                narratives = result.scalars().all()
+
+            if not narratives:
+                return
+
+            relabelled = 0
+            for narr in narratives:
+                try:
+                    async with AsyncSessionLocal() as session:
+                        posts_result = await session.execute(
+                            select(Post.content)
+                            .join(NarrativePost, NarrativePost.post_id == Post.id)
+                            .where(NarrativePost.narrative_id == narr.id)
+                            .limit(6)
+                        )
+                        contents = [r[0] for r in posts_result.all() if r[0]]
+
+                    if not contents:
+                        continue
+
+                    heuristic_labels = {
+                        "canonical_title": narr.canonical_title or narr.title,
+                        "canonical_claim": narr.canonical_claim or "",
+                        "narrative_type": narr.narrative_type or "",
+                        "label_confidence": narr.label_confidence or 0.5,
+                    }
+
+                    llm_result = await self._llm_label_narrative(narr.id, contents, heuristic_labels)
+                    if llm_result:
+                        async with AsyncSessionLocal() as session:
+                            n = await session.get(Narrative, narr.id)
+                            if n is not None:
+                                if llm_result.get("canonical_title"):
+                                    n.canonical_title = llm_result["canonical_title"]
+                                    n.title = llm_result["canonical_title"]
+                                if llm_result.get("narrative_type"):
+                                    n.narrative_type = llm_result["narrative_type"]
+                                if llm_result.get("label_confidence"):
+                                    n.label_confidence = llm_result["label_confidence"]
+                                if llm_result.get("confirmation_status"):
+                                    n.confirmation_status = llm_result["confirmation_status"]
+                                await session.commit()
+                        relabelled += 1
+                except Exception as exc:
+                    logger.debug("Auto-relabel failed for narrative %s: %s", narr.id, exc)
+
+            if relabelled:
+                logger.info("Auto-relabel: refined %d heuristic narratives", relabelled)
+
+        except Exception as exc:
+            logger.warning("Auto-relabel step failed (non-fatal): %s", exc, exc_info=True)
 
     # ──────────────────────────────────────────
     # Step 1 — embed new posts
     # ──────────────────────────────────────────
+
+    async def _compute_consensus(self) -> None:
+        """Compute source-group consensus and divergence scores."""
+        try:
+            from app.services.consensus_service import consensus_service
+            count = await consensus_service.compute_batch_consensus(limit=20)
+            if count:
+                logger.info("Consensus: updated divergence scores for %d events", count)
+        except Exception as exc:
+            logger.warning("Consensus computation failed (non-fatal): %s", exc)
 
     async def _embed_new_posts(self) -> int:
         """Embed posts from the last LOOKBACK_HOURS that have no embedding yet."""
@@ -340,7 +445,7 @@ class NarrativeEngine:
 
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                select(Post.id, Post.content)
+                select(Post.id, func.coalesce(Post.translated_content, Post.content))
                 .outerjoin(PostEmbedding, PostEmbedding.post_id == Post.id)
                 .where(
                     Post.timestamp >= cutoff,
@@ -489,7 +594,7 @@ class NarrativeEngine:
                     NarrativePost.id.is_(None),
                     Post.timestamp >= cutoff,
                 )
-                .limit(300)
+                .limit(1000)
             )
             posts = result.all()
 
@@ -976,6 +1081,208 @@ class NarrativeEngine:
                             await session.commit()
 
                     merged_this_cycle.add(duplicate_id)
+
+    # ──────────────────────────────────────────
+    # Arc discovery — link narratives to arcs
+    # ──────────────────────────────────────────
+
+    async def _link_narratives_to_arcs(self) -> None:
+        """Group narratives into persistent NarrativeArcs by entity fingerprint overlap.
+
+        Uses the top entities mentioned in each narrative's posts to determine
+        which arc it belongs to. Two narratives sharing 3+ of their top entities
+        are considered part of the same storyline. This avoids the problem of
+        embedding similarity grouping all conflict content together.
+        """
+        try:
+            from app.models.narrative import NarrativeArc  # noqa: F401 — guard for migration timing
+            from app.models.entity import Entity, EntityMention  # noqa: PLC0415
+        except ImportError:
+            logger.warning("Arc linker: models not importable yet — skipping")
+            return
+
+        MIN_ENTITY_OVERLAP = 3  # min shared top entities to link
+        TOP_K_ENTITIES = 8      # entities per narrative fingerprint
+        now = datetime.now(timezone.utc)
+        backfill_cutoff = now - timedelta(days=7)
+
+        # ── 1. Fetch unlinked narratives ──────────────────────────────────────
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(
+                        Narrative.id,
+                        Narrative.canonical_title,
+                        Narrative.title,
+                        Narrative.narrative_type,
+                        Narrative.first_seen,
+                        Narrative.post_count,
+                    )
+                    .where(
+                        Narrative.arc_id.is_(None),
+                        Narrative.merged_into.is_(None),
+                        (Narrative.status == "active") | (Narrative.first_seen >= backfill_cutoff),
+                    )
+                    .limit(200)
+                )
+                unlinked = result.all()
+        except Exception as exc:
+            logger.error("Arc linker: failed to fetch unlinked narratives: %s", exc)
+            return
+
+        if not unlinked:
+            return
+
+        # ── Helper: get entity fingerprint for a narrative ────────────────────
+        async def _get_entity_fingerprint(narrative_id) -> set[str]:
+            """Return top-K canonical entity names for a narrative's posts."""
+            try:
+                async with AsyncSessionLocal() as session:
+                    result = await session.execute(
+                        select(Entity.canonical_name, func.count().label("cnt"))
+                        .join(EntityMention, EntityMention.entity_id == Entity.id)
+                        .join(NarrativePost, NarrativePost.post_id == EntityMention.post_id)
+                        .where(
+                            NarrativePost.narrative_id == narrative_id,
+                            Entity.merged_into.is_(None),
+                            Entity.canonical_name != "",
+                            Entity.type.in_(["GPE", "ORG", "PERSON", "NORP"]),
+                        )
+                        .group_by(Entity.canonical_name)
+                        .order_by(func.count().desc())
+                        .limit(TOP_K_ENTITIES)
+                    )
+                    return {r[0] for r in result.all() if r[0]}
+            except Exception:
+                return set()
+
+        # ── 2. Build entity fingerprints for all active arcs ──────────────────
+        arc_fingerprints: dict = {}  # arc_id → set of entity names
+        arc_stats: dict = {}
+        try:
+            async with AsyncSessionLocal() as session:
+                arc_result = await session.execute(
+                    select(NarrativeArc.id, NarrativeArc.narrative_count, NarrativeArc.total_post_count)
+                    .where(NarrativeArc.status == "active")
+                    .limit(500)
+                )
+                active_arcs = arc_result.all()
+        except Exception as exc:
+            logger.error("Arc linker: failed to fetch active arcs: %s", exc)
+            active_arcs = []
+
+        for arc_id, arc_nc, arc_tpc in active_arcs:
+            arc_stats[arc_id] = {"narrative_count": arc_nc, "total_post_count": arc_tpc}
+            try:
+                async with AsyncSessionLocal() as session:
+                    # Get entity profile across all member narratives
+                    result = await session.execute(
+                        select(Entity.canonical_name, func.count().label("cnt"))
+                        .join(EntityMention, EntityMention.entity_id == Entity.id)
+                        .join(NarrativePost, NarrativePost.post_id == EntityMention.post_id)
+                        .join(Narrative, Narrative.id == NarrativePost.narrative_id)
+                        .where(
+                            Narrative.arc_id == arc_id,
+                            Entity.merged_into.is_(None),
+                            Entity.canonical_name != "",
+                            Entity.type.in_(["GPE", "ORG", "PERSON", "NORP"]),
+                        )
+                        .group_by(Entity.canonical_name)
+                        .order_by(func.count().desc())
+                        .limit(TOP_K_ENTITIES)  # strict top-K only — prevents fingerprint drift
+                    )
+                    arc_fingerprints[arc_id] = {r[0] for r in result.all() if r[0]}
+            except Exception as exc:
+                logger.warning("Arc linker: failed to build entity profile for arc %s: %s", arc_id, exc)
+
+        # ── 3. Process each unlinked narrative ────────────────────────────────
+        linked_count = 0
+        created_count = 0
+
+        BATCH_SIZE = 20
+        for batch_start in range(0, len(unlinked), BATCH_SIZE):
+            batch = unlinked[batch_start: batch_start + BATCH_SIZE]
+
+            for narr_row in batch:
+                narr_id, canonical_title, title, narrative_type, first_seen, post_count = narr_row
+
+                narr_entities = await _get_entity_fingerprint(narr_id)
+                if not narr_entities:
+                    # No entities — skip, can't match meaningfully
+                    continue
+
+                # Find best matching arc by Jaccard similarity on entity sets
+                # Jaccard = |intersection| / |union| — penalizes broad entity profiles
+                JACCARD_THRESHOLD = 0.35  # ~3 shared out of ~10 combined unique
+                best_arc_id = None
+                best_jaccard = 0.0
+
+                for arc_id, arc_ents in arc_fingerprints.items():
+                    if not arc_ents:
+                        continue
+                    intersection = narr_entities & arc_ents
+                    union = narr_entities | arc_ents
+                    if not union:
+                        continue
+                    jaccard = len(intersection) / len(union)
+                    # Also require minimum absolute overlap
+                    if jaccard > best_jaccard and len(intersection) >= MIN_ENTITY_OVERLAP:
+                        best_jaccard = jaccard
+                        best_arc_id = arc_id
+
+                try:
+                    if best_arc_id is not None and best_jaccard >= JACCARD_THRESHOLD:
+                        # Link to existing arc
+                        async with AsyncSessionLocal() as session:
+                            narr = await session.get(Narrative, narr_id)
+                            arc = await session.get(NarrativeArc, best_arc_id)
+                            if narr is not None and arc is not None:
+                                narr.arc_id = best_arc_id
+                                arc.last_updated = now
+                                arc.narrative_count = (arc.narrative_count or 0) + 1
+                                arc.total_post_count = (arc.total_post_count or 0) + (post_count or 0)
+                                await session.commit()
+
+                        # Don't expand arc fingerprint — keep it fixed at initial top-K
+                        # to prevent drift. It'll refresh next cycle from the DB.
+                        stats = arc_stats.get(best_arc_id, {})
+                        stats["narrative_count"] = stats.get("narrative_count", 0) + 1
+                        stats["total_post_count"] = stats.get("total_post_count", 0) + (post_count or 0)
+                        arc_stats[best_arc_id] = stats
+                        linked_count += 1
+                    else:
+                        # Create a new arc
+                        arc_title = canonical_title or title or "Unnamed Arc"
+                        async with AsyncSessionLocal() as session:
+                            new_arc = NarrativeArc(
+                                title=arc_title,
+                                status="active",
+                                arc_type=narrative_type,
+                                first_seen=first_seen or now,
+                                last_updated=now,
+                                narrative_count=1,
+                                total_post_count=post_count or 0,
+                            )
+                            session.add(new_arc)
+                            await session.flush()
+                            new_arc_id = new_arc.id
+
+                            narr = await session.get(Narrative, narr_id)
+                            if narr is not None:
+                                narr.arc_id = new_arc_id
+                            await session.commit()
+
+                        arc_fingerprints[new_arc_id] = narr_entities
+                        arc_stats[new_arc_id] = {"narrative_count": 1, "total_post_count": post_count or 0}
+                        created_count += 1
+                except Exception as exc:
+                    logger.error("Arc linker: failed to link/create arc for narrative %s: %s", narr_id, exc)
+
+        logger.info(
+            "Arc linker: linked %d narratives to existing arcs, created %d new arcs (entity-based)",
+            linked_count,
+            created_count,
+        )
 
     # ──────────────────────────────────────────
     # Canonical label generation — public entry point

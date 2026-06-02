@@ -34,6 +34,8 @@ from .narrative import (
     NarrativeTrackerVersion,
     NarrativeTrackerMatch,
     NarrativeTrackerMonthlySnapshot,
+    NarrativeArc,
+    NarrativeArcSummary,
 )
 
 __all__ = [
@@ -53,4 +55,5 @@ __all__ = [
     "Narrative", "NarrativePost", "Claim", "ClaimEvidence",
     "SourceGroup", "SourceGroupMember", "SourceBiasProfile", "PostEmbedding",
     "NarrativeTracker", "NarrativeTrackerVersion", "NarrativeTrackerMatch", "NarrativeTrackerMonthlySnapshot",
+    "NarrativeArc", "NarrativeArcSummary",
 ]

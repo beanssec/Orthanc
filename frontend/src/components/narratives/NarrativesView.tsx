@@ -1,15 +1,20 @@
 import { useEffect, useState, useCallback } from 'react';
 import api from '../../services/api';
-import type { Narrative, NarrativeTracker, NarrativeTrackerMonthlyPoint } from './types';
+import type { Narrative, NarrativeTracker, NarrativeTrackerMonthlyPoint, NarrativeArc } from './types';
 import { NarrativeCard } from './NarrativeCard';
 import { NarrativeDetail } from './NarrativeDetail';
 import { BiasCompass } from './BiasCompass';
+import { ArcCard } from './ArcCard';
+import { ArcDetail } from './ArcDetail';
 import { Skeleton } from '../common/Skeleton';
 import '../../styles/narratives.css';
+
+const PAGE_SIZE = 50;
 
 export function NarrativesView() {
   const [narratives, setNarratives] = useState<Narrative[]>([]);
   const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('active');
   const [typeFilter, setTypeFilter] = useState<string>('all');
@@ -21,6 +26,11 @@ export function NarrativesView() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [relabelling, setRelabelling] = useState(false);
   const [relabelStatus, setRelabelStatus] = useState<string | null>(null);
+
+  const [viewMode, setViewMode] = useState<'narratives' | 'arcs'>('narratives');
+  const [arcs, setArcs] = useState<NarrativeArc[]>([]);
+  const [selectedArcId, setSelectedArcId] = useState<string | null>(null);
+  const [arcsLoading, setArcsLoading] = useState(false);
 
   const [trackersEnabled, setTrackersEnabled] = useState(true);
   const [trackers, setTrackers] = useState<NarrativeTracker[]>([]);
@@ -36,12 +46,14 @@ export function NarrativesView() {
     setError(null);
     try {
       const params: Record<string, string | number> = {
-        limit: 50,
-        offset: 0,
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE,
+        sort_by: sortBy,
       };
-      if (statusFilter !== 'all') {
-        params.status = statusFilter;
-      }
+      if (statusFilter !== 'all') params.status = statusFilter;
+      if (typeFilter !== 'all') params.narrative_type = typeFilter;
+      if (triageFilter !== 'all') params.triage_status = triageFilter;
+
       const res = await api.get('/narratives/', { params });
       const data = res.data;
       // Support both {items, total} and plain array
@@ -58,7 +70,7 @@ export function NarrativesView() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [statusFilter, typeFilter, triageFilter, sortBy, page, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchTrackers = useCallback(async () => {
     try {
@@ -89,6 +101,23 @@ export function NarrativesView() {
     }
   }, []);
 
+  const fetchArcs = useCallback(async () => {
+    setArcsLoading(true);
+    try {
+      const res = await api.get('/narratives/arcs', { params: { status: 'all', limit: 100, offset: 0 } });
+      setArcs(res.data?.items ?? []);
+    } catch {
+      setArcs([]);
+    } finally {
+      setArcsLoading(false);
+    }
+  }, []);
+
+  // Reset to page 0 when filters/sort change
+  useEffect(() => {
+    setPage(0);
+  }, [statusFilter, typeFilter, triageFilter, sortBy]);
+
   useEffect(() => {
     fetchNarratives();
   }, [fetchNarratives]);
@@ -104,6 +133,12 @@ export function NarrativesView() {
       setTrackerTimeline([]);
     }
   }, [selectedTrackerId, fetchTrackerTimeline]);
+
+  useEffect(() => {
+    if (viewMode === 'arcs') {
+      fetchArcs();
+    }
+  }, [viewMode, fetchArcs]);
 
   const handleRefresh = () => {
     setRefreshKey((k) => k + 1);
@@ -150,38 +185,13 @@ export function NarrativesView() {
     }
   };
 
-  // Client-side filter + sort
-  const displayedNarratives = (() => {
-    let list = narratives;
-    if (typeFilter !== 'all') {
-      list = list.filter((n) => n.narrative_type === typeFilter);
-    }
-    if (triageFilter !== 'all') {
-      if (triageFilter === 'none') {
-        list = list.filter((n) => !n.triage_status);
-      } else {
-        list = list.filter((n) => n.triage_status === triageFilter);
-      }
-    }
-    const sorted = [...list];
-    switch (sortBy) {
-      case 'post_count':
-        sorted.sort((a, b) => b.post_count - a.post_count);
-        break;
-      case 'divergence':
-        sorted.sort((a, b) => b.divergence_score - a.divergence_score);
-        break;
-      case 'confidence':
-        sorted.sort((a, b) => (b.label_confidence ?? 0) - (a.label_confidence ?? 0));
-        break;
-      case 'source_count':
-        sorted.sort((a, b) => b.source_count - a.source_count);
-        break;
-      default: // last_updated
-        sorted.sort((a, b) => new Date(b.last_updated).getTime() - new Date(a.last_updated).getTime());
-    }
-    return sorted;
-  })();
+  // Server-side filtering: narratives are already filtered/sorted by the backend
+  const displayedNarratives = narratives;
+
+  // Pagination derived values
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+  const rangeStart = total === 0 ? 0 : page * PAGE_SIZE + 1;
+  const rangeEnd = Math.min((page + 1) * PAGE_SIZE, total);
 
   const handleRecomputeTracker = async (trackerId: string) => {
     try {
@@ -199,6 +209,14 @@ export function NarrativesView() {
       {/* Header */}
       <div className="narratives-header">
         <h2>📖 Narrative Intelligence</h2>
+        <div className="view-toggle">
+          <button className={viewMode === 'narratives' ? 'active' : ''} onClick={() => setViewMode('narratives')}>
+            Narratives
+          </button>
+          <button className={viewMode === 'arcs' ? 'active' : ''} onClick={() => setViewMode('arcs')}>
+            Storylines
+          </button>
+        </div>
         <div className="narratives-filters">
           <select
             value={statusFilter}
@@ -252,9 +270,9 @@ export function NarrativesView() {
           >
             <option value="last_updated">Last Updated</option>
             <option value="post_count">Post Count ↓</option>
-            <option value="divergence">Divergence ↓</option>
-            <option value="confidence">Confidence ↓</option>
-            <option value="source_count">Source Count ↓</option>
+            <option value="divergence_score">Divergence ↓</option>
+            <option value="evidence_score">Evidence ↓</option>
+            <option value="source_count">Sources ↓</option>
           </select>
 
           <button onClick={() => setShowCompass((v) => !v)}>
@@ -277,7 +295,7 @@ export function NarrativesView() {
 
           {total > 0 && (
             <span className="narratives-total-count">
-              {total} total
+              {loading ? '…' : `${rangeStart}–${rangeEnd} of ${total.toLocaleString()}`}
             </span>
           )}
         </div>
@@ -351,43 +369,105 @@ export function NarrativesView() {
 
       {/* Main content */}
       <div className="narratives-content">
-        {/* Left: narrative list */}
-        <div className="narratives-list">
-          {loading && (
-            <div className="narratives-loading">
-              <Skeleton rows={4} type="card" />
+        {viewMode === 'arcs' ? (
+          <>
+            {/* Left: arc list */}
+            <div className="narratives-list">
+              {arcsLoading && (
+                <div className="narratives-loading">
+                  <Skeleton rows={4} type="card" />
+                </div>
+              )}
+              {!arcsLoading && arcs.length === 0 && (
+                <div className="narratives-empty">No storylines found.</div>
+              )}
+              {arcs.map((a) => (
+                <ArcCard
+                  key={a.id}
+                  arc={a}
+                  selected={a.id === selectedArcId}
+                  onClick={() => setSelectedArcId(a.id === selectedArcId ? null : a.id)}
+                />
+              ))}
             </div>
-          )}
-          {error && (
-            <div className="narratives-error">{error}</div>
-          )}
-          {!loading && !error && displayedNarratives.length === 0 && (
-            <div className="narratives-empty">
-              {narratives.length > 0 ? 'No narratives match the current filters.' : 'No narratives found.'}
-              <br />
-              <span style={{ fontSize: '0.75rem' }}>Narratives are generated as sources ingest conflicting reports.</span>
-            </div>
-          )}
-          {displayedNarratives.map((n) => (
-            <NarrativeCard
-              key={n.id}
-              narrative={n}
-              selected={n.id === selectedId}
-              onClick={() => setSelectedId(n.id === selectedId ? null : n.id)}
-            />
-          ))}
-        </div>
 
-        {/* Right: detail panel */}
-        <div className="narrative-detail">
-          {selectedId ? (
-            <NarrativeDetail narrativeId={selectedId} />
-          ) : (
-            <div className="narrative-detail-empty">
-              Select a narrative to view details
+            {/* Right: arc detail panel */}
+            <div className="narrative-detail">
+              {selectedArcId ? (
+                <ArcDetail arcId={selectedArcId} />
+              ) : (
+                <div className="narrative-detail-empty">
+                  Select a storyline to view details
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </>
+        ) : (
+          <>
+            {/* Left: narrative list */}
+            <div className="narratives-list">
+              {loading && (
+                <div className="narratives-loading">
+                  <Skeleton rows={4} type="card" />
+                </div>
+              )}
+              {error && (
+                <div className="narratives-error">{error}</div>
+              )}
+              {!loading && !error && displayedNarratives.length === 0 && (
+                <div className="narratives-empty">
+                  {narratives.length > 0 ? 'No narratives match the current filters.' : 'No narratives found.'}
+                  <br />
+                  <span style={{ fontSize: '0.75rem' }}>Narratives are generated as sources ingest conflicting reports.</span>
+                </div>
+              )}
+              {displayedNarratives.map((n) => (
+                <NarrativeCard
+                  key={n.id}
+                  narrative={n}
+                  selected={n.id === selectedId}
+                  onClick={() => setSelectedId(n.id === selectedId ? null : n.id)}
+                />
+              ))}
+
+              {/* Pagination controls */}
+              {!loading && !error && totalPages > 1 && (
+                <div className="narratives-pagination">
+                  <span className="narratives-pagination__info">
+                    {rangeStart}–{rangeEnd} of {total.toLocaleString()}
+                  </span>
+                  <div className="narratives-pagination__controls">
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      disabled={page === 0}
+                      onClick={() => setPage((p) => p - 1)}
+                    >
+                      ← Prev
+                    </button>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      disabled={page >= totalPages - 1}
+                      onClick={() => setPage((p) => p + 1)}
+                    >
+                      Next →
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Right: detail panel */}
+            <div className="narrative-detail">
+              {selectedId ? (
+                <NarrativeDetail narrativeId={selectedId} />
+              ) : (
+                <div className="narrative-detail-empty">
+                  Select a narrative to view details
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Bottom: collapsible bias compass */}

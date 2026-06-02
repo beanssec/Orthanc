@@ -669,6 +669,28 @@
   font-family: var(--font-mono);
 }
 
+/* Narrative list pagination */
+.narratives-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.25rem;
+  border-top: 1px solid var(--border-primary);
+  margin-top: 0.25rem;
+  flex-shrink: 0;
+}
+
+.narratives-pagination__info {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.narratives-pagination__controls {
+  display: flex;
+  gap: 0.4rem;
+}
+
 .narratives-empty {
   padding: 2rem;
   text-align: center;
@@ -1115,3 +1137,183 @@
 .btn-danger:hover:not(:disabled) {
   background: rgba(239,68,68,0.25);
 }
+
+/* ── Arc View ──────────────────────────── */
+.view-toggle {
+  display: flex;
+  gap: 0;
+  margin-bottom: 1rem;
+}
+.view-toggle button {
+  padding: 0.4rem 1rem;
+  border: 1px solid var(--border-color, #333);
+  background: var(--bg-secondary, #1a1a2e);
+  color: var(--text-secondary, #888);
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.2s;
+}
+.view-toggle button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+.view-toggle button:last-child {
+  border-radius: 0 6px 6px 0;
+}
+.view-toggle button.active {
+  background: var(--accent-color, #4a9eff);
+  color: #fff;
+  border-color: var(--accent-color, #4a9eff);
+}
+
+.arc-card {
+  border-left: 3px solid var(--accent-color, #4a9eff);
+}
+.arc-card .arc-card-summary {
+  font-size: 0.8rem;
+  color: var(--text-secondary, #888);
+  margin-top: 0.3rem;
+  line-height: 1.4;
+}
+.arc-card .arc-card-meta {
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--text-muted, #666);
+  margin-top: 0.4rem;
+}
+
+/* Arc Detail */
+.arc-detail-summary {
+  background: var(--bg-secondary, #1a1a2e);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  line-height: 1.6;
+  color: var(--text-primary, #e0e0e0);
+}
+.arc-detail-stats {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary, #888);
+}
+.arc-detail-stats span {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+/* Timeline */
+.arc-timeline {
+  position: relative;
+  padding-left: 1.5rem;
+}
+.arc-timeline::before {
+  content: '';
+  position: absolute;
+  left: 0.5rem;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--border-color, #333);
+}
+.arc-timeline-entry {
+  position: relative;
+  padding-bottom: 1.5rem;
+  padding-left: 1rem;
+}
+.arc-timeline-entry::before {
+  content: '';
+  position: absolute;
+  left: -1.1rem;
+  top: 0.4rem;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent-color, #4a9eff);
+  border: 2px solid var(--bg-primary, #0f0f23);
+}
+.arc-timeline-date {
+  font-size: 0.75rem;
+  color: var(--text-muted, #666);
+  margin-bottom: 0.2rem;
+}
+.arc-timeline-title {
+  font-weight: 600;
+  color: var(--text-primary, #e0e0e0);
+  font-size: 0.9rem;
+}
+.arc-timeline-claim {
+  font-size: 0.8rem;
+  color: var(--text-secondary, #888);
+  margin-top: 0.2rem;
+  line-height: 1.4;
+}
+.arc-timeline-meta {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.3rem;
+  font-size: 0.7rem;
+  color: var(--text-muted, #666);
+}
+
+/* Arc Report */
+.arc-report { padding: 1rem 0; }
+.arc-report h2 { color: var(--text-primary, #e0e0e0); margin-bottom: 1rem; font-size: 1.2rem; }
+.arc-report-section { margin-bottom: 1.5rem; }
+.arc-report-section h3 {
+  color: var(--accent-color, #4a9eff);
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.5rem;
+}
+.arc-report-section p {
+  color: var(--text-primary, #e0e0e0);
+  line-height: 1.6;
+  font-size: 0.9rem;
+}
+.arc-report-event {
+  display: flex;
+  gap: 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border-color, #222);
+}
+.arc-report-event-date {
+  color: var(--text-muted, #666);
+  font-size: 0.8rem;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+.arc-report-event-text { color: var(--text-primary, #e0e0e0); font-size: 0.85rem; }
+.arc-report-event-sig { color: var(--text-secondary, #888); font-size: 0.8rem; margin-top: 0.2rem; }
+.arc-report-turning-point {
+  background: var(--bg-secondary, #1a1a2e);
+  border-left: 3px solid var(--accent-color, #4a9eff);
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.75rem;
+  border-radius: 0 6px 6px 0;
+}
+.arc-report-turning-point-shift { color: var(--text-primary, #e0e0e0); font-weight: 600; font-size: 0.9rem; }
+.arc-report-turning-point-detail { color: var(--text-secondary, #888); font-size: 0.8rem; margin-top: 0.3rem; }
+.arc-report-confidence {
+  background: var(--bg-secondary, #1a1a2e);
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  color: var(--text-secondary, #888);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+.generate-report-btn {
+  background: var(--accent-color, #4a9eff);
+  color: #fff;
+  border: none;
+  padding: 0.6rem 1.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: opacity 0.2s;
+}
+.generate-report-btn:hover { opacity: 0.85; }
+.generate-report-btn:disabled { opacity: 0.5; cursor: not-allowed; }

@@ -13,7 +13,7 @@ logger = logging.getLogger("orthanc.services.translator")
 CYRILLIC_RE = re.compile(r"[\u0400-\u04FF]")
 ARABIC_RE = re.compile(r"[\u0600-\u06FF\u0750-\u077F]")
 FARSI_SPECIFIC = re.compile(r"[\u06C0-\u06D3\u06F0-\u06FF\u0750-\u077F]")
-CHINESE_RE = re.compile(r"[\u4E00-\u9FFF\u3400-\u4DBF\u20000-\u2A6DF]")
+CHINESE_RE = re.compile(r"[\u4E00-\u9FFF\u3400-\u4DBF\U00020000-\U0002A6DF]")
 KOREAN_RE = re.compile(r"[\uAC00-\uD7AF\u1100-\u11FF]")
 HEBREW_RE = re.compile(r"[\u0590-\u05FF]")
 LATIN_RE = re.compile(r"[a-zA-Z]")
@@ -100,11 +100,14 @@ class Translator:
                 "no_translation_needed": True,
             }
 
-        lang_name = LANG_NAMES.get(target_lang, target_lang)
+        source_lang_name = LANG_NAMES.get(source_lang, source_lang)
+        target_lang_name = LANG_NAMES.get(target_lang, target_lang)
         system_prompt = (
-            f"Translate the following text to {lang_name}. "
-            "Return ONLY the translation, nothing else. "
-            "Preserve proper nouns, place names, and military terminology as appropriate."
+            f"You are a professional translator. Translate the following {source_lang_name} text into {target_lang_name}. "
+            f"The entire output MUST be in {target_lang_name} — do NOT leave any words in the original language. "
+            "Return ONLY the translated text, nothing else. "
+            "Preserve proper nouns (transliterate to Latin script where appropriate), "
+            "place names, and military terminology."
         )
 
         try:

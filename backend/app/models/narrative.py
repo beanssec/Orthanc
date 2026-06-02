@@ -61,7 +61,14 @@ class Narrative(Base):
     )
     merge_candidate_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
+    # Narrative Arc linkage
+    arc_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("narrative_arcs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     # Relationships
+    arc: Mapped[Optional["NarrativeArc"]] = relationship(back_populates="narratives", foreign_keys=[arc_id])
     narrative_posts: Mapped[list["NarrativePost"]] = relationship(
         back_populates="narrative", cascade="all, delete-orphan"
     )
@@ -330,3 +337,42 @@ class NarrativeTrackerMonthlySnapshot(Base):
     avg_divergence_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     avg_evidence_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+
+class NarrativeArc(Base):
+    __tablename__ = "narrative_arcs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, server_default=text("uuid_generate_v4()")
+    )
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'active'"))
+    arc_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    last_updated: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    narrative_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    total_post_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+    # Relationships
+    narratives: Mapped[list["Narrative"]] = relationship(back_populates="arc", foreign_keys="Narrative.arc_id")
+    summaries: Mapped[list["NarrativeArcSummary"]] = relationship(back_populates="arc", cascade="all, delete-orphan")
+
+
+class NarrativeArcSummary(Base):
+    __tablename__ = "narrative_arc_summaries"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, server_default=text("uuid_generate_v4()")
+    )
+    arc_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("narrative_arcs.id", ondelete="CASCADE"), nullable=False
+    )
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    post_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    narrative_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    model: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+
+    arc: Mapped["NarrativeArc"] = relationship(back_populates="summaries")

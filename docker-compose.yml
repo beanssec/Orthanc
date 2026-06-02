@@ -27,6 +27,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://orthanc:orthanc_dev@postgres:5432/orthanc}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       # TELEGRAM_BOT_TOKEN: ""  # Set in .env for alert delivery
     volumes:
       - ./backend:/app

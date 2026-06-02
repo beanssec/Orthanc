@@ -41,6 +41,9 @@ SYSTEM_PROMPT = (
 # Source-of-truth tag stored in Post.raw_json["_source_method"]
 SOURCE_METHOD_X_API = "x_api"
 SOURCE_METHOD_XAI = "xai"
+SOURCE_METHOD_XAI_OPENROUTER = "xai_openrouter"
+
+OPENROUTER_XAI_MODEL = "x-ai/grok-3-mini"
 
 
 def _parse_tweet_timestamp(created_at: Optional[str]) -> Optional[datetime]:
@@ -101,7 +104,7 @@ class XCollector:
             )
             return
 
-        method = SOURCE_METHOD_X_API if x_api_bearer_token else SOURCE_METHOD_XAI
+        method = SOURCE_METHOD_X_API if x_api_bearer_token else "xai_openrouter/xai"
         logger.info(
             "Starting X collector for user %s using method=%s (%d sources)",
             user_id,
@@ -114,7 +117,21 @@ class XCollector:
             if source_id in self._tasks:
                 continue
             per_source_interval = source.poll_interval_seconds or self._poll_interval
-            logger.info("Starting X poller for %s (source %s, interval=%ds)", source.handle, source_id, per_source_interval)
+
+            # Calculate initial delay — skip sources polled recently to avoid
+            # burning API credits on every restart
+            initial_delay = 0
+            if source.last_polled:
+                elapsed = (datetime.now(tz=timezone.utc) - source.last_polled).total_seconds()
+                if elapsed < per_source_interval:
+                    initial_delay = int(per_source_interval - elapsed)
+                    logger.info(
+                        "X @%s polled %ds ago (interval=%ds) — deferring first poll by %ds",
+                        source.handle, int(elapsed), per_source_interval, initial_delay,
+                    )
+
+            logger.info("Starting X poller for %s (source %s, interval=%ds, initial_delay=%ds)",
+                        source.handle, source_id, per_source_interval, initial_delay)
             task = asyncio.create_task(
                 self._poll_loop(
                     user_id,
@@ -123,6 +140,7 @@ class XCollector:
                     x_api_bearer_token=x_api_bearer_token,
                     xai_api_key=xai_api_key,
                     poll_interval=per_source_interval,
+                    initial_delay=initial_delay,
                 ),
                 name=f"x_poll_{source_id}",
             )
@@ -146,8 +164,16 @@ class XCollector:
         x_api_bearer_token: str,
         xai_api_key: str,
         poll_interval: int,
+        initial_delay: int = 0,
     ) -> None:
         """Continuous polling loop for a single X account."""
+        if initial_delay > 0:
+            logger.info("X @%s: waiting %ds before first poll (recently polled)", handle, initial_delay)
+            try:
+                await asyncio.sleep(initial_delay)
+            except asyncio.CancelledError:
+                logger.info("X poller cancelled during initial delay for @%s", handle)
+                raise
         backoff = poll_interval
         while True:
             try:
@@ -197,12 +223,12 @@ class XCollector:
             tweets, source_method = await self._fetch_tweets_x_api(
                 handle, x_api_bearer_token, source_id
             )
-        elif xai_api_key:
-            tweets = await self._fetch_tweets_xai(handle, xai_api_key)
-            source_method = SOURCE_METHOD_XAI
         else:
-            logger.warning("No usable API key for @%s (source %s)", handle, source_id)
-            return
+            # Try OpenRouter first (has working X Search via :online plugin), fall back to direct xAI
+            tweets, source_method = await self._fetch_tweets_openrouter(handle)
+            if not tweets and xai_api_key:
+                tweets = await self._fetch_tweets_xai(handle, xai_api_key)
+                source_method = SOURCE_METHOD_XAI
 
         if not tweets:
             logger.debug("No tweets returned for @%s", handle)
@@ -330,6 +356,52 @@ class XCollector:
         except httpx.RequestError as exc:
             logger.warning("X API v2 network error for @%s: %s — will retry", handle, exc)
             return [], SOURCE_METHOD_X_API
+
+    # -------------------------------------------------------------------------
+    # OpenRouter / Grok + X Search plugin path
+    # -------------------------------------------------------------------------
+
+    async def _fetch_tweets_openrouter(self, handle: str) -> tuple[list[dict], str]:
+        """Fetch tweets via OpenRouter's Grok + X Search plugin."""
+        from app.services.model_router import model_router
+
+        handle = handle.lstrip("@")
+
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Get the 10 most recent tweets from @{handle}"},
+        ]
+
+        try:
+            result = await model_router.chat(
+                "x_collection",  # task name for logging
+                messages,
+                model=OPENROUTER_XAI_MODEL,
+                temperature=0,
+            )
+
+            raw_content = result.get("content", "[]")
+            # Strip markdown code fences if present
+            raw_content = re.sub(r"```(?:json)?\s*", "", raw_content).strip()
+
+            try:
+                tweets = json.loads(raw_content)
+                if isinstance(tweets, list):
+                    # Attach any citations from the response annotations
+                    citations = result.get("annotations", [])
+                    if citations:
+                        for tweet in tweets:
+                            tweet["_citations"] = citations
+                    return tweets, SOURCE_METHOD_XAI_OPENROUTER
+                logger.warning("Unexpected OpenRouter/Grok response structure for @%s", handle)
+            except json.JSONDecodeError as e:
+                logger.warning("Failed to parse OpenRouter/Grok JSON for @%s: %s", handle, e)
+
+            return [], SOURCE_METHOD_XAI_OPENROUTER
+
+        except Exception as exc:
+            logger.warning("OpenRouter X collection failed for @%s: %s", handle, exc)
+            return [], SOURCE_METHOD_XAI_OPENROUTER
 
     # -------------------------------------------------------------------------
     # xAI / Grok fallback path (unchanged from original implementation)

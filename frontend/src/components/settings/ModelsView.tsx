@@ -63,6 +63,10 @@ const TASK_LABELS: Record<string, string> = {
   tracked_narrative_match: 'Tracked Narrative Matching',
   entity_resolution_assist: 'Entity Resolution Assist',
   claim_extraction: 'Claim Extraction',
+  entity_extraction: 'Entity Extraction',
+  arc_discovery: 'Arc Discovery',
+  arc_summary: 'Arc Summarisation',
+  arc_report: 'Arc Report Generation',
 };
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -90,11 +94,12 @@ function fmtCost(n: number | null | undefined): string {
 const EMBED_MODEL_HINTS = ['embed', 'nomic', 'mxbai', 'minilm'];
 /** Model ID substrings that indicate vision capability */
 const VISION_MODEL_HINTS = [
-  'gpt-4o', 'gpt-4-turbo', 'gpt-4-vision',
-  'claude-sonnet', 'claude-opus', 'claude-3',
+  'gpt-4o', 'gpt-4-turbo', 'gpt-4-vision', 'gpt-5',
+  'claude-sonnet', 'claude-opus', 'claude-3', 'claude-4',
   'gemini', 'llava', 'bakllava', 'moondream',
-  'llama3.2-vision', 'llama-3.2-vision', 'llama4', 'llama-4',
-  'mistral-small', 'pixtral', 'qwen2-vl', 'qwen-vl',
+  'llama3.2-vision', 'llama-3.2-vision', 'llama4', 'llama-4', 'llama-3.2-11b-vision',
+  'mistral-small', 'pixtral', 'qwen2-vl', 'qwen-vl', 'qwen2.5-vl', 'qwen3',
+  'nemotron', '-vl', 'vision', 'minimax-01', 'arcee-ai/spotlight'
 ];
 /** Model ID substrings to exclude from embedding/vision picks */
 const EMBED_EXCLUDE_HINTS = ['grok-3-mini', 'grok-3-fast', 'grok-2-mini'];

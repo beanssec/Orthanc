@@ -115,6 +115,12 @@ class OpenRouterProvider(LLMProvider):
             thinking_content = msg.get("reasoning_content") or data.get("reasoning_content") or None
 
         usage = data.get("usage", {})
+        finish_reason = data["choices"][0].get("finish_reason", "unknown")
+        if finish_reason == "length":
+            logger.warning(
+                "OpenRouter response truncated (finish_reason=length) for model=%s",
+                model,
+            )
         return {
             "content": content,
             "thinking": thinking_content,
@@ -123,6 +129,7 @@ class OpenRouterProvider(LLMProvider):
                 "completion_tokens": usage.get("completion_tokens", 0),
             },
             "model": model,
+            "finish_reason": finish_reason,
         }
 
     async def chat_stream(self, messages: list[dict], model: str, **kwargs) -> AsyncIterator[str]:
@@ -176,7 +183,7 @@ class OpenRouterProvider(LLMProvider):
             for m in data.get("data", []):
                 arch = m.get("architecture", {})
                 modality = arch.get("modality", "")
-                if "text->text" in modality or "text+image->text" in modality:
+                if "text" in modality.lower() or "image" in modality.lower():
                     models.append({"id": m["id"], "name": m.get("name", m["id"]), "provider": "openrouter"})
             return models
         except Exception as exc:
@@ -460,6 +467,10 @@ class ModelRouter:
     TASK_TRACKED_NARRATIVE_MATCH = "tracked_narrative_match"
     TASK_ENTITY_RESOLUTION_ASSIST = "entity_resolution_assist"
     TASK_CLAIM_EXTRACTION = "claim_extraction"
+    TASK_ENTITY_EXTRACTION = "entity_extraction"
+    TASK_ARC_DISCOVERY = "arc_discovery"
+    TASK_ARC_SUMMARY = "arc_summary"
+    TASK_ARC_REPORT = "arc_report"
 
     # Default task-to-model mapping
     DEFAULT_TASK_MODELS: dict[str, str] = {
@@ -469,13 +480,17 @@ class ModelRouter:
         TASK_EMBED: "openai/text-embedding-3-small",
         TASK_SUMMARISE: "grok-3-mini",
         TASK_ENRICH: "grok-3-mini",
-        TASK_IMAGE: "openai/gpt-4o",
+        TASK_IMAGE: "nvidia/nemotron-nano-12b-v2-vl:free",
         TASK_NARRATIVE_TITLE: "grok-3-mini",
         TASK_NARRATIVE_LABEL: "grok-3-mini",
         TASK_NARRATIVE_CONFIRMATION: "grok-3-mini",
         TASK_TRACKED_NARRATIVE_MATCH: "grok-3-mini",
         TASK_ENTITY_RESOLUTION_ASSIST: "grok-3-mini",
         TASK_CLAIM_EXTRACTION: "grok-3-mini",
+        TASK_ENTITY_EXTRACTION: "openai/gpt-5.4-nano",
+        TASK_ARC_DISCOVERY: "openai/gpt-5.4-nano",
+        TASK_ARC_SUMMARY: "openai/gpt-5.4-nano",
+        TASK_ARC_REPORT: "openai/gpt-5.4-mini",
     }
 
     def __init__(self) -> None:
@@ -576,14 +591,34 @@ class ModelRouter:
     # Cost estimation
     # ------------------------------------------------------------------
 
+    # Fallback pricing for models not in the static ai_models list.
+    # Values are $/1K tokens. Source: OpenRouter pricing as of April 2026.
+    _FALLBACK_PRICING: dict[str, dict[str, float]] = {
+        "openai/gpt-5.4-nano":           {"cost_per_1k_input": 0.0002, "cost_per_1k_output": 0.00125},
+        "openai/gpt-5.4-mini":           {"cost_per_1k_input": 0.00075, "cost_per_1k_output": 0.0045},
+        "openai/gpt-5.4":                {"cost_per_1k_input": 0.0025, "cost_per_1k_output": 0.015},
+        "openai/gpt-4.1-nano":           {"cost_per_1k_input": 0.0001, "cost_per_1k_output": 0.0004},
+        "openai/gpt-4.1-mini":           {"cost_per_1k_input": 0.0004, "cost_per_1k_output": 0.0016},
+        "openai/text-embedding-3-small": {"cost_per_1k_input": 0.00002, "cost_per_1k_output": 0.0},
+        "google/gemini-2.5-flash-lite":  {"cost_per_1k_input": 0.0001, "cost_per_1k_output": 0.0004},
+        "google/gemini-2.5-flash":       {"cost_per_1k_input": 0.0003, "cost_per_1k_output": 0.0025},
+        "google/gemini-2.5-flash-image": {"cost_per_1k_input": 0.0003, "cost_per_1k_output": 0.0025},
+        "google/gemini-2.5-pro":         {"cost_per_1k_input": 0.00125, "cost_per_1k_output": 0.01},
+        "x-ai/grok-4.20":               {"cost_per_1k_input": 0.002, "cost_per_1k_output": 0.006},
+        "x-ai/grok-4.1-fast":           {"cost_per_1k_input": 0.0002, "cost_per_1k_output": 0.0005},
+        "x-ai/grok-3-mini":             {"cost_per_1k_input": 0.0003, "cost_per_1k_output": 0.0005},
+        "anthropic/claude-3.5-haiku":    {"cost_per_1k_input": 0.0008, "cost_per_1k_output": 0.004},
+    }
+
     def _estimate_cost(self, model_id: str, tokens_in: int, tokens_out: int) -> float | None:
         """Estimate USD cost based on known model pricing."""
-        # Import here to avoid circular imports
         from app.services.ai_models import get_model, _live_model_cache  # type: ignore[import]
 
         config = get_model(model_id)
         if not config:
             config = _live_model_cache.get(model_id)
+        if not config:
+            config = self._FALLBACK_PRICING.get(model_id)
         if not config:
             return None
 

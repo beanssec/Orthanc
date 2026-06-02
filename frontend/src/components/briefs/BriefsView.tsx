@@ -149,12 +149,23 @@ interface BriefStructured {
     updated?: string[];
     quiet?: string[];
   };
-  key_developments?: string[];
+  key_developments?: Array<string | Record<string, unknown>>;
   regional_breakdown?: Array<{ region: string; summary: string }>;
   entity_watch?: Array<{ entity: string; role?: string; note: string }>;
-  narrative_shifts?: string[];
-  risks_and_outlook?: string[];
-  recommendations?: string[];
+  narrative_shifts?: Array<string | Record<string, unknown>>;
+  risks_and_outlook?: Array<string | Record<string, unknown>>;
+  recommendations?: Array<string | Record<string, unknown>>;
+}
+
+function toListText(item: unknown): string {
+  if (typeof item === 'string') return item;
+  if (item && typeof item === 'object') {
+    const obj = item as Record<string, unknown>;
+    return String(
+      obj.recommendation ?? obj.text ?? obj.summary ?? obj.title ?? JSON.stringify(obj)
+    );
+  }
+  return String(item ?? '');
 }
 
 function renderStructuredBrief(data: BriefStructured): React.ReactNode {
@@ -212,7 +223,7 @@ function renderStructuredBrief(data: BriefStructured): React.ReactNode {
         <h3 className="brief-section__heading">Key Developments</h3>
         <ul className="brief-section__list">
           {data.key_developments.map((item, i) => (
-            <li key={i}>{item}</li>
+            <li key={i}>{toListText(item)}</li>
           ))}
         </ul>
       </div>
@@ -258,7 +269,7 @@ function renderStructuredBrief(data: BriefStructured): React.ReactNode {
         <h3 className="brief-section__heading">Narrative Shifts</h3>
         <ul className="brief-section__list">
           {data.narrative_shifts.map((item, i) => (
-            <li key={i}>{item}</li>
+            <li key={i}>{toListText(item)}</li>
           ))}
         </ul>
       </div>
@@ -271,7 +282,7 @@ function renderStructuredBrief(data: BriefStructured): React.ReactNode {
         <h3 className="brief-section__heading">Risks &amp; Outlook</h3>
         <ul className="brief-section__list brief-section__list--risks">
           {data.risks_and_outlook.map((item, i) => (
-            <li key={i}>{item}</li>
+            <li key={i}>{toListText(item)}</li>
           ))}
         </ul>
       </div>
@@ -284,7 +295,7 @@ function renderStructuredBrief(data: BriefStructured): React.ReactNode {
         <h3 className="brief-section__heading">Recommendations</h3>
         <ul className="brief-section__list brief-section__list--recommendations">
           {data.recommendations.map((item, i) => (
-            <li key={i}>{item}</li>
+            <li key={i}>{toListText(item)}</li>
           ))}
         </ul>
       </div>
@@ -379,6 +390,7 @@ export function BriefsView() {
 
   // ── Model selector state ──
   const [models, setModels] = useState<Model[]>([]);
+  const [modelSort, setModelSort] = useState<'default' | 'context' | 'cheapest' | 'name'>('default');
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
@@ -625,8 +637,25 @@ export function BriefsView() {
           ) : models.length === 0 ? (
             <div className="briefs-error">No models configured</div>
           ) : (
+            <>
+            <div className="model-sort">
+              <label>Sort by: </label>
+              <select value={modelSort} onChange={(e) => setModelSort(e.target.value as typeof modelSort)}>
+                <option value="default">Default</option>
+                <option value="context">Most context</option>
+                <option value="cheapest">Cheapest</option>
+                <option value="name">Name</option>
+              </select>
+            </div>
             <div className="model-grid">
-              {models.map((model) => (
+              {[...models].sort((a, b) => {
+                if (modelSort === 'context') return (b.context_window || 0) - (a.context_window || 0);
+                if (modelSort === 'cheapest') return (a.cost_per_1k_output || 0) - (b.cost_per_1k_output || 0);
+                if (modelSort === 'name') return (a.name || '').localeCompare(b.name || '');
+                // default: available first, then by name
+                if (a.available !== b.available) return a.available ? -1 : 1;
+                return 0;
+              }).map((model) => (
                 <div
                   key={model.id}
                   className={[
@@ -659,6 +688,7 @@ export function BriefsView() {
                 </div>
               ))}
             </div>
+            </>
           )}
 
           {/* Controls */}

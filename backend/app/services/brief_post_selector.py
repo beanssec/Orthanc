@@ -368,3 +368,103 @@ async def select_posts_for_brief(
         len(selected), budget, hours, source_types, topic,
     )
     return selected
+
+
+async def fetch_arc_context(hours: int, max_arcs: int = 20) -> list[dict]:
+    """Fetch active arc summaries for brief context injection.
+
+    Returns list of dicts:
+        [{title, summary, arc_type, narrative_count, total_post_count, first_seen, last_updated}]
+
+    Returns empty list if the NarrativeArc table doesn't exist yet or on any error.
+    """
+    try:
+        from app.models.narrative import NarrativeArc
+
+        # Only include arcs with activity within the brief's time window
+        activity_cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(NarrativeArc)
+                .where(NarrativeArc.status == "active")
+                .where(NarrativeArc.summary.isnot(None))
+                .where(NarrativeArc.last_updated >= activity_cutoff)
+                .order_by(NarrativeArc.total_post_count.desc())
+                .limit(max_arcs)
+            )
+            arcs = result.scalars().all()
+
+        return [
+            {
+                "title": arc.title,
+                "summary": arc.summary,
+                "arc_type": arc.arc_type,
+                "narrative_count": arc.narrative_count,
+                "total_post_count": arc.total_post_count,
+                "first_seen": arc.first_seen.isoformat() if arc.first_seen else None,
+                "last_updated": arc.last_updated.isoformat() if arc.last_updated else None,
+            }
+            for arc in arcs
+        ]
+    except Exception as exc:
+        logger.debug("fetch_arc_context: failed (non-fatal): %s", exc)
+        return []
+
+
+async def fetch_divergence_context(
+    hours: int,
+    min_divergence: float = 0.3,
+    max_items: int = 10,
+) -> list[dict]:
+    """Fetch high-divergence events for brief context injection.
+
+    Returns events where source groups significantly disagree,
+    along with the per-group dominant stance breakdown.
+
+    Returns empty list on any failure.
+    """
+    try:
+        from app.models.narrative import Narrative
+        from app.services.consensus_service import consensus_service
+
+        activity_cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Narrative.id, Narrative.title, Narrative.divergence_score, Narrative.post_count)
+                .where(
+                    Narrative.status == "active",
+                    Narrative.divergence_score >= min_divergence,
+                    Narrative.last_updated >= activity_cutoff,
+                )
+                .order_by(Narrative.divergence_score.desc())
+                .limit(max_items)
+            )
+            rows = result.all()
+
+        if not rows:
+            return []
+
+        items: list[dict] = []
+        for narrative_id, title, divergence_score, post_count in rows:
+            try:
+                consensus = await consensus_service.compute_event_consensus(narrative_id)
+                dominant = consensus.get("dominant_stance_by_group", {})
+                items.append({
+                    "title": title,
+                    "divergence_score": divergence_score,
+                    "groups": dominant,
+                    "post_count": post_count,
+                })
+            except Exception as exc:
+                logger.debug(
+                    "fetch_divergence_context: skipped narrative %s: %s",
+                    narrative_id, exc,
+                )
+
+        return items
+
+    except Exception as exc:
+        logger.debug("fetch_divergence_context: failed (non-fatal): %s", exc)
+        return []

@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
@@ -172,10 +173,21 @@ async def lifespan(app: FastAPI):
         logger.warning("Official sources seeder skipped (will retry on next start): %s", _off_err)
     logger.info("Official sources seeded")
 
-    # OpenRouter credentials are decrypted on user login and providers are
-    # registered in auth.login. At startup there is no user password/key
-    # material available, so embedding falls back until a user logs in.
-    logger.info("Embedding service: waiting for user login to load provider credentials")
+    # Prefer OpenRouter for background tasks even before any user logs in.
+    # If OPENROUTER_API_KEY is present in env, register it at startup so
+    # narrative/claim/entity jobs don't fall back to heuristic mode after restarts.
+    _startup_or_key = os.getenv("OPENROUTER_API_KEY")
+    if _startup_or_key:
+        try:
+            from app.services.model_router import OpenRouterProvider, model_router as _mr
+            _mr.register_provider("openrouter", OpenRouterProvider(_startup_or_key))
+            logger.info("LLM provider bootstrap: registered OpenRouter from env")
+        except Exception as _or_bootstrap_err:
+            logger.warning("LLM provider bootstrap failed for OpenRouter env key: %s", _or_bootstrap_err)
+    else:
+        # OpenRouter credentials are otherwise decrypted on user login and
+        # providers are registered in auth.login.
+        logger.info("Embedding service: waiting for user login to load provider credentials")
 
     # Start narrative clustering engine (embeds posts + clusters into narratives every 10 min)
     await narrative_engine.start()

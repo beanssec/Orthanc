@@ -56,20 +56,25 @@ SYSTEM_PROMPT = (
     "- Entity roles should describe observable actions and posture, not assign moral judgement\n"
     "- Distinguish between confirmed events (multi-source) and single-source claims\n"
     "- Flag unverified claims explicitly\n\n"
-    "Posts are tagged with their selection reason (ALERT, FUSION, NARRATIVE, TRENDING, TEMPORAL) "
-    "indicating why they were flagged as significant. Weight ALERT and FUSION posts highest.\n\n"
+    "You will receive three types of context:\n"
+    "1. ACTIVE STORYLINES — compressed summaries of evolving intelligence arcs, each representing dozens to hundreds of posts\n"
+    "2. INDIVIDUAL POSTS — the most significant recent posts, tagged with their selection reason (ALERT, FUSION, NARRATIVE, TRENDING, TEMPORAL)\n"
+    "3. SOURCE DIVERGENCE — events where different source groups (Western, Iranian, Russian, etc.) significantly disagree. "
+    "Flag these disagreements explicitly in your analysis and attribute claims to source groups.\n"
+    "Use storyline summaries for big-picture context and trend analysis. Use individual posts for specific details and fresh developments.\n"
+    "Weight ALERT and FUSION tagged posts highest.\n\n"
     "Return ONLY a valid JSON object matching this schema (no markdown fences, no explanation):\n"
     f"{BRIEF_JSON_SCHEMA}\n\n"
     "BREVITY IS CRITICAL. This is a BRIEF, not an encyclopaedia. Each section has strict limits.\n\n"
     "Requirements:\n"
-    "- executive_summary: 4-6 sentences ONLY. High-level operational picture.\n"
-    "- changes_since_last: compare against PREVIOUS BRIEF if provided. MAX 5 new, 5 updated, 3 quiet. Group related items — do NOT list every individual post as a separate item. If no previous brief, omit or leave empty.\n"
+    "- executive_summary: 4-6 sentences ONLY. LEAD WITH WHAT CHANGED in the last cycle — do NOT open with generic framing like 'The conflict continues to escalate'. Start with the most significant NEW development or shift. Only then provide 1-2 sentences of broader context. A reader of the previous brief should immediately see what is different TODAY.\n"
+    "- changes_since_last: compare against PREVIOUS BRIEF if provided. MAX 5 new, 5 updated, 3 quiet. Group related items — do NOT list every individual post as a separate item. CRITICAL: every item from the previous brief's NEW section MUST appear in either UPDATED (if still developing) or QUIET (if no longer appearing). Do NOT silently drop tracked items. If no previous brief, omit or leave empty.\n"
     "- key_developments: 8-12 items. One sentence each with specifics (who, what, where, when). Attribute sources in parentheses. Do NOT write paragraphs.\n"
     "- regional_breakdown: 2-4 regions. Each summary is 2-3 sentences MAX.\n"
-    "- entity_watch: 5-8 key actors. Role is ONE sentence. Note is 2-3 sentences MAX.\n"
-    "- narrative_shifts: 3-5 items. One sentence each describing WHAT shifted and WHY it matters.\n"
+    "- entity_watch: 5-8 key actors. Role is ONE sentence. Note is 2-3 sentences MAX. Include at least 1-2 EMERGING entities not present in the previous brief's entity watch — new actors, newly relevant organisations, or individuals whose role has changed significantly.\n"
+    "- narrative_shifts: 3-5 items. One sentence each describing WHAT shifted and WHY it matters. These MUST be changes from the previous cycle — not ongoing situations. If a narrative appeared in the last brief, only include it here if its trajectory, framing, or source consensus has measurably changed.\n"
     "- risks_and_outlook: 3-5 items. One sentence each.\n"
-    "- recommendations: 3-5 items. One sentence each — specific collection priorities.\n\n"
+    "- recommendations: 3-5 items. Each must be SPECIFIC and ACTIONABLE — name the intelligence discipline (SIGINT, IMINT, OSINT, HUMINT), the specific target or collection focus, and the timeframe or trigger. Bad: 'Monitor Iran's nuclear program.' Good: 'Task IMINT collection on Bushehr and Arak facilities within 48h to assess post-strike damage extent.' Do NOT use generic verbs like 'monitor' or 'assess' without specifying what, how, and why now.\n\n"
     "Be analytical and impartial. Cite sources. An intelligence brief reports facts — it does not take sides. "
     "Prioritise significance over comprehensiveness — a decision-maker should read this in under 5 minutes."
 )
@@ -229,14 +234,18 @@ def _format_entity_pairs_note(pairs: list[dict]) -> str:
 def _parse_brief_json(raw: str) -> Optional[dict]:
     """
     Attempt to parse the LLM response as structured JSON.
+    Includes repair logic for truncated responses (missing closing brackets/braces).
     Returns None if parsing fails (caller falls back to raw text).
     """
     # Strip markdown fences
     text = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
-    try:
-        data = json.loads(text)
-    except (json.JSONDecodeError, ValueError):
-        return None
+
+    # First try direct parse
+    data = _try_json_load(text)
+
+    # If that fails, attempt truncation repair
+    if data is None:
+        data = _repair_truncated_json(text)
 
     if not isinstance(data, dict):
         return None
@@ -250,6 +259,63 @@ def _parse_brief_json(raw: str) -> Optional[dict]:
         return None
 
     return data
+
+
+def _try_json_load(text: str) -> Optional[dict]:
+    """Try to parse JSON, return None on failure."""
+    try:
+        data = json.loads(text)
+        return data if isinstance(data, dict) else None
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+def _repair_truncated_json(text: str) -> Optional[dict]:
+    """
+    Attempt to repair JSON that was truncated mid-output (e.g. due to max_tokens).
+    Strategy: find the last valid value boundary, close open strings/arrays/objects.
+    """
+    if not text or text[0] != '{':
+        return None
+
+    # Find the last cleanly closed property value
+    # Look for the last complete key-value pair by finding last '", "' or '"], "'
+    # Then truncate there and close the structure
+
+    # Strategy 1: Trim to last complete array item or string value
+    # Find last position where we have a complete value followed by a comma or bracket
+    last_good = -1
+    for pattern in [
+        r'"\s*\]\s*,',   # end of a string array followed by comma (next key coming)
+        r'"\s*\]\s*\}',  # end of a string array followed by object close
+        r'"\s*,\s*"',    # end of a string value followed by comma and next key
+        r'\}\s*\]\s*,',  # end of object array followed by comma
+    ]:
+        for match in re.finditer(pattern, text):
+            pos = match.end()
+            if pos > last_good:
+                last_good = pos
+
+    if last_good < len(text) // 2:
+        # Too much data lost — don't attempt repair
+        return None
+
+    # Truncate to last good position
+    truncated = text[:last_good].rstrip().rstrip(',')
+
+    # Count unclosed brackets and braces
+    open_braces = truncated.count('{') - truncated.count('}')
+    open_brackets = truncated.count('[') - truncated.count(']')
+
+    # Close them
+    truncated += ']' * max(0, open_brackets)
+    truncated += '}' * max(0, open_braces)
+
+    result = _try_json_load(truncated)
+    if result:
+        logger.info("Repaired truncated brief JSON (trimmed %d chars, closed %d brackets + %d braces)",
+                     len(text) - last_good, max(0, open_brackets), max(0, open_braces))
+    return result
 
 
 async def _build_claims_context(hours: int) -> str:
@@ -378,6 +444,7 @@ class BriefGenerator:
         # Determine context window limits early so we can pass budget to the selector
         # Scale post budget and content length based on model's context window
         context_window = model_config.get("context_window", 128000)
+        max_tokens = model_config.get("max_completion_tokens", 16384)
         if context_window >= 1000000:    # 1M+ (Gemini Pro, etc.)
             max_posts = 500
             max_chars = 1000
@@ -453,6 +520,31 @@ class BriefGenerator:
         except Exception as exc:
             logger.debug("entity_pair_context: failed (non-fatal): %s", exc)
 
+        # ── Arc storyline context ──────────────────────────────────────────────
+        arc_context_text = ""
+        try:
+            from app.services.brief_post_selector import fetch_arc_context
+            arcs = await fetch_arc_context(hours=hours, max_arcs=20)
+            if arcs:
+                arc_lines = []
+                for arc in arcs:
+                    first = arc.get("first_seen", "")
+                    if first:
+                        try:
+                            from datetime import datetime as dt
+                            first = dt.fromisoformat(first).strftime("%b %d") if isinstance(first, str) else first.strftime("%b %d")
+                        except Exception:
+                            pass
+                    arc_lines.append(
+                        f"• {arc['title']} ({arc['arc_type'] or 'other'}, "
+                        f"{arc['narrative_count']} events, {arc['total_post_count']} posts since {first})\n"
+                        f"  {arc['summary']}"
+                    )
+                arc_context_text = "\n".join(arc_lines)
+                logger.info("Brief: injecting %d arc storyline summaries", len(arcs))
+        except Exception as exc:
+            logger.debug("Arc context injection failed (non-fatal): %s", exc)
+
         post_texts = []
         for item in selected[:max_posts]:
             p = item["post"]
@@ -478,6 +570,43 @@ class BriefGenerator:
             f"Generate an intelligence brief from these {len(posts)} recent "
             f"posts (last {hours} hours{filter_desc}):\n\n{context}"
         )
+
+        if arc_context_text:
+            user_message += (
+                "\n\nACTIVE STORYLINES (compressed summaries covering all collected intelligence — "
+                "these represent thousands of posts you don't see individually):\n"
+                f"{arc_context_text}\n\n"
+                "Use these storyline summaries as background context. The individual posts above "
+                "provide the latest specific details. Your brief should reflect BOTH the broader "
+                "storyline arcs AND the fresh individual posts."
+            )
+
+        # ── Source divergence context ─────────────────────────────────────────
+        divergence_text = ""
+        try:
+            from app.services.brief_post_selector import fetch_divergence_context
+            divergent_events = await fetch_divergence_context(hours=hours)
+            if divergent_events:
+                div_lines = []
+                for evt in divergent_events:
+                    groups_str = ", ".join(
+                        f"{g}: {s}" for g, s in evt.get("groups", {}).items()
+                    )
+                    div_lines.append(
+                        f"• {evt['title']} (divergence={evt['divergence_score']:.2f}): {groups_str}"
+                    )
+                divergence_text = "\n".join(div_lines)
+                logger.info("Brief: injecting %d high-divergence events", len(divergent_events))
+        except Exception as exc:
+            logger.debug("Divergence context injection failed (non-fatal): %s", exc)
+
+        if divergence_text:
+            user_message += (
+                "\n\nSOURCE DIVERGENCE (events where source groups significantly disagree on interpretation):\n"
+                f"{divergence_text}\n\n"
+                "These events have conflicting coverage across source groups. "
+                "In your brief, note these disagreements explicitly and attribute claims to their source groups."
+            )
 
         # ── Previous brief context for change detection ───────────────────────
         logger.info("Attempting previous brief lookup for user %s", user_id)
@@ -551,9 +680,9 @@ class BriefGenerator:
 
         logger.info(
             "Generating brief: user=%s model=%s posts=%d hours=%d topic=%s sources=%s "
-            "reliability_ctx=%s entity_pairs=%d",
+            "reliability_ctx=%s entity_pairs=%d max_tokens=%d",
             user_id, model_id, len(posts), hours, topic, source_types,
-            bool(rel_ctx), len(entity_pairs),
+            bool(rel_ctx), len(entity_pairs), max_tokens,
         )
 
         if not model_router._providers:
@@ -574,6 +703,7 @@ class BriefGenerator:
                 ],
                 model=model_id,
                 temperature=0.3,
+                max_tokens=max_tokens,
             )
             brief_raw = result["content"]
         except Exception as e:

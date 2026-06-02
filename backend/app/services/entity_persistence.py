@@ -24,9 +24,14 @@ async def persist_entities(
     post_id: UUID,
     text: str,
     *,
+    translated_text: str | None = None,
     log_label: str = "post",
 ) -> int:
-    """Extract entities from *text* and persist them under *post_id*.
+    """Extract entities from *text* (or *translated_text* if provided) and persist them.
+
+    If *translated_text* is provided and non-empty, it is used for extraction
+    instead of the raw *text*. This improves extraction quality for non-English
+    posts since the LLM receives already-translated content.
 
     Uses ``session.no_autoflush`` to avoid query-triggered flushes that
     cause deadlocks when multiple async tasks write to the Entity table
@@ -38,11 +43,12 @@ async def persist_entities(
     with a clean transaction state (the post itself will need to be
     re-added if the caller wants to keep it).
     """
-    if not text or len(text.strip()) < 2:
+    extraction_text = translated_text if (translated_text and translated_text.strip()) else text
+    if not extraction_text or len(extraction_text.strip()) < 2:
         return 0
 
     try:
-        extracted = await entity_extractor.extract_entities_async(text)
+        extracted = await entity_extractor.extract_entities_async(extraction_text)
         if not extracted:
             return 0
 

@@ -102,3 +102,27 @@ export interface NarrativeTrackerMonthlyPoint {
   avg_divergence_score: number | null;
   avg_evidence_score: number | null;
 }
+
+export interface NarrativeArc {
+  id: string;
+  title: string;
+  summary: string | null;
+  status: 'active' | 'dormant' | 'closed';
+  arc_type: string | null;
+  first_seen: string;
+  last_updated: string;
+  narrative_count: number;
+  total_post_count: number;
+}
+
+export interface ArcSummaryHistoryItem {
+  summary: string;
+  generated_at: string;
+  post_count: number;
+  narrative_count: number;
+}
+
+export interface ArcDetail extends NarrativeArc {
+  narratives: Narrative[];
+  summary_history: ArcSummaryHistoryItem[];
+}

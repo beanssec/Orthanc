@@ -18,6 +18,7 @@ from app.models.narrative import (
     Narrative, NarrativePost, Claim, ClaimEvidence,
     SourceGroup, SourceGroupMember, SourceBiasProfile, PostEmbedding,
     NarrativeTracker, NarrativeTrackerVersion, NarrativeTrackerMatch, NarrativeTrackerMonthlySnapshot,
+    NarrativeArc, NarrativeArcSummary,
 )
 from app.models.post import Post
 from app.models.source import Source
@@ -35,6 +36,8 @@ async def list_narratives(
     min_divergence: float = Query(None, ge=0, le=1),
     min_posts: int = Query(None, ge=1),
     triage_status: str = Query(None, description="Filter by triage_status: detected, under_review, confirmed, contradicted, archived"),
+    narrative_type: str = Query(None, description="Filter by narrative_type: state_action, military, diplomatic, economic, humanitarian, cyber, other"),
+    sort_by: str = Query("last_updated", description="Sort by: last_updated, post_count, divergence_score, evidence_score, source_count"),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -47,14 +50,27 @@ async def list_narratives(
     if min_posts is not None:
         query = query.where(Narrative.post_count >= min_posts)
     if triage_status is not None:
-        query = query.where(Narrative.triage_status == triage_status)
+        if triage_status == "none":
+            query = query.where(Narrative.triage_status.is_(None))
+        else:
+            query = query.where(Narrative.triage_status == triage_status)
+    if narrative_type is not None and narrative_type != "all":
+        query = query.where(Narrative.narrative_type == narrative_type)
 
     # Count total
     count_query = select(func.count()).select_from(query.subquery())
     total = (await db.execute(count_query)).scalar() or 0
 
-    # Get page
-    query = query.order_by(desc(Narrative.last_updated)).offset(offset).limit(limit)
+    # Sort
+    sort_col_map = {
+        "last_updated": Narrative.last_updated,
+        "post_count": Narrative.post_count,
+        "divergence_score": Narrative.divergence_score,
+        "evidence_score": Narrative.evidence_score,
+        "source_count": Narrative.source_count,
+    }
+    sort_col = sort_col_map.get(sort_by, Narrative.last_updated)
+    query = query.order_by(desc(sort_col)).offset(offset).limit(limit)
     result = await db.execute(query)
     narratives = result.scalars().all()
 
@@ -517,6 +533,264 @@ async def contradict_claim(
         narrative.triage_notes = payload["notes"] or None
     await db.commit()
     return _serialize_narrative(narrative)
+
+
+# ─── Arc APIs ─────────────────────────────────────────────────────────────────
+
+@router.get("/arcs")
+async def list_arcs(
+    status: str = Query("active"),
+    sort_by: str = Query("last_updated"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List narrative arcs with optional status filter and sorting."""
+    query = select(NarrativeArc)
+    if status != "all":
+        query = query.where(NarrativeArc.status == status)
+
+    sort_col_map = {
+        "last_updated": NarrativeArc.last_updated,
+        "total_post_count": NarrativeArc.total_post_count,
+        "narrative_count": NarrativeArc.narrative_count,
+    }
+    sort_col = sort_col_map.get(sort_by, NarrativeArc.last_updated)
+
+    count_query = select(func.count()).select_from(query.subquery())
+    total = (await db.execute(count_query)).scalar() or 0
+
+    query = query.order_by(desc(sort_col)).offset(offset).limit(limit)
+    result = await db.execute(query)
+    arcs = result.scalars().all()
+
+    def _fmt_arc(a: NarrativeArc) -> dict:
+        return {
+            "id": str(a.id),
+            "title": a.title,
+            "summary": a.summary,
+            "status": a.status,
+            "arc_type": a.arc_type,
+            "first_seen": a.first_seen.isoformat() if a.first_seen else None,
+            "last_updated": a.last_updated.isoformat() if a.last_updated else None,
+            "narrative_count": a.narrative_count,
+            "total_post_count": a.total_post_count,
+        }
+
+    return {"items": [_fmt_arc(a) for a in arcs], "total": total}
+
+
+@router.get("/arcs/{arc_id}")
+async def get_arc_detail(
+    arc_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a single arc with its child narratives and summary history."""
+    arc_result = await db.execute(select(NarrativeArc).where(NarrativeArc.id == arc_id))
+    arc = arc_result.scalar_one_or_none()
+    if arc is None:
+        raise HTTPException(status_code=404, detail="Arc not found")
+
+    narr_result = await db.execute(
+        select(Narrative).where(Narrative.arc_id == arc_id).order_by(Narrative.first_seen.asc())
+    )
+    narratives = narr_result.scalars().all()
+
+    summary_result = await db.execute(
+        select(NarrativeArcSummary)
+        .where(NarrativeArcSummary.arc_id == arc_id)
+        .order_by(desc(NarrativeArcSummary.generated_at))
+        .limit(10)
+    )
+    summaries = summary_result.scalars().all()
+
+    def _fmt_narrative(n: Narrative) -> dict:
+        return {
+            "id": str(n.id),
+            "title": n.title,
+            "canonical_title": n.canonical_title,
+            "canonical_claim": n.canonical_claim,
+            "first_seen": n.first_seen.isoformat() if n.first_seen else None,
+            "last_updated": n.last_updated.isoformat() if n.last_updated else None,
+            "post_count": n.post_count,
+            "source_count": n.source_count,
+            "confirmation_status": n.confirmation_status,
+            "narrative_type": n.narrative_type,
+            "status": n.status,
+        }
+
+    def _fmt_summary(s: NarrativeArcSummary) -> dict:
+        return {
+            "summary": s.summary,
+            "generated_at": s.generated_at.isoformat() if s.generated_at else None,
+            "post_count": s.post_count,
+            "narrative_count": s.narrative_count,
+        }
+
+    return {
+        "id": str(arc.id),
+        "title": arc.title,
+        "summary": arc.summary,
+        "status": arc.status,
+        "arc_type": arc.arc_type,
+        "first_seen": arc.first_seen.isoformat() if arc.first_seen else None,
+        "last_updated": arc.last_updated.isoformat() if arc.last_updated else None,
+        "narrative_count": arc.narrative_count,
+        "total_post_count": arc.total_post_count,
+        "narratives": [_fmt_narrative(n) for n in narratives],
+        "summary_history": [_fmt_summary(s) for s in summaries],
+    }
+
+
+@router.post("/arcs/{arc_id}/report")
+async def generate_arc_report(
+    arc_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a deep-dive analytical report on a narrative arc."""
+    import asyncio
+    import json
+    from datetime import datetime, timezone
+    from app.services.model_router import model_router, ModelRouter
+
+    # 1. Fetch the arc
+    arc_result = await db.execute(select(NarrativeArc).where(NarrativeArc.id == arc_id))
+    arc = arc_result.scalar_one_or_none()
+    if arc is None:
+        raise HTTPException(status_code=404, detail="Arc not found")
+
+    # 2. Fetch all child narratives ordered by first_seen ASC
+    narr_result = await db.execute(
+        select(Narrative)
+        .where(Narrative.arc_id == arc_id)
+        .order_by(Narrative.first_seen.asc())
+    )
+    narratives = narr_result.scalars().all()
+
+    if not narratives:
+        return {"error": "Arc has no narratives"}
+
+    # Check providers
+    if not model_router._providers:
+        return {"error": "No AI provider configured"}
+
+    # 3. For each narrative, fetch top 3 posts by content length
+    narrative_posts: dict[uuid.UUID, list] = {}
+    for n in narratives:
+        posts_result = await db.execute(
+            select(Post)
+            .join(NarrativePost, NarrativePost.post_id == Post.id)
+            .where(NarrativePost.narrative_id == n.id)
+            .order_by(
+                desc(func.length(func.coalesce(Post.translated_content, Post.content)))
+            )
+            .limit(3)
+        )
+        narrative_posts[n.id] = posts_result.scalars().all()
+
+    # 4. Build the user prompt
+    timeline_parts = []
+    for n in narratives:
+        date_str = n.first_seen.strftime("%Y-%m-%d") if n.first_seen else "unknown"
+        claim = n.canonical_claim or n.claim_text or "No claim extracted"
+        status = n.confirmation_status or "unknown"
+        header = f"## [{date_str}] {n.title} ({n.post_count or 0} posts, {status})"
+        claim_line = f"Claim: {claim}"
+        posts = narrative_posts.get(n.id, [])
+        post_lines = []
+        for p in posts:
+            content = p.translated_content or p.content or ""
+            ts = p.timestamp.strftime("%Y-%m-%d %H:%M") if p.timestamp else "unknown"
+            post_lines.append(
+                f"- [{p.source_type or 'unknown'}] [{ts}] {p.author or 'unknown'}: {content[:500]}"
+            )
+        key_posts_section = "Key posts:\n" + "\n".join(post_lines) if post_lines else "Key posts: none"
+        timeline_parts.append(f"{header}\n{claim_line}\n{key_posts_section}")
+
+    first_seen_str = arc.first_seen.strftime("%Y-%m-%d") if arc.first_seen else "unknown"
+    last_updated_str = arc.last_updated.strftime("%Y-%m-%d") if arc.last_updated else "unknown"
+
+    user_prompt = f"""Generate an analytical report for this storyline:
+
+STORYLINE: {arc.title}
+TYPE: {arc.arc_type or "unknown"}
+TIMESPAN: {first_seen_str} to {last_updated_str}
+TOTAL: {arc.narrative_count or 0} events, {arc.total_post_count or 0} posts
+
+CURRENT SUMMARY: {arc.summary or "No summary available"}
+
+NARRATIVE TIMELINE (chronological):
+{chr(10).join(timeline_parts)}
+
+Generate the analytical report:"""
+
+    system_prompt = """You are a senior OSINT intelligence analyst producing a comprehensive analytical report on a specific evolving storyline.
+
+Return ONLY a valid JSON object with this schema:
+{
+  "title": "<report title — specific and descriptive>",
+  "origin": "<2-3 sentences: what triggered this storyline, when, and the initial actors involved>",
+  "key_events": [
+    {"date": "<YYYY-MM-DD>", "event": "<one sentence describing the event>", "significance": "<one sentence on why this matters>"}
+  ],
+  "turning_points": [
+    {"date": "<YYYY-MM-DD>", "shift": "<what changed>", "from": "<previous state>", "to": "<new state>"}
+  ],
+  "source_analysis": "<2-3 sentences on source diversity, reliability patterns, and any divergence between sources>",
+  "current_status": "<2-3 sentences on where this storyline stands right now>",
+  "trajectory": "<2-3 sentences on likely direction based on the pattern of events>",
+  "confidence_assessment": "<1-2 sentences on overall confidence in this analysis, noting any gaps>"
+}
+
+Requirements:
+- key_events: 8-15 items covering the full arc chronologically
+- turning_points: 2-5 major shifts only — not every event, just inflection points
+- Be analytical and impartial — attribute claims, distinguish confirmed from unverified
+- Use specific dates, names, and places — not vague references"""
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    # 5. Call LLM with 120s timeout
+    try:
+        response = await asyncio.wait_for(
+            model_router.chat(ModelRouter.TASK_ARC_REPORT, messages, max_tokens=4000),
+            timeout=120,
+        )
+    except asyncio.TimeoutError:
+        return {"error": "Report generation timed out (120s). Try again or use a faster model."}
+    except Exception as exc:
+        logger.error("Arc report LLM error: %s", exc)
+        return {"error": f"Report generation failed: {exc}"}
+
+    content = response.get("content", "")
+    used_model = response.get("model", model_router.get_task_model(ModelRouter.TASK_ARC_REPORT))
+
+    # 6. Parse response
+    parsed: dict
+    try:
+        # Strip markdown fences if present
+        clean = content.strip()
+        if clean.startswith("```"):
+            lines = clean.split("\n")
+            # Remove first and last fence lines
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            clean = "\n".join(lines).strip()
+        parsed = json.loads(clean)
+    except (json.JSONDecodeError, ValueError):
+        parsed = {"raw_report": content}
+
+    parsed["generated_at"] = datetime.now(timezone.utc).isoformat()
+    parsed["model"] = used_model
+    return parsed
 
 
 # ─── Tracker APIs (FEAT-001) ──────────────────────────────────────────────────

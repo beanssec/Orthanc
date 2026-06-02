@@ -454,8 +454,14 @@ class TelegramCollector:
                 except Exception as exc:
                     logger.debug("Geo extraction failed for backfill post: %s", exc)
 
-                # Entity extraction
-                await persist_entities(session, post.id, content or "", log_label="telegram")
+                # Entity extraction (pass translated_content if available)
+                await persist_entities(
+                    session,
+                    post.id,
+                    content or "",
+                    translated_text=post.translated_content or None,
+                    log_label="telegram",
+                )
 
                 await session.commit()
                 await session.refresh(post)
@@ -576,8 +582,14 @@ class TelegramCollector:
                 except Exception as geo_exc:  # noqa: BLE001
                     logger.warning("Geo extraction failed for post %s: %s", post.id, geo_exc)
 
-                # Run entity extraction
-                await persist_entities(session, post.id, post.content or "", log_label="telegram")
+                # Run entity extraction (pass translated_content if available)
+                await persist_entities(
+                    session,
+                    post.id,
+                    post.content or "",
+                    translated_text=post.translated_content or None,
+                    log_label="telegram",
+                )
 
                 await session.commit()
                 await session.refresh(post)
