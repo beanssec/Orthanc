@@ -10,7 +10,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 
 from app.config import settings
 from app.db import AsyncSessionLocal
@@ -249,7 +249,10 @@ class NarrativeEngine:
 
     # ── Tuning knobs ──────────────────────────
     CLUSTER_SIMILARITY = 0.70       # min similarity to join an existing narrative
-    NEW_CLUSTER_SIMILARITY = 0.75   # min similarity for initial greedy clustering
+    # text-embedding-3-small puts same-event reports from different sources
+    # around 0.70-0.74 in production. 0.75 was too strict and caused the
+    # engine to embed posts without forming new narratives for days.
+    NEW_CLUSTER_SIMILARITY = 0.70   # min similarity for initial greedy clustering
     MIN_POSTS_FOR_NARRATIVE = 3     # a cluster needs at least this many posts …
     MIN_SOURCES_FOR_NARRATIVE = 2   # … from at least this many distinct source_types
     STALE_HOURS = 12                # legacy: used only as fallback if TTL config not available
@@ -257,6 +260,23 @@ class NarrativeEngine:
     POLL_INTERVAL = 600             # seconds between full cycles (10 min)
     MAX_POSTS_PER_CYCLE = 2000      # max posts to embed in one cycle
     STARTUP_DELAY = 120             # seconds to wait before first cycle (allows providers to register via login)
+    FUTURE_TIMESTAMP_GRACE_HOURS = 6  # tolerate clock skew, not bad future-dated source data
+
+    def _effective_post_timestamp(self):
+        """Timestamp expression used by narrative ingestion/clustering.
+
+        Source timestamps are useful for event recency, but some collectors
+        legitimately have NULL timestamps and occasional bad future-dated rows
+        can poison lookback queries. Use ingested_at as a safe fallback for
+        NULL or implausibly-future timestamps so valid fresh posts are not
+        excluded from narrative processing.
+        """
+        future_cutoff = datetime.now(timezone.utc) + timedelta(hours=self.FUTURE_TIMESTAMP_GRACE_HOURS)
+        return case(
+            (Post.timestamp.is_(None), Post.ingested_at),
+            (Post.timestamp > future_cutoff, Post.ingested_at),
+            else_=Post.timestamp,
+        )
 
     @property
     def _stale_ttl_hours(self) -> int:
@@ -442,17 +462,19 @@ class NarrativeEngine:
     async def _embed_new_posts(self) -> int:
         """Embed posts from the last LOOKBACK_HOURS that have no embedding yet."""
         cutoff = datetime.now(timezone.utc) - timedelta(hours=self.LOOKBACK_HOURS)
+        effective_ts = self._effective_post_timestamp()
 
         async with AsyncSessionLocal() as session:
             result = await session.execute(
                 select(Post.id, func.coalesce(Post.translated_content, Post.content))
                 .outerjoin(PostEmbedding, PostEmbedding.post_id == Post.id)
                 .where(
-                    Post.timestamp >= cutoff,
+                    effective_ts >= cutoff,
                     PostEmbedding.post_id.is_(None),
                     Post.content.isnot(None),
                     func.length(Post.content) > 50,
                 )
+                .order_by(effective_ts.desc())
                 .limit(self.MAX_POSTS_PER_CYCLE)
             )
             rows = result.all()
@@ -494,6 +516,7 @@ class NarrativeEngine:
         if similarity ≥ CLUSTER_SIMILARITY.
         """
         cutoff = datetime.now(timezone.utc) - timedelta(hours=self.LOOKBACK_HOURS)
+        effective_ts = self._effective_post_timestamp()
         assigned = 0
 
         # Fetch active narratives
@@ -531,8 +554,9 @@ class NarrativeEngine:
                 .join(Post, Post.id == PostEmbedding.post_id)
                 .where(
                     NarrativePost.id.is_(None),
-                    Post.timestamp >= cutoff,
+                    effective_ts >= cutoff,
                 )
+                .order_by(effective_ts.desc())
                 .limit(100)
             )
             candidates = result.all()
@@ -578,6 +602,7 @@ class NarrativeEngine:
         new Narrative.
         """
         cutoff = datetime.now(timezone.utc) - timedelta(hours=self.LOOKBACK_HOURS)
+        effective_ts = self._effective_post_timestamp()
 
         async with AsyncSessionLocal() as session:
             result = await session.execute(
@@ -586,14 +611,15 @@ class NarrativeEngine:
                     PostEmbedding.embedding,
                     Post.source_type,
                     Post.content,
-                    Post.timestamp,
+                    effective_ts.label("effective_timestamp"),
                 )
                 .join(Post, Post.id == PostEmbedding.post_id)
                 .outerjoin(NarrativePost, NarrativePost.post_id == PostEmbedding.post_id)
                 .where(
                     NarrativePost.id.is_(None),
-                    Post.timestamp >= cutoff,
+                    effective_ts >= cutoff,
                 )
+                .order_by(effective_ts.desc())
                 .limit(1000)
             )
             posts = result.all()
@@ -625,6 +651,18 @@ class NarrativeEngine:
                 continue
 
             clusters.append(cluster)
+
+        if not clusters:
+            source_counts = Counter(row[2] for row in posts)
+            logger.info(
+                "Narrative engine: no new clusters from %d unassigned candidates "
+                "(threshold=%.2f, min_posts=%d, min_sources=%d, sources=%s)",
+                len(posts),
+                self.NEW_CLUSTER_SIMILARITY,
+                self.MIN_POSTS_FOR_NARRATIVE,
+                self.MIN_SOURCES_FOR_NARRATIVE,
+                dict(source_counts),
+            )
 
         created = 0
         for cluster in clusters:
