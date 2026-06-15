@@ -12,8 +12,8 @@ from PIL import Image
 
 logger = logging.getLogger("orthanc.services.media")
 
-MEDIA_DIR = "/app/data/media"
-THUMBNAIL_DIR = "/app/data/media/thumbnails"
+MEDIA_DIR = os.getenv("ORTHANC_MEDIA_DIR", "/app/data/media")
+THUMBNAIL_DIR = os.getenv("ORTHANC_THUMBNAIL_DIR", os.path.join(MEDIA_DIR, "thumbnails"))
 THUMBNAIL_WIDTH = 400
 
 

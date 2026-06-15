@@ -30,7 +30,7 @@ logger = logging.getLogger("orthanc.collectors.telegram")
 
 router = APIRouter(prefix="/telegram/auth", tags=["telegram-auth"])
 
-SESSION_DIR = "/app/data/telegram_sessions"
+SESSION_DIR = os.getenv("ORTHANC_TELEGRAM_SESSION_DIR", "/app/data/telegram_sessions")
 
 # In-memory store for pending auth clients: user_id -> TelegramClient
 # These are short-lived — only needed during the auth flow.

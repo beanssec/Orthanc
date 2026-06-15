@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://invalid:invalid@localhost:5999/invalid_test")
-os.environ.setdefault("JWT_SECRET", "test-secret-key-overwatch-2024")
+os.environ.setdefault("JWT_SECRET", "test-secret-key-orthanc-2024")
 
 from tests.conftest import make_mock_db, make_mock_user
 

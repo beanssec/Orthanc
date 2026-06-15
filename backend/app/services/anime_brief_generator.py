@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-OUTPUT_BASE = "/mnt/data/projects/overwatch/output/anime_briefs"
+OUTPUT_BASE = os.getenv("ORTHANC_ANIME_BRIEF_OUTPUT_DIR", "/app/data/output/anime_briefs")
 
 CYBERPUNK_SCENE_SYSTEM_PROMPT = """You are a visual director creating scene descriptions for a 1990s cyberpunk anime intelligence briefing video.
 
@@ -211,8 +211,8 @@ async def generate_scene_prompts(sentences: list[str], api_key: str) -> list[dic
                     headers={
                         "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
-                        "HTTP-Referer": "https://overwatch.osint",
-                        "X-Title": "Overwatch Anime Brief",
+                        "HTTP-Referer": "https://orthanc.osint",
+                        "X-Title": "Orthanc Anime Brief",
                     },
                     json={
                         "model": model,
@@ -451,8 +451,8 @@ async def generate_video_clip_openrouter(
                     headers={
                         "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
-                        "HTTP-Referer": "https://overwatch.osint",
-                        "X-Title": "Overwatch Anime Brief",
+                        "HTTP-Referer": "https://orthanc.osint",
+                        "X-Title": "Orthanc Anime Brief",
                     },
                     json={
                         "model": model,
@@ -837,7 +837,7 @@ async def stitch_clips(
             logger.warning("Clip %d not found at %s — skipping", i, clip_path)
 
     # --- Outro card ---
-    outro_text = "END TRANSMISSION // UNCLASSIFIED\nOVERWATCH OSINT PLATFORM"
+    outro_text = "END TRANSMISSION // UNCLASSIFIED\nORTHANC OSINT PLATFORM"
     outro_path = str(work_dir / "outro.mp4")
     if _make_title_card(outro_path, outro_text, duration=3, color="black"):
         processed_clips.append(outro_path)

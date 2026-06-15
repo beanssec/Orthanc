@@ -1,4 +1,4 @@
-"""X API v2 async client for Overwatch.
+"""X API v2 async client for Orthanc.
 
 Provides direct access to the X (Twitter) API v2 using Bearer Token auth.
 This replaces/complements the xAI/Grok approach with real structured data.
@@ -97,7 +97,7 @@ class XApiClient:
         self._bearer_token = bearer_token
         self._headers = {
             "Authorization": f"Bearer {bearer_token}",
-            "User-Agent": "OverwatchOSINT/1.0",
+            "User-Agent": "OrthancOSINT/1.0",
         }
 
     async def get_user_id(self, username: str) -> str:

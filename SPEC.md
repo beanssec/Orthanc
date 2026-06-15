@@ -5,7 +5,7 @@ A self-hosted OSINT intelligence platform for conflict analysts, traders, journa
 
 **Owner:** Nick
 **Status:** Active development — core platform complete, expanding features
-**Location:** `/mnt/data/projects/overwatch`
+**Location:** repository root
 **License:** MIT (open source)
 
 ---

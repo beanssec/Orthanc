@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -53,6 +54,57 @@ def _apply_post_filters(
     if topic and topic.strip():
         query = query.where(Post.content.ilike(f"%{topic.strip()}%"))
     return query
+
+
+@dataclass(frozen=True)
+class TemporalSamplingPlan:
+    """Plan for time-sliced backfill in the brief post selector."""
+
+    posts_per_slice: int
+    n_slices: int
+    slice_seconds: float
+
+
+def _compute_temporal_sampling_plan(remaining: int, hours: int) -> TemporalSamplingPlan:
+    """Scale temporal sampling with the remaining post budget.
+
+    The selector used to be effectively capped at 24 slices x 2 posts. Large
+    context models can consume far more evidence, so larger budgets deliberately
+    use more slices and a richer per-slice sample while retaining an upper bound
+    to avoid hundreds of tiny database queries.
+    """
+    posts_per_slice = 4 if remaining >= 400 else 3 if remaining >= 150 else 2
+    raw_n_slices = (remaining + posts_per_slice - 1) // posts_per_slice
+    n_slices = max(4, min(168, raw_n_slices, remaining))
+    window_seconds = hours * 3600
+    return TemporalSamplingPlan(
+        posts_per_slice=posts_per_slice,
+        n_slices=n_slices,
+        slice_seconds=window_seconds / n_slices,
+    )
+
+
+def _add_selection(
+    selected: list[dict],
+    selected_ids: set[uuid.UUID],
+    post: Post,
+    *,
+    reason: str,
+    tier: int,
+    priority_score: float,
+    budget: int,
+) -> bool:
+    """Append a post selection once, enforcing global budget and de-dupe."""
+    if len(selected) >= budget or post.id in selected_ids:
+        return False
+    selected.append({
+        "post": post,
+        "selection_reason": reason,
+        "tier": tier,
+        "priority_score": priority_score,
+    })
+    selected_ids.add(post.id)
+    return True
 
 
 async def select_posts_for_brief(
@@ -116,14 +168,16 @@ async def select_posts_for_brief(
                     continue
                 if tier1_added >= tier1_budget:
                     break
-                selected.append({
-                    "post": p,
-                    "selection_reason": f"ALERT: {ae.title}",
-                    "tier": 1,
-                    "priority_score": 1.0 - _alert_sev_key(ae.severity) * 0.1,
-                })
-                selected_ids.add(p.id)
-                tier1_added += 1
+                if _add_selection(
+                    selected,
+                    selected_ids,
+                    p,
+                    reason=f"ALERT: {ae.title}",
+                    tier=1,
+                    priority_score=1.0 - _alert_sev_key(ae.severity) * 0.1,
+                    budget=budget,
+                ):
+                    tier1_added += 1
 
         logger.debug("Tier 1 (alerts): added %d posts", tier1_added)
 
@@ -173,14 +227,16 @@ async def select_posts_for_brief(
                 continue
             best = max(candidate_posts, key=lambda p: len(p.content or ""))
 
-            selected.append({
-                "post": best,
-                "selection_reason": f"FUSION: {source_count} sources, {fe.severity}",
-                "tier": 2,
-                "priority_score": 0.9 - _fusion_sev_key(fe.severity) * 0.1,
-            })
-            selected_ids.add(best.id)
-            tier2_added += 1
+            if _add_selection(
+                selected,
+                selected_ids,
+                best,
+                reason=f"FUSION: {source_count} sources, {fe.severity}",
+                tier=2,
+                priority_score=0.9 - _fusion_sev_key(fe.severity) * 0.1,
+                budget=budget,
+            ):
+                tier2_added += 1
 
         logger.debug("Tier 2 (fusion): added %d posts", tier2_added)
 
@@ -237,14 +293,16 @@ async def select_posts_for_brief(
             best = candidate_posts[0]
             title = narr.canonical_title or narr.title
 
-            selected.append({
-                "post": best,
-                "selection_reason": f"NARRATIVE: {title}",
-                "tier": 3,
-                "priority_score": 0.8,
-            })
-            selected_ids.add(best.id)
-            tier3_added += 1
+            if _add_selection(
+                selected,
+                selected_ids,
+                best,
+                reason=f"NARRATIVE: {title}",
+                tier=3,
+                priority_score=0.8,
+                budget=budget,
+            ):
+                tier3_added += 1
 
         logger.debug("Tier 3 (narratives): added %d posts", tier3_added)
 
@@ -298,14 +356,16 @@ async def select_posts_for_brief(
             best = candidate_posts[0]
             display_name = entity.canonical_name or entity.name
 
-            selected.append({
-                "post": best,
-                "selection_reason": f"TRENDING: {display_name} ({entity.mention_count} mentions)",
-                "tier": 4,
-                "priority_score": 0.7,
-            })
-            selected_ids.add(best.id)
-            tier4_added += 1
+            if _add_selection(
+                selected,
+                selected_ids,
+                best,
+                reason=f"TRENDING: {display_name} ({entity.mention_count} mentions)",
+                tier=4,
+                priority_score=0.7,
+                budget=budget,
+            ):
+                tier4_added += 1
 
         logger.debug("Tier 4 (entities): added %d posts", tier4_added)
 
@@ -316,18 +376,19 @@ async def select_posts_for_brief(
     try:
         remaining = budget - len(selected)
         if remaining > 0:
-            raw_n_slices = remaining // 2
-            n_slices = max(4, min(24, raw_n_slices))
-            window_seconds = hours * 3600
-            slice_seconds = window_seconds / n_slices
+            # Scale temporal sampling with the requested budget.  The previous
+            # max-24-slices x 2-posts implementation hard-capped the backstop at
+            # 48 posts, so large-context brief models rarely received more than
+            # a small fraction of their requested post budget.
+            sampling_plan = _compute_temporal_sampling_plan(remaining, hours)
 
             tier5_added = 0
-            for i in range(n_slices):
+            for i in range(sampling_plan.n_slices):
                 if len(selected) >= budget:
                     break
 
-                slice_start = cutoff + timedelta(seconds=i * slice_seconds)
-                slice_end = cutoff + timedelta(seconds=(i + 1) * slice_seconds)
+                slice_start = cutoff + timedelta(seconds=i * sampling_plan.slice_seconds)
+                slice_end = cutoff + timedelta(seconds=(i + 1) * sampling_plan.slice_seconds)
                 ts_label = (
                     f"{slice_start.strftime('%H:%M')}-{slice_end.strftime('%H:%M')} UTC"
                 )
@@ -340,7 +401,7 @@ async def select_posts_for_brief(
                     )
                     q = _apply_post_filters(q, source_types, topic)
                     # Prefer richer posts (longer content)
-                    q = q.order_by(func.length(Post.content).desc()).limit(2)
+                    q = q.order_by(func.length(Post.content).desc()).limit(sampling_plan.posts_per_slice)
                     result = await session.execute(q)
                     slice_posts = result.scalars().all()
 
@@ -349,16 +410,49 @@ async def select_posts_for_brief(
                         continue
                     if len(selected) >= budget:
                         break
-                    selected.append({
-                        "post": p,
-                        "selection_reason": f"TEMPORAL: {ts_label}",
-                        "tier": 5,
-                        "priority_score": 0.5,
-                    })
-                    selected_ids.add(p.id)
-                    tier5_added += 1
+                    if _add_selection(
+                        selected,
+                        selected_ids,
+                        p,
+                        reason=f"TEMPORAL: {ts_label}",
+                        tier=5,
+                        priority_score=0.5,
+                        budget=budget,
+                    ):
+                        tier5_added += 1
 
-            logger.debug("Tier 5 (temporal): added %d posts across %d slices", tier5_added, n_slices)
+            logger.debug("Tier 5 (temporal): added %d posts across %d slices", tier5_added, sampling_plan.n_slices)
+
+            # Dense periods can leave some slices empty. If there is still room,
+            # backfill from the richest remaining posts in the full window so the
+            # selector honours large context budgets instead of stopping early.
+            if len(selected) < budget:
+                backfill_limit = budget - len(selected)
+                async with AsyncSessionLocal() as session:
+                    q = select(Post).where(
+                        Post.timestamp >= cutoff,
+                        Post.id.notin_(selected_ids),
+                    )
+                    q = _apply_post_filters(q, source_types, topic)
+                    q = q.order_by(func.length(Post.content).desc()).limit(backfill_limit)
+                    result = await session.execute(q)
+                    backfill_posts = result.scalars().all()
+
+                backfill_added = 0
+                for p in backfill_posts:
+                    if p.id in selected_ids or len(selected) >= budget:
+                        continue
+                    if _add_selection(
+                        selected,
+                        selected_ids,
+                        p,
+                        reason="TEMPORAL: high-signal backfill",
+                        tier=5,
+                        priority_score=0.45,
+                        budget=budget,
+                    ):
+                        backfill_added += 1
+                logger.debug("Tier 5 (backfill): added %d posts", backfill_added)
 
     except Exception as exc:
         logger.warning("brief_post_selector Tier 5 (temporal) failed: %s", exc)

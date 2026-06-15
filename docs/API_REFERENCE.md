@@ -389,7 +389,7 @@ Required scope: `agent:read`
 
 ---
 
-## OQL (Overwatch Query Language)
+## OQL (Orthanc Query Language)
 
 **Prefix:** `/oql`  **Auth:** JWT required
 

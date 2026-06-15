@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 from typing import Optional
 
 from app.services.model_router import model_router
@@ -40,7 +41,7 @@ confidence: exactly one of "high", "medium", "low"
 """
 
 # Media dir for reading files (matches media_service.py)
-MEDIA_DIR = "/app/data/media"
+MEDIA_DIR = os.getenv("ORTHANC_MEDIA_DIR", "/app/data/media")
 
 
 class AuthenticityAnalyzer:

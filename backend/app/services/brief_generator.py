@@ -88,6 +88,66 @@ _LOW_RELIABILITY_MAX = 0.35    # score <= this → low
 _LOW_SOURCE_FRACTION_WARN = 0.5  # >50% low-reliability → warning
 
 
+def estimate_brief_context_budget(
+    context_window: int,
+    max_completion_tokens: int,
+) -> dict[str, int]:
+    """Return prompt-construction limits for a model context window.
+
+    The old brief path used fixed buckets (1M context -> 500 posts x 1,000
+    chars), which consumed only a small fraction of large-context models.  This
+    derives a safe input budget from the actual model context, reserves room for
+    output/system/auxiliary context, then converts the remaining budget into as
+    many post snippets as can fit.
+    """
+    try:
+        context_window = int(context_window or 128000)
+    except (TypeError, ValueError):
+        context_window = 128000
+    try:
+        max_completion_tokens = int(max_completion_tokens or 16384)
+    except (TypeError, ValueError):
+        max_completion_tokens = 16384
+
+    # Reserve output, system prompt, previous brief, arc/divergence/metadata,
+    # and a safety margin so providers do not reject near-limit prompts.
+    reserved_tokens = max(
+        max_completion_tokens + 12000,
+        int(context_window * 0.15),
+    )
+    target_input_tokens = max(12000, context_window - reserved_tokens)
+
+    if context_window >= 1_000_000:
+        max_chars_per_post = 1600
+        hard_post_cap = 2500
+    elif context_window >= 500_000:
+        max_chars_per_post = 1200
+        hard_post_cap = 1500
+    elif context_window >= 200_000:
+        max_chars_per_post = 900
+        hard_post_cap = 900
+    elif context_window >= 128_000:
+        max_chars_per_post = 700
+        hard_post_cap = 600
+    else:
+        max_chars_per_post = 450
+        hard_post_cap = 250
+
+    # Crude but conservative enough for mixed-language social text. Metadata
+    # around each post costs ~120-180 chars.
+    target_input_chars = target_input_tokens * 4
+    estimated_chars_per_post = max_chars_per_post + 180
+    max_posts = max(1, min(hard_post_cap, target_input_chars // estimated_chars_per_post))
+
+    return {
+        "context_window": context_window,
+        "max_completion_tokens": max_completion_tokens,
+        "target_input_tokens": target_input_tokens,
+        "max_posts": int(max_posts),
+        "max_chars_per_post": int(max_chars_per_post),
+    }
+
+
 async def _compute_source_reliability_context(
     session,
     post_uuids: list[uuid.UUID],
@@ -441,25 +501,17 @@ class BriefGenerator:
 
         from app.services.brief_post_selector import select_posts_for_brief
 
-        # Determine context window limits early so we can pass budget to the selector
-        # Scale post budget and content length based on model's context window
-        context_window = model_config.get("context_window", 128000)
-        max_tokens = model_config.get("max_completion_tokens", 16384)
-        if context_window >= 1000000:    # 1M+ (Gemini Pro, etc.)
-            max_posts = 500
-            max_chars = 1000
-        elif context_window >= 500000:   # 500K+
-            max_posts = 350
-            max_chars = 800
-        elif context_window >= 200000:   # 200K+ (Claude, GPT-4o)
-            max_posts = 200
-            max_chars = 600
-        elif context_window >= 128000:   # 128K
-            max_posts = 150
-            max_chars = 500
-        else:                            # smaller models
-            max_posts = 80
-            max_chars = 350
+        # Determine context window limits early so we can pass budget to the selector.
+        # Use the actual model context window instead of coarse fixed buckets, so
+        # >1M-token models receive substantially more relevant source material.
+        budget_config = estimate_brief_context_budget(
+            model_config.get("context_window", 128000),
+            model_config.get("max_completion_tokens", 16384),
+        )
+        context_window = budget_config["context_window"]
+        max_tokens = budget_config["max_completion_tokens"]
+        max_posts = budget_config["max_posts"]
+        max_chars = budget_config["max_chars_per_post"]
 
         # Smart post selection — pulls from alerts, fusion events, narratives, entities,
         # and temporal fill to ensure broad, intelligence-relevant coverage.
@@ -680,9 +732,11 @@ class BriefGenerator:
 
         logger.info(
             "Generating brief: user=%s model=%s posts=%d hours=%d topic=%s sources=%s "
-            "reliability_ctx=%s entity_pairs=%d max_tokens=%d",
+            "reliability_ctx=%s entity_pairs=%d max_tokens=%d context_window=%d "
+            "post_budget=%d chars_per_post=%d target_input_tokens=%d",
             user_id, model_id, len(posts), hours, topic, source_types,
-            bool(rel_ctx), len(entity_pairs), max_tokens,
+            bool(rel_ctx), len(entity_pairs), max_tokens, context_window,
+            max_posts, max_chars, budget_config["target_input_tokens"],
         )
 
         if not model_router._providers:
@@ -782,6 +836,7 @@ class BriefGenerator:
             "source_reliability_context": rel_ctx or None,
             # TASK-75: structured output when available
             "structured": structured,
+            "context_budget": budget_config,
         }
 
         return response

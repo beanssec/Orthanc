@@ -1,6 +1,6 @@
 # Orthanc Change Review Pack
 Date: 2026-03-14
-Repo: /home/beans/projects/Orthanc
+Repo: /path/to/Orthanc
 Branch: main (working tree only; not committed yet)
 
 ## 1) Snapshot
@@ -127,7 +127,7 @@ Status: in progress; not yet closed with full validation evidence.
 
 ## 6) How to inspect locally
 
-From `/home/beans/projects/Orthanc`:
+From `/path/to/Orthanc`:
 - `git status --short`
 - `git diff --stat`
 - `git diff backend/app/routers/narratives.py`

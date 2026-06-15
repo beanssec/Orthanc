@@ -1,1 +1,1 @@
-# Test package for Overwatch backend
+# Test package for Orthanc backend

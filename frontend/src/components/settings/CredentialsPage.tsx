@@ -56,6 +56,30 @@ const PROVIDERS = [
     },
   },
   {
+    id: 'reddit',
+    label: 'Reddit',
+    icon: '🔴',
+    description: 'Monitor public subreddits via Reddit OAuth API app credentials.',
+    fields: [
+      { key: 'client_id', label: 'Client ID', placeholder: 'Reddit app client ID', type: 'text' as const },
+      { key: 'client_secret', label: 'Client Secret', placeholder: 'Reddit app secret', type: 'password' as const },
+      { key: 'user_agent', label: 'User Agent', placeholder: 'python:orthanc-osint:v1.0 (by /u/your_username)', type: 'text' as const, optional: true },
+    ],
+    guide: {
+      title: 'How to get Reddit API credentials',
+      steps: [
+        'Log in to a normal Reddit account',
+        'Go to https://www.reddit.com/prefs/apps',
+        'Click "create another app" / "are you a developer? create an app"',
+        'Choose app type "script" for Orthanc server-side polling',
+        'Set name to "Orthanc" or similar; redirect URI can be http://localhost:8080',
+        'Copy the client ID shown under the app name and the client secret labelled "secret"',
+        'Use a descriptive user agent, e.g. python:orthanc-osint:v1.0 (by /u/your_username)',
+      ],
+      note: 'A normal Reddit account is enough for public subreddit ingestion. Orthanc uses app-only OAuth; it does not need your Reddit username/password.',
+    },
+  },
+  {
     id: 'openrouter',
     label: 'OpenRouter',
     icon: '🤖',

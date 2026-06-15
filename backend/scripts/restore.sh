@@ -1,5 +1,5 @@
 #!/bin/bash
-# Restore Orthanc (Overwatch) database from a gzip backup
+# Restore Orthanc database from a gzip backup
 set -euo pipefail
 
 BACKUP_FILE="$1"
@@ -13,6 +13,10 @@ if [ ! -f "$BACKUP_FILE" ]; then
     exit 1
 fi
 
+PG_HOST="${PGHOST:-postgres}"
+PG_USER="${PGUSER:-orthanc}"
+PG_DB="${PGDATABASE:-orthanc}"
+
 echo "Restoring from $BACKUP_FILE ..."
-zcat "$BACKUP_FILE" | psql -h postgres -U overwatch overwatch
+zcat "$BACKUP_FILE" | psql -h "$PG_HOST" -U "$PG_USER" "$PG_DB"
 echo "Restore complete"

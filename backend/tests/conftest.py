@@ -1,5 +1,5 @@
 """
-Pytest configuration and shared fixtures for the Overwatch backend test suite.
+Pytest configuration and shared fixtures for the Orthanc backend test suite.
 
 Strategy: uses AsyncMock for DB sessions to avoid PostgreSQL-dialect
 incompatibilities in the test environment.  A real JWT is generated so
@@ -20,9 +20,10 @@ import pytest
 
 # ── Environment must be set before any app import ────────────────────────────
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://invalid:invalid@localhost:5999/invalid_test")
-os.environ.setdefault("JWT_SECRET", "test-secret-key-overwatch-2024")
+os.environ.setdefault("JWT_SECRET", "test-secret-key-orthanc-2024")
 os.environ.setdefault("JWT_ALGORITHM", "HS256")
-os.environ.setdefault("ENCRYPTION_KEY", "test-encryption-key-overwatch-24")
+os.environ.setdefault("ENCRYPTION_KEY", "test-encryption-key-orthanc-24")
+os.environ.setdefault("ORTHANC_MEDIA_DIR", "/tmp/orthanc-test-media")
 
 
 # ── Constants shared across tests ─────────────────────────────────────────────

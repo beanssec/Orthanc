@@ -1,5 +1,5 @@
 #!/bin/bash
-# Backup Orthanc (Overwatch) database
+# Backup Orthanc database
 # Features:
 #   - gzip compression
 #   - timestamped filename
@@ -13,10 +13,10 @@ set -uo pipefail
 BACKUP_DIR="${BACKUP_DIR:-/app/data/backups}"
 KEEP_LAST="${KEEP_LAST:-7}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-BACKUP_FILE="${BACKUP_DIR}/overwatch_${TIMESTAMP}.sql.gz"
+BACKUP_FILE="${BACKUP_DIR}/orthanc_${TIMESTAMP}.sql.gz"
 PG_HOST="${PGHOST:-postgres}"
-PG_USER="${PGUSER:-overwatch}"
-PG_DB="${PGDATABASE:-overwatch}"
+PG_USER="${PGUSER:-orthanc}"
+PG_DB="${PGDATABASE:-orthanc}"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
@@ -40,13 +40,13 @@ fi
 log "Backup complete: ${BACKUP_FILE} (${BACKUP_SIZE:-unknown size})"
 
 # ── Rotation: keep last N backups ─────────────────────────────────────────────
-TOTAL_BACKUPS=$(ls -1 "${BACKUP_DIR}"/overwatch_*.sql.gz 2>/dev/null | wc -l)
+TOTAL_BACKUPS=$(ls -1 "${BACKUP_DIR}"/orthanc_*.sql.gz 2>/dev/null | wc -l)
 log "Total backups before rotation: ${TOTAL_BACKUPS} (keeping last ${KEEP_LAST})"
 
 DELETED=0
 while IFS= read -r old_file; do
     rm -f "${old_file}" && log "Deleted old backup: ${old_file}" && (( DELETED++ )) || true
-done < <(ls -t "${BACKUP_DIR}"/overwatch_*.sql.gz 2>/dev/null | tail -n "+$((KEEP_LAST + 1))")
+done < <(ls -t "${BACKUP_DIR}"/orthanc_*.sql.gz 2>/dev/null | tail -n "+$((KEEP_LAST + 1))")
 
 if [[ ${DELETED} -gt 0 ]]; then
     log "Rotation complete: deleted ${DELETED} old backup(s)"

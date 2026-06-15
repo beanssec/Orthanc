@@ -277,17 +277,19 @@ _OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 _CHAT_MODALITIES = {"text->text", "text+image->text"}
 
 
-async def fetch_live_openrouter_models(api_key: str) -> list[dict]:
+async def fetch_live_openrouter_models(api_key: str = "") -> list[dict]:
     """Fetch the live model list from OpenRouter and return brief-friendly dicts.
 
     Only chat-capable models (text->text or text+image->text) are returned.
     Returns an empty list on any network / auth failure so callers degrade safely.
     """
     try:
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
+        # OpenRouter's model catalogue is public. Include auth when we have it
+        # (higher rate limits), but do not make the brief model picker depend on
+        # user credentials or it silently falls back to the stale static list.
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(_OPENROUTER_MODELS_URL, headers=headers)
             resp.raise_for_status()
@@ -310,7 +312,10 @@ async def fetch_live_openrouter_models(api_key: str) -> list[dict]:
             except (TypeError, ValueError):
                 cost_out = 0.0
 
-            ctx = m.get("context_length") or 128000
+            try:
+                ctx = int(m.get("context_length") or 128000)
+            except (TypeError, ValueError):
+                ctx = 128000
             top_provider = m.get("top_provider") or {}
             max_comp = top_provider.get("max_completion_tokens") or min(16384, ctx // 4)
             results.append({
@@ -348,14 +353,31 @@ def merge_brief_models(
     - Availability flag is set based on configured_providers.
     - Each returned dict includes an ``available`` and ``requires`` key.
     """
+    live_by_id = {m["id"]: m for m in live_openrouter}
     static_ids = {m["id"] for m in AI_MODELS}
 
     result: list[dict] = []
 
-    # Static curated models first (full metadata)
+    # Static curated models first (full metadata), but refresh volatile fields
+    # from the live catalogue. Names/descriptions/strengths stay curated;
+    # context windows, pricing and output caps must track OpenRouter.
     for m in AI_MODELS:
+        live = live_by_id.get(m["id"], {})
         result.append({
             **m,
+            **{
+                key: live[key]
+                for key in (
+                    "context_window",
+                    "max_completion_tokens",
+                    "cost_per_1k_input",
+                    "cost_per_1k_output",
+                    "cost_estimate_per_brief",
+                    "endpoint",
+                )
+                if key in live
+            },
+            "_live": bool(live),
             "available": m["credential_provider"] in configured_providers,
             "requires": m["credential_provider"],
         })

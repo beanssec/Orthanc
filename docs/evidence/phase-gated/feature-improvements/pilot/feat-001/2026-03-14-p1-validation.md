@@ -5,8 +5,8 @@ Scope: P1 acceptance gates (flag isolation, auth/validation, no regression)
 Environment: local validation compose override with isolated named Postgres volume
 
 ## Environment notes
-- Default compose Postgres mount (`/mnt/data/postgres/overwatch`) failed in this host with `Operation not permitted` during initdb.
-- Validation used override file: `/home/beans/.hermes/tmp/orthanc-compose.validation.yml`.
+- Historical note: an older absolute Postgres mount failed in this host with `Operation not permitted` during initdb; current compose uses `${POSTGRES_DATA_DIR:-./data/postgres}`.
+- Validation used a local temporary compose override file outside the repo.
 - A pre-existing migration-chain issue exists on fresh DBs:
   - `020_entity_relationships` attempts `CREATE TABLE entity_relationships` although table already created by `008_entity_relationships`.
   - Workaround used for isolated validation only:
@@ -25,7 +25,7 @@ Environment: local validation compose override with isolated named Postgres volu
   - Body: `{"detail":"Narrative trackers are disabled"}`
 
 ### 2) Feature flag ON behavior (CRUD + auth + validation)
-- Backend restarted with override: `/home/beans/.hermes/tmp/orthanc-compose.trackers-on.yml` (`NARRATIVE_TRACKERS_ENABLED=true`).
+- Backend restarted with a local temporary override setting `NARRATIVE_TRACKERS_ENABLED=true`.
 
 Checks:
 - `GET /narratives/trackers` without auth => HTTP 401 (`Not authenticated`)

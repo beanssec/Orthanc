@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import feedparser
+import httpx
 from sqlalchemy import select
 
 from app.db import AsyncSessionLocal
@@ -21,6 +22,12 @@ from app.services.geo_extractor import geo_extractor
 logger = logging.getLogger("orthanc.collectors.rss")
 
 DEFAULT_POLL_INTERVAL = 300  # 5 minutes
+RSS_USER_AGENT = "Orthanc-OSINT/1.0 (+https://orthanc.local; feed collector)"
+RSS_ACCEPT = "application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.8"
+
+
+class RSSFetchError(RuntimeError):
+    """Raised for network, HTTP, or unrecoverable parse failures."""
 
 
 def _sanitize_value(v):
@@ -124,7 +131,7 @@ class RSSCollector:
             except Exception as exc:
                 failures = self._consecutive_failures.get(feed_url, 0) + 1
                 self._consecutive_failures[feed_url] = failures
-                logger.exception("RSS poll error for source %s: %s", source_id, exc)
+                logger.warning("RSS poll error for source %s (%s): %s", source_id, feed_url, exc)
                 # Exponential backoff on consecutive failures
                 backoff = min(poll_interval * (2 ** min(failures - 1, 4)), MAX_BACKOFF)
                 # Record error in DB; auto-disable if threshold reached
@@ -140,20 +147,65 @@ class RSSCollector:
                 logger.info("RSS poller cancelled during sleep for source %s", source_id)
                 raise
 
+    async def _fetch_feed_bytes(self, feed_url: str) -> tuple[bytes, dict[str, str]]:
+        """Fetch a feed with explicit timeout and browser-tolerant headers.
+
+        feedparser.parse(url) uses synchronous urllib with no per-request timeout
+        here, which can pin executor threads when a feed accepts TCP but never
+        responds.  Fetching with httpx first gives the collector bounded runtime,
+        real HTTP status visibility, and consistent error accounting.
+        """
+        timeout = httpx.Timeout(25.0, connect=10.0, read=20.0, write=10.0, pool=5.0)
+        headers = {
+            "User-Agent": RSS_USER_AGENT,
+            "Accept": RSS_ACCEPT,
+        }
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
+            response = await client.get(feed_url)
+            response.raise_for_status()
+            if not response.content:
+                raise RSSFetchError("empty response body")
+            return response.content, dict(response.headers)
+
+    async def _parse_feed(self, feed_url: str):
+        """Fetch and parse a feed, raising for network/HTTP/unusable parse errors."""
+        try:
+            content, response_headers = await self._fetch_feed_bytes(feed_url)
+        except httpx.HTTPStatusError as exc:
+            raise RSSFetchError(f"HTTP {exc.response.status_code} fetching feed") from exc
+        except httpx.TimeoutException as exc:
+            raise RSSFetchError(f"timeout fetching feed: {exc}") from exc
+        except httpx.RequestError as exc:
+            raise RSSFetchError(f"request failed fetching feed: {exc}") from exc
+
+        loop = asyncio.get_running_loop()
+        parsed = await loop.run_in_executor(
+            None,
+            lambda: feedparser.parse(
+                content,
+                response_headers=response_headers,
+                resolve_relative_uris=True,
+                sanitize_html=True,
+            ),
+        )
+
+        if parsed.get("bozo") and not parsed.entries:
+            exc = parsed.get("bozo_exception")
+            raise RSSFetchError(f"parse error with no entries: {exc}")
+        return parsed
+
     async def _poll_once(self, source_id: str, feed_url: str) -> None:
         """Fetch and process one round of a feed."""
         logger.debug("Polling RSS feed %s", feed_url)
 
-        # feedparser is synchronous — run in thread pool
-        loop = asyncio.get_event_loop()
-        parsed = await loop.run_in_executor(None, feedparser.parse, feed_url)
-
-        if parsed.get("bozo") and not parsed.entries:
-            if feed_url not in self._bozo_warned:
-                logger.warning("RSS parse error for %s: %s (suppressing further identical warnings)", feed_url, parsed.get("bozo_exception"))
-                self._bozo_warned.add(feed_url)
+        try:
+            parsed = await self._parse_feed(feed_url)
+        except RSSFetchError:
             self._record_attempt(feed_url, False)
-            return
+            if feed_url not in self._bozo_warned:
+                logger.warning("RSS fetch/parse error for %s (suppressing repeated warnings)", feed_url)
+                self._bozo_warned.add(feed_url)
+            raise
 
         feed_title = parsed.feed.get("title", feed_url)
         new_count = 0

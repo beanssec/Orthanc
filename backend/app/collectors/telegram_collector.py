@@ -39,7 +39,7 @@ from app.services.authenticity_analyzer import authenticity_analyzer
 
 logger = logging.getLogger("orthanc.collectors.telegram")
 
-SESSION_DIR = "/app/data/telegram_sessions"
+SESSION_DIR = os.getenv("ORTHANC_TELEGRAM_SESSION_DIR", "/app/data/telegram_sessions")
 
 
 def _make_json_serializable(obj: Any) -> Any:

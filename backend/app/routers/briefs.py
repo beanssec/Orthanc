@@ -100,13 +100,14 @@ async def list_models(
             if provider == "openrouter":
                 or_keys = keys
 
-    # Fetch live OpenRouter models if credentials are available
-    live_or_models: list[dict] = []
-    if or_keys and or_keys.get("api_key"):
-        live_or_models = await fetch_live_openrouter_models(or_keys["api_key"])
-        # Cache for make_fallback_model_config to look up context_window at generation time
-        if live_or_models:
-            cache_live_models(live_or_models)
+    # Fetch live OpenRouter models even without credentials. The catalogue is
+    # public; credentials only improve rate limits and mark models available.
+    live_or_models = await fetch_live_openrouter_models(
+        or_keys.get("api_key", "") if or_keys else ""
+    )
+    # Cache for make_fallback_model_config to look up context_window at generation time
+    if live_or_models:
+        cache_live_models(live_or_models)
 
     # Merge static registry + live models; apply availability flags
     merged = merge_brief_models(live_or_models, configured)

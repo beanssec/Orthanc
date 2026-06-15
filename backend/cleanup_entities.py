@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-time cleanup script for junk entities in the Overwatch database.
+"""One-time cleanup script for junk entities in the Orthanc database.
 
 Deletes entities (and their entity_mentions) matching known junk patterns:
 - name contains t.me/, https://, or http:// (URL debris)
@@ -11,7 +11,7 @@ Deletes entities (and their entity_mentions) matching known junk patterns:
 - canonical_name is empty string
 
 Usage:
-    cd /mnt/data/projects/overwatch/backend
+    cd backend
     python cleanup_entities.py
 """
 from __future__ import annotations

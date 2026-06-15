@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://invalid:invalid@localhost:5999/invalid_test")
-os.environ.setdefault("JWT_SECRET", "test-secret-key-overwatch-2024")
+os.environ.setdefault("JWT_SECRET", "test-secret-key-orthanc-2024")
 
 from tests.conftest import make_mock_db
 
@@ -78,7 +78,7 @@ async def test_rss_collector_parse():
     ctx_manager.__aexit__ = AsyncMock(return_value=False)
 
     with (
-        patch("app.collectors.rss_collector.feedparser.parse", return_value=fake_feed),
+        patch.object(collector, "_parse_feed", AsyncMock(return_value=fake_feed)),
         patch("app.collectors.rss_collector.AsyncSessionLocal", return_value=ctx_manager),
         patch("app.collectors.rss_collector.broadcast_post", AsyncMock()),
         patch("app.collectors.rss_collector.entity_extractor.extract_entities_async", AsyncMock(return_value=[])),
@@ -96,57 +96,154 @@ async def test_rss_collector_parse():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_rss_collector_error_handling():
-    """RSS collector handles bozo (malformed) feeds without crashing."""
-    from app.collectors.rss_collector import RSSCollector
+    """RSS collector surfaces unusable feeds so source health/backoff can record failures."""
+    from app.collectors.rss_collector import RSSCollector, RSSFetchError
 
     collector = RSSCollector(poll_interval=9999)
+    feed_url = "https://example.com/bad-feed.rss"
 
-    # A feed with bozo=True and no entries
-    bad_feed = _make_feed([], bozo=True)
+    with patch.object(collector, "_parse_feed", AsyncMock(side_effect=RSSFetchError("parse error with no entries"))):
+        with pytest.raises(RSSFetchError):
+            await collector._poll_once("source-bad", feed_url)
 
-    with patch("app.collectors.rss_collector.feedparser.parse", return_value=bad_feed):
-        feed_url = "https://example.com/bad-feed.rss"
-        source_id = "source-bad"
-
-        # Should not raise
-        try:
-            await collector._poll_once(source_id, feed_url)
-        except Exception as exc:
-            pytest.fail(f"RSS collector raised an exception on bozo feed: {exc}")
+    assert collector._attempt_history[feed_url] == [False]
+    assert feed_url in collector._bozo_warned
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_rss_collector_http_500():
-    """RSS collector handles a 500 response (feedparser returns bozo feed) without crashing."""
-    from app.collectors.rss_collector import RSSCollector
+    """RSS collector converts HTTP failures into source-health failures."""
+    from app.collectors.rss_collector import RSSCollector, RSSFetchError
 
     collector = RSSCollector(poll_interval=9999)
+    feed_url = "https://example.com/error.rss"
 
-    # Simulate feedparser raising an exception (e.g. connection error)
-    with patch(
-        "app.collectors.rss_collector.feedparser.parse",
-        side_effect=Exception("connection refused"),
-    ):
-        source = MagicMock()
-        source.url = "https://example.com/error.rss"
-        source.id = "source-err"
+    with patch.object(collector, "_parse_feed", AsyncMock(side_effect=RSSFetchError("HTTP 500 fetching feed"))):
+        with pytest.raises(RSSFetchError):
+            await collector._poll_once("source-err", feed_url)
 
-        # run_in_executor wraps feedparser.parse; patch at the asyncio level
-        # Alternatively, patch run_in_executor
-        import asyncio
+    assert collector._attempt_history[feed_url] == [False]
 
-        original_run_in_executor = asyncio.get_event_loop().run_in_executor
 
-        async def _mock_run_in_executor(executor, func, *args):
-            raise Exception("HTTP 500 simulation")
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_reddit_collector_falls_back_to_rss_when_public_json_is_forbidden(monkeypatch):
+    """403 from unauthenticated Reddit JSON falls back to subreddit RSS."""
+    from app.collectors.reddit_collector import RedditCollector
 
-        loop = asyncio.get_event_loop()
-        with patch.object(loop, "run_in_executor", _mock_run_in_executor):
-            try:
-                await collector._poll_feed(source)
-            except Exception:
-                pass  # The collector may bubble or catch this; either is acceptable
+    collector = RedditCollector()
+    monkeypatch.delenv("REDDIT_CLIENT_ID", raising=False)
+    monkeypatch.delenv("REDDIT_CLIENT_SECRET", raising=False)
+
+    rss_body = b"""<?xml version='1.0' encoding='UTF-8'?>
+    <feed xmlns='http://www.w3.org/2005/Atom'>
+      <title>r/worldnews</title>
+      <entry>
+        <id>https://www.reddit.com/r/worldnews/comments/abc123/example/</id>
+        <title>Example headline</title>
+        <author><name>example_author</name></author>
+        <updated>2024-01-01T00:00:00Z</updated>
+        <link href='https://www.reddit.com/r/worldnews/comments/abc123/example/' />
+        <summary>Example summary</summary>
+      </entry>
+    </feed>"""
+
+    class FakeResponse:
+        def __init__(self, status_code, content=b"", headers=None):
+            self.status_code = status_code
+            self.content = content
+            self.headers = headers or {"content-type": "text/html"}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                import httpx
+
+                raise httpx.HTTPStatusError("forbidden", request=None, response=self)
+
+    class FakeClient:
+        async def get(self, url, *args, **kwargs):
+            if url.endswith(".rss"):
+                return FakeResponse(200, rss_body, {"content-type": "application/atom+xml"})
+            return FakeResponse(403)
+
+    data = await collector._fetch_subreddit_listing(FakeClient(), "worldnews")
+
+    post = data["data"]["children"][0]["data"]
+    assert post["id"] == "abc123"
+    assert post["title"] == "Example headline"
+    assert post["source_format"] == "rss_fallback"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_reddit_collector_uses_oauth_when_configured(monkeypatch):
+    """Configured Reddit collector uses oauth.reddit.com instead of blocked public JSON."""
+    from app.collectors.reddit_collector import RedditCollector
+
+    collector = RedditCollector()
+    credentials = {
+        "client_id": "client-id",
+        "client_secret": "client-secret",
+        "user_agent": "python:orthanc-test:v1.0",
+        "cache_key": "test:client-id",
+    }
+
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, payload, status_code=200):
+            self._payload = payload
+            self.status_code = status_code
+            self.headers = {"content-type": "application/json"}
+
+        def json(self):
+            return self._payload
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise AssertionError(f"unexpected HTTP {self.status_code}")
+
+    class FakeClient:
+        async def post(self, url, **kwargs):
+            calls.append(("POST", url, kwargs))
+            return FakeResponse({"access_token": "token-123", "expires_in": 3600})
+
+        async def get(self, url, **kwargs):
+            calls.append(("GET", url, kwargs))
+            return FakeResponse({"data": {"children": []}})
+
+    data = await collector._fetch_subreddit_listing(FakeClient(), "worldnews", credentials=credentials)
+
+    assert data == {"data": {"children": []}}
+    assert calls[0][0] == "POST"
+    assert calls[1][0] == "GET"
+    assert calls[1][1] == "https://oauth.reddit.com/r/worldnews/new"
+    assert calls[1][2]["headers"]["Authorization"] == "Bearer token-123"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_reddit_collector_reads_credentials_from_settings():
+    """Reddit collector prefers encrypted Settings/Credentials over env vars."""
+    from app.collectors.reddit_collector import RedditCollector
+    from app.services.collector_manager import collector_manager
+
+    user_id = "user-reddit-001"
+    await collector_manager.unlock(user_id, "reddit", {
+        "client_id": "settings-client",
+        "client_secret": "settings-secret",
+        "user_agent": "python:orthanc-settings:v1.0",
+    })
+
+    credentials = await RedditCollector()._get_oauth_credentials(user_id)
+
+    assert credentials["client_id"] == "settings-client"
+    assert credentials["client_secret"] == "settings-secret"
+    assert credentials["user_agent"] == "python:orthanc-settings:v1.0"
+    assert credentials["cache_key"] == "user:user-reddit-001:settings-client"
+
+    await collector_manager.lock(user_id, "reddit")
 
 
 @pytest.mark.unit

@@ -1,6 +1,6 @@
 # FEAT-001 P1 Pilot Setup Package
 
-Feature: Orthanc/Overwatch Narrative Intelligence Overhaul
+Feature: Orthanc/Orthanc Narrative Intelligence Overhaul
 Scope: operator-defined narrative tracking over multi-month windows
 Status: planning/spec only (no code changes)
 Date: 2026-03-13

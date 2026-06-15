@@ -89,7 +89,7 @@ No cloud dependencies. No API keys required for core functionality. Runs entirel
 │                  orthanc-postgres                    │
 │            PostgreSQL 16 + PostGIS                  │
 │                    Port 5433                        │
-│         /mnt/data/postgres/overwatch                │
+│        ${POSTGRES_DATA_DIR:-./data/postgres}           │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -98,6 +98,22 @@ No cloud dependencies. No API keys required for core functionality. Runs entirel
 - **Frontend:** React 18, TypeScript, Vite, MapLibre GL, Zustand
 - **Database:** PostgreSQL 16 with PostGIS extension
 - **Infrastructure:** Docker Compose, single-host deployment
+
+### Data flow
+
+1. **Source configuration** lives in PostgreSQL (`Source`, credentials, API keys). API credentials are stored per user and decrypted only when a collector or service needs them.
+2. **Collectors** in `backend/app/collectors/` poll external systems (RSS, Reddit, Telegram, YouTube, FIRMS, AIS, satellites, markets, sanctions and others). They normalize incoming items into `Post` and `Event` rows and broadcast feed updates over the backend websocket path.
+3. **Enrichment services** in `backend/app/services/` attach entities, geo tags, translations, sentiment, stance, embeddings, source reliability, authenticity metadata, narrative membership and cross-source fusion records.
+4. **Analysis APIs** in `backend/app/routers/` expose the enriched store to the React app: feed, map layers, narratives, entities, OQL, investigations, alerts, scheduled briefs and model/catalog endpoints.
+5. **Background loops** started from `backend/app/main.py` continuously run collection, correlation, narrative clustering, brief scheduling, maritime intelligence, Sentinel change detection and other derived-intelligence jobs.
+6. **Frontend views** in `frontend/src/components/` are mostly domain-oriented screens over those REST APIs, with dashboard widgets and map layers acting as composite consumers of the same backend data.
+
+### Engineering notes from the current architecture
+
+- Startup wiring is concentrated in `backend/app/main.py`; it is readable for a small app but now acts as a service registry, scheduler and lifecycle manager in one file.
+- Collectors share the same shape — start/stop tasks, poll, normalize, dedupe, record source health — but each implementation owns its own retry/backoff/error handling.
+- Intelligence brief selection is deliberately tiered (alerts, fused events, narratives, entities, temporal fill). The selector now keeps its temporal sampling math and selection deduplication in small helpers so large-context model behavior is testable without touching the database.
+- Pydantic v1-style `class Config` still appears in response schemas while the project runs Pydantic v2; tests pass but warnings should be cleaned up before a future v3 migration.
 
 ---
 
@@ -511,7 +527,20 @@ All configuration is done via environment variables in `.env`:
 
 ```env
 # Database
-DATABASE_URL=postgresql+asyncpg://overwatch:overwatch_dev@postgres:5432/overwatch
+POSTGRES_USER=orthanc
+POSTGRES_PASSWORD=orthanc_dev
+POSTGRES_DB=orthanc
+DATABASE_URL=postgresql+asyncpg://orthanc:orthanc_dev@postgres:5432/orthanc
+
+# Portable host storage defaults used by docker-compose.yml
+POSTGRES_DATA_DIR=./data/postgres
+ORTHANC_DATA_DIR=./data
+
+# In-container storage paths; override only if you also change the backend volume mounts
+ORTHANC_MEDIA_DIR=/app/data/media
+ORTHANC_THUMBNAIL_DIR=/app/data/media/thumbnails
+ORTHANC_TELEGRAM_SESSION_DIR=/app/data/telegram_sessions
+ORTHANC_ANIME_BRIEF_OUTPUT_DIR=/app/data/output/anime_briefs
 
 # Security
 SECRET_KEY=<generate with: openssl rand -hex 32>
@@ -538,9 +567,16 @@ POSTGRES_PORT=5433
 ```bash
 # Backend
 cd backend
-pip install -r requirements.txt
+uv venv ../.venv
+. ../.venv/bin/activate
+uv pip install -r requirements.txt pytest pytest-asyncio
 python -m spacy download en_core_web_sm
 uvicorn app.main:app --reload --port 8000
+
+# Targeted backend tests
+cd ..
+. .venv/bin/activate
+pytest backend/tests/test_collectors.py backend/tests/test_brief_model_catalog.py -q
 
 # Frontend
 cd frontend
