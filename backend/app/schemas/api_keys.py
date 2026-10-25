@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ── Request Schemas ───────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ class ApiKeyResponse(BaseModel):
     revoked_at: Optional[datetime]
     is_active: bool
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 class CreateApiKeyResponse(BaseModel):

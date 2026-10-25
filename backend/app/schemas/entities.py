@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class EntityBase(BaseModel):
@@ -15,7 +15,7 @@ class EntityBase(BaseModel):
     first_seen: datetime
     last_seen: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 class EntitySchema(EntityBase):
@@ -28,7 +28,7 @@ class EntityMentionSchema(BaseModel):
     context_snippet: str | None
     extracted_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 class EntityDetailSchema(EntityBase):
