@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class PostSummary(BaseModel):
@@ -16,7 +16,7 @@ class PostSummary(BaseModel):
     content: Optional[str] = None  # truncated to 200 chars
     timestamp: Optional[datetime] = None
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 class EventWithPost(BaseModel):
@@ -28,7 +28,7 @@ class EventWithPost(BaseModel):
     precision: Optional[str] = None
     post: PostSummary
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BackfillResponse(BaseModel):

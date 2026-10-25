@@ -2,7 +2,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 from typing import Any, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class SourceCreate(BaseModel):
@@ -45,8 +45,7 @@ class SourceReliabilityInfo(BaseModel):
     scoring_inputs: Optional[dict[str, Any]] = None
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SourceReliabilityOverride(BaseModel):
@@ -54,9 +53,8 @@ class SourceReliabilityOverride(BaseModel):
     analyst_override: Optional[float] = None
     analyst_note: Optional[str] = None
 
-    class Config:
-        # allow extra=False for safety
-        extra = "forbid"
+    # allow extra=False for safety
+    model_config = ConfigDict(extra="forbid")
 
 
 class SourceResponse(BaseModel):
@@ -86,5 +84,4 @@ class SourceResponse(BaseModel):
     filter_keywords: Optional[list[str]] = None
     filter_mode: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

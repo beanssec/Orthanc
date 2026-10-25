@@ -2,7 +2,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 from typing import Any, Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class EventResponse(BaseModel):
@@ -12,8 +12,7 @@ class EventResponse(BaseModel):
     place_name: Optional[str]
     confidence: float
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PostResponse(BaseModel):
@@ -42,8 +41,7 @@ class PostResponse(BaseModel):
     translated_content: Optional[str] = None
     translation_model: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FeedFilter(BaseModel):

@@ -113,7 +113,7 @@ No cloud dependencies. No API keys required for core functionality. Runs entirel
 - Startup wiring is concentrated in `backend/app/main.py`; it is readable for a small app but now acts as a service registry, scheduler and lifecycle manager in one file.
 - Collectors share the same shape — start/stop tasks, poll, normalize, dedupe, record source health — but each implementation owns its own retry/backoff/error handling.
 - Intelligence brief selection is deliberately tiered (alerts, fused events, narratives, entities, temporal fill). The selector now keeps its temporal sampling math and selection deduplication in small helpers so large-context model behavior is testable without touching the database.
-- Pydantic v1-style `class Config` still appears in response schemas while the project runs Pydantic v2; tests pass but warnings should be cleaned up before a future v3 migration.
+- Response schemas use Pydantic v2 `ConfigDict` with `from_attributes=True` for clean v2 compatibility.
 
 ---
 
